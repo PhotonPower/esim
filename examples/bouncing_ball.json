@@ -1,0 +1,26 @@
+{
+  // State reset at an event: when the height becomes negative the velocity is
+  // reversed and reduced by the restitution coefficient e.
+  // First impact at sqrt(2 h0 / g) = 0.452 s, then every 2 e^k v0 / g.
+  //
+  // The bounces get shorter and shorter (infinitely many in finite time). The
+  // simulation stops with an error if "max_events" is exceeded.
+  "title": "Bouncing ball",
+
+  "parameters": { "g": 9.81, "e": 0.8 },
+
+  "variables": { "h": 1, "v": 0 },
+
+  "equations": [
+    "der(h) = v",
+    "der(v) = -g"
+  ],
+
+  "events": [
+    { "when": "h < 0", "set": { "v": "-e*v" } }
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": 3 }
+  ]
+}

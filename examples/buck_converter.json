@@ -1,0 +1,39 @@
+{
+  // Step-down converter with an ideal switch and an ideal diode, switched at
+  // 100 kHz with a duty cycle of 50 %. The output settles at D * Vin = 6 V
+  // after a start-up oscillation of the LC filter (1.6 kHz).
+  //
+  // When the switch opens, the inductor current commutates to the diode in the
+  // same instant; the solver settles both elements together.
+  "title": "Buck converter with ideal switch and diode",
+
+  "parameters": {
+    "Vin": 12,
+    "fsw": "100k",
+    "D": 0.5,
+    "T": "1/fsw",
+    "edge": "T/1000"
+  },
+
+  "components": [
+    { "type": "V", "name": "VIN", "nodes": ["in", "0"], "dc": "Vin" },
+
+    // Gate signal 0 / 1; the switch closes above 0.5.
+    { "type": "V", "name": "PWM", "nodes": ["gate", "0"],
+      "wave": { "type": "pulse", "v1": 0, "v2": 1, "rise": "edge", "fall": "edge",
+                "width": "D*T - edge", "period": "T" } },
+
+    { "type": "S", "name": "S1", "nodes": ["in", "sw", "gate", "0"], "vt": 0.5, "ron": "10m" },
+    { "type": "ideal_diode", "name": "D1", "nodes": ["0", "sw"], "vf": 0.4, "ron": "10m" },
+    { "type": "L", "name": "L1", "nodes": ["sw", "out"], "value": "100u" },
+    { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "100u" },
+    { "type": "R", "name": "RL", "nodes": ["out", "0"], "value": 5 }
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": "4m" }
+  ],
+
+  // Add "v(sw)" to see the switching node (a 100 kHz square wave).
+  "outputs": ["v(out)", "i(L1)"]
+}

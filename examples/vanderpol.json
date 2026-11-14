@@ -1,0 +1,19 @@
+{
+  // Van der Pol oscillator  x'' - mu (1 - x^2) x' + x = 0  as a first-order
+  // system. For large mu it is a relaxation oscillation: slow drift, then a
+  // sudden jump. The period is roughly (3 - 2 ln 2) mu = 16 for mu = 10.
+  "title": "Van der Pol oscillator",
+
+  "parameters": { "mu": 10 },
+
+  "variables": { "x": 2, "v": 0 },
+
+  "equations": [
+    "der(x) = v",
+    "der(v) = mu*(1 - x^2)*v - x"
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": 60 }
+  ]
+}

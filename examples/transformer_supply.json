@@ -1,0 +1,45 @@
+{
+  // Mains transformer (coupled inductors), bridge rectifier of ideal diodes and
+  // a smoothing capacitor. Turns ratio 230 V : 12 V, i.e. L2/L1 = (12/230)^2.
+  "title": "Transformer power supply",
+
+  "parameters": {
+    "ratio": "12/230",
+    "Lp": 10,                 // primary inductance [H]
+    "Ls": "Lp*ratio^2"
+  },
+
+  "components": [
+    { "type": "V", "name": "Vmains", "nodes": ["line", "0"],
+      "wave": { "type": "sin", "amplitude": "230*sqrt(2)", "freq": 50 } },
+    { "type": "R", "name": "Rp", "nodes": ["line", "p"], "value": 20 },
+
+    // The first node of each inductor carries the dot.
+    { "type": "L", "name": "L1", "nodes": ["p", "0"], "value": "Lp" },
+    { "type": "L", "name": "L2", "nodes": ["s1", "s2"], "value": "Ls" },
+    { "type": "K", "name": "K1", "inductors": ["L1", "L2"], "k": 0.995 },
+
+    // The secondary side floats; a large resistor defines its potential.
+    { "type": "R", "name": "Rref", "nodes": ["s2", "0"], "value": "10meg" },
+
+    { "type": "ideal_diode", "name": "D1", "nodes": ["s1", "plus"],  "vf": 0.7, "ron": "50m" },
+    { "type": "ideal_diode", "name": "D2", "nodes": ["s2", "plus"],  "vf": 0.7, "ron": "50m" },
+    { "type": "ideal_diode", "name": "D3", "nodes": ["minus", "s1"], "vf": 0.7, "ron": "50m" },
+    { "type": "ideal_diode", "name": "D4", "nodes": ["minus", "s2"], "vf": 0.7, "ron": "50m" },
+
+    { "type": "C", "name": "C1", "nodes": ["plus", "minus"], "value": "2200u" },
+    { "type": "R", "name": "RL", "nodes": ["plus", "minus"], "value": 33 },
+    { "type": "R", "name": "Rgnd", "nodes": ["minus", "0"], "value": "10meg" }
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": "200m", "tstep": "200u",
+      "measure": {
+        "vdc":    { "avg": "v(plus,minus)", "from": "160m" },
+        "ripple": { "pp":  "v(plus,minus)", "from": "160m" },
+        "i_prim_rms": { "rms": "i(L1)", "from": "160m" }
+      } }
+  ],
+
+  "outputs": ["v(s1,s2)", "v(plus,minus)", "i(L1)"]
+}

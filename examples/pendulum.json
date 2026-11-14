@@ -1,0 +1,47 @@
+{
+  // Mechanics with a constraint: a pendulum in Cartesian coordinates. The rod
+  // keeps the mass on a circle, x^2 + y^2 = L^2, and its force is the unknown
+  // lam. Written with the position constraint alone this is a DAE of index 3,
+  // which no general-purpose integrator handles well. The remedy used here
+  // (Gear, Gupta, Leimkuhler) adds the velocity constraint x u + y v = 0 with a
+  // second multiplier mu; the result has index 2 and both constraints hold to
+  // rounding accuracy.
+  //
+  // Exact period for an amplitude of 0.5 rad: 2.03787 s.
+  "title": "Pendulum as a constrained mechanical system (index 2)",
+
+  "parameters": { "g": 9.81, "L": 1, "theta0": 0.5 },
+
+  "variables": {
+    "x": "L*sin(theta0)",       // position
+    "y": "-L*cos(theta0)",
+    "u": 0,                     // velocity
+    "v": 0,
+    "lam": { "guess": 0 },      // rod force per unit length and mass
+    "mu":  { "guess": 0 }       // keeps the velocity tangential
+  },
+
+  "equations": [
+    "der(x) = u - 2*x*mu",
+    "der(y) = v - 2*y*mu",
+    "der(u) = -2*x*lam",
+    "der(v) = -g - 2*y*lam",
+    "0 = x^2 + y^2 - L^2",
+    "0 = x*u + y*v"
+  ],
+
+  "options": { "reltol": 1e-6 },
+
+  "analyses": [
+    // "uic": the multipliers cannot be computed from the algebraic equations
+    // alone; the first, very short step determines them.
+    { "type": "tran", "tstop": 10, "uic": true,
+      "measure": {
+        "period":       { "period": "x", "level": 0 },
+        "length_error": { "max": "abs(x^2 + y^2 - L^2)" },
+        "energy_drift": { "pp": "0.5*(u^2 + v^2) + g*y" }
+      } }
+  ],
+
+  "outputs": ["x", "y", "atan2(x, -y)", "lam"]
+}

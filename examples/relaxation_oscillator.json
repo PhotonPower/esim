@@ -1,0 +1,34 @@
+{
+  // Circuit with events: an RC network driven by an ideal Schmitt trigger, the
+  // principle of the 555 timer. The discrete variable s is the state of the
+  // flip-flop; it switches the output through the behavioral source.
+  // Period: 2 R C ln(2) = 1.386 ms.
+  "title": "RC relaxation oscillator with an ideal Schmitt trigger",
+
+  "parameters": { "Vcc": 5, "R": "10k", "C": "100n" },
+
+  "variables": { "s": { "discrete": 1 } },
+  "equations": [],
+
+  "events": [
+    { "when": "v(c) > 2*Vcc/3", "set": { "s": 0 } },
+    { "when": "v(c) < Vcc/3",   "set": { "s": 1 } }
+  ],
+
+  "components": [
+    { "type": "B", "name": "Bout", "nodes": ["out", "0"], "v": "Vcc*s" },
+    { "type": "R", "name": "R1", "nodes": ["out", "c"], "value": "R" },
+    { "type": "C", "name": "C1", "nodes": ["c", "0"], "value": "C", "ic": 0 }
+  ],
+
+  "analyses": [
+    // Start from the discharged capacitor.
+    { "type": "tran", "tstop": "8m", "uic": true },
+
+    // The same run for several capacitors, all in one file with C as first column.
+    { "type": "tran", "name": "sweep", "tstop": "8m", "uic": true,
+      "param_sweep": { "param": "C", "values": ["47n", "100n", "220n"] } }
+  ],
+
+  "outputs": ["v(c)", "v(out)"]
+}

@@ -1,0 +1,35 @@
+{
+  // A characteristic from measured points: the current of a solar cell over
+  // its voltage. The table is used like a function in the behavioral source.
+  // The DC sweep traces the curve and the measurements find the point of
+  // maximum power.
+  "title": "Solar cell from a measured I-V curve: maximum power point",
+
+  "tables": {
+    // voltage [V] -> current [A]; monotone cubic interpolation between the points
+    "cell": {
+      "x": [0.00, 0.10, 0.20, 0.30, 0.40, 0.45, 0.50, 0.54, 0.57, 0.60],
+      "y": [3.00, 2.99, 2.98, 2.96, 2.88, 2.74, 2.38, 1.78, 1.02, 0.00],
+      "interp": "cubic",
+      "extrap": "linear"
+    }
+  },
+
+  "components": [
+    // The cell drives its current into node "p".
+    { "type": "B", "name": "Bcell", "nodes": ["0", "p"], "i": "cell(v(p))" },
+    // The sweep source acts as an adjustable load and measures the current.
+    { "type": "V", "name": "Vload", "nodes": ["p", "0"], "dc": 0 }
+  ],
+
+  "analyses": [
+    { "type": "dc", "source": "Vload", "start": 0, "stop": 0.6, "step": 0.002,
+      "measure": {
+        "p_max": { "max":    "v(p)*i(Vload)" },
+        "v_mpp": { "argmax": "v(p)*i(Vload)" },
+        "i_sc":  { "at": "i(Vload)", "x": 0 }
+      } }
+  ],
+
+  "outputs": ["i(Vload)", "v(p)*i(Vload)"]
+}

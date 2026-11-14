@@ -1,0 +1,32 @@
+{
+  // Classic two-transistor multivibrator. The DC operating point is the
+  // (unstable) symmetric state, so the simulation starts from initial
+  // conditions instead: one collector high, everything else at 0 V.
+  // Period is roughly 2 * ln(2) * R * C = 1.4 ms.
+  "title": "Astable multivibrator",
+
+  "models": {
+    "npn": { "type": "npn", "is": 1e-14, "bf": 200, "br": 2, "cje": "10p", "cjc": "5p",
+             "tf": "0.5n" }
+  },
+
+  "components": [
+    { "type": "V", "name": "VCC", "nodes": ["vcc", "0"], "dc": 5 },
+    { "type": "R", "name": "RC1", "nodes": ["vcc", "c1"], "value": "1k" },
+    { "type": "R", "name": "RC2", "nodes": ["vcc", "c2"], "value": "1k" },
+    { "type": "R", "name": "RB1", "nodes": ["vcc", "b1"], "value": "10k" },
+    { "type": "R", "name": "RB2", "nodes": ["vcc", "b2"], "value": "10k" },
+    { "type": "C", "name": "C1", "nodes": ["c1", "b2"], "value": "100n" },
+    { "type": "C", "name": "C2", "nodes": ["c2", "b1"], "value": "100n" },
+    { "type": "Q", "name": "Q1", "nodes": ["c1", "b1", "0"], "model": "npn" },
+    { "type": "Q", "name": "Q2", "nodes": ["c2", "b2", "0"], "model": "npn" }
+  ],
+
+  "ic": { "vcc": 5, "c1": 5 },
+
+  "analyses": [
+    { "type": "tran", "tstop": "10m", "uic": true }
+  ],
+
+  "outputs": ["v(c1)", "v(c2)", "v(b1)", "v(b2)"]
+}

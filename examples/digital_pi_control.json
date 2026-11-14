@@ -1,0 +1,53 @@
+{
+  // A sampled controller acting on a continuous plant. Every Ts the PI
+  // controller reads the output voltage and updates its discrete states; in
+  // between the plant (two RC stages) runs with a constant drive voltage.
+  // At 30 ms a load switches on and the controller compensates the drop.
+  "title": "Digital PI controller on an RC plant",
+
+  "parameters": {
+    "Ts": "500u",       // sampling period
+    "Kp": 0.8,
+    "Ki": 400,          // 1/s
+    "ref": 2.5,         // set point [V]
+    "umax": 5           // the drive saturates at 0 and umax
+  },
+
+  "variables": {
+    "integ": { "discrete": 0 },
+    "u":     { "discrete": 0 }
+  },
+  "equations": [],
+
+  "events": [
+    // All right-hand sides are evaluated with the values before the event.
+    { "every": "Ts",
+      "set": {
+        "integ": "min(umax, max(0, integ + Ki*Ts*(ref - v(y))))",
+        "u":     "min(umax, max(0, Kp*(ref - v(y)) + integ + Ki*Ts*(ref - v(y))))"
+      } }
+  ],
+
+  "components": [
+    { "type": "B", "name": "Bdrive", "nodes": ["drive", "0"], "v": "u" },
+    { "type": "R", "name": "R1", "nodes": ["drive", "m"], "value": "1k" },
+    { "type": "C", "name": "C1", "nodes": ["m", "0"], "value": "1u" },
+    { "type": "R", "name": "R2", "nodes": ["m", "y"], "value": "1k" },
+    { "type": "C", "name": "C2", "nodes": ["y", "0"], "value": "1u" },
+
+    // Load step: 4.7 kOhm from t = 30 ms on.
+    { "type": "S", "name": "Sload", "nodes": ["y", "load"], "control": "t", "vt": "30m" },
+    { "type": "R", "name": "Rload", "nodes": ["load", "0"], "value": "4.7k" }
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": "60m",
+      "measure": {
+        "settled":   { "final": "v(y)" },
+        "overshoot": { "max": "v(y)", "to": "30m" },
+        "dip":       { "min": "v(y)", "from": "30m" }
+      } }
+  ],
+
+  "outputs": ["v(y)", "u"]
+}

@@ -1,0 +1,746 @@
+# ESIM
+
+Simulator für analoge Schaltungen und differential-algebraische Gleichungen
+(DAE) in C++17. Die Eingabe ist eine JSON-Datei, die Ergebnisse sind CSV.
+
+Simuliert werden
+
+- **Schaltungen** aus Widerständen, Kondensatoren, Spulen, Quellen, Dioden,
+  Bipolartransistoren, MOSFETs, idealen Schaltern und idealen Dioden,
+- **Gleichungssysteme**, die direkt in der Eingabedatei stehen: gewöhnliche
+  Differentialgleichungen mit algebraischen Nebenbedingungen,
+- **Ereignisse**: Umschaltungen und Sprünge, die vom Zustand abhängen
+  (Schalter, Anschläge, Hysterese),
+- und **alles gekoppelt** in einem System (z. B. Elektrik + Thermik + Regler).
+
+Der numerische Kern löst allgemein
+
+    d/dt q(x) + f(x, t) = 0
+
+und weiß nichts von Schaltungen. Zeilen mit `q_i = 0` sind algebraische
+Bedingungen, alle anderen Differentialgleichungen. Eine Schaltung liefert `f`
+(Ströme) und `q` (Ladungen, Flüsse) über die modifizierte Knotenanalyse, ein
+Gleichungsblock liefert sie aus dem Text der Gleichungen.
+
+## Bauen und Starten
+
+Voraussetzungen: CMake ≥ 3.18, ein C++17-Compiler. Eigen und nlohmann/json
+werden verwendet, wenn sie installiert sind (`brew install eigen nlohmann-json`),
+sonst lädt CMake sie herunter.
+
+    cmake -S . -B build
+    cmake --build build
+    ./build/esim_tests                    # Testsuite (oder: cd build && ctest)
+
+    ./build/esim examples/bjt_amplifier.json -o results
+
+Der Arbeitspunkt wird auf der Konsole ausgegeben, alle anderen Analysen landen
+in `<Ausgabeordner>/<Dateiname>.<Analyse>.csv`, z. B.
+`results/bjt_amplifier.tran.csv`.
+
+Beispiele in [`examples/`](examples):
+
+| Datei | Inhalt |
+|-------|--------|
+| `rc_lowpass.json` | Arbeitspunkt, Frequenzgang, Pulsantwort |
+| `rlc_ringing.json` | gedämpfte Schwingung aus Anfangsbedingungen |
+| `bridge_rectifier.json` | Brückengleichrichter mit Z-Diode |
+| `bjt_amplifier.json` | Emitterschaltung: Arbeitspunkt, AC, Transient |
+| `cmos_inverter.json` | Übertragungskennlinie (DC-Sweep) und Schaltvorgang |
+| `astable_multivibrator.json` | Kippschwinger mit zwei Transistoren |
+| `dae_robertson.json` | steifes DAE ohne Schaltung (Reaktionskinetik) |
+| `vanderpol.json` | nichtlinearer Oszillator als Gleichungssystem |
+| `ntc_inrush.json` | Schaltung und Gleichungen gekoppelt: Heißleiter mit Eigenerwärmung |
+| `bouncing_ball.json` | Ereignis mit Zustands-Reset |
+| `thermostat.json` | Zweipunktregler mit Hysterese (diskrete Variable), Ausgabe auf festem Raster |
+| `relaxation_oscillator.json` | Schaltung mit Ereignissen (Prinzip des 555), Parameter-Sweep |
+| `buck_converter.json` | Tiefsetzsteller mit idealem Schalter und idealer Diode |
+| `opamp_filter.json` | aktives Filter aus verschachtelten Subcircuits, Messgrößen |
+| `transformer_supply.json` | Transformator (gekoppelte Spulen), Brückengleichrichter, Messgrößen |
+| `solar_cell.json` | Kennlinie aus einer Tabelle, Punkt maximaler Leistung per DC-Sweep |
+| `digital_pi_control.json` | abgetasteter PI-Regler (Zeitereignisse) an einer Regelstrecke |
+| `pendulum.json` | Mechanik mit Zwangsbedingung (DAE vom Index 2) |
+
+### Ergebnisse plotten
+
+`tools/plot.py` zeichnet die CSV-Dateien mit matplotlib (`pip install matplotlib`):
+
+    python3 tools/plot.py results/buck_converter.tran.csv
+    python3 tools/plot.py results/bjt_amplifier.ac.csv -o bode.png
+    python3 tools/plot.py results/relaxation_oscillator.sweep.csv --cols "v\(c\)"
+
+Die Darstellung richtet sich nach der Datei: Zeitverläufe mit getrennten Feldern
+für Spannungen, Ströme und übrige Größen, Frequenzgänge als Betrag in dB und
+(entfaltete) Phase über logarithmischer Frequenz, DC-Sweeps über der ersten
+Spalte, Parameter-Sweeps mit einer Kurve je Parameterwert. `--cols` wählt
+Spalten per regulärem Ausdruck, `--separate` gibt jeder Größe ein eigenes Feld,
+`-o` schreibt ein Bild statt ein Fenster zu öffnen. Mehrere Dateien werden
+übereinandergelegt.
+
+## Eingabeformat
+
+Kommentare (`//`, `/* */`) sind erlaubt. Unbekannte Schlüssel erzeugen eine
+Warnung. Eine Datei enthält `components`, `equations` oder beides.
+
+```jsonc
+{
+  "title": "Einweggleichrichter",
+
+  "models": {
+    "1N4148": { "type": "diode", "is": 2.5e-9, "n": 1.75, "cj0": "4p", "tt": "20n" }
+  },
+
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["in", "0"],
+      "wave": { "type": "sin", "amplitude": 5, "freq": "1k" } },
+    { "type": "D", "name": "D1", "nodes": ["in", "out"], "model": "1N4148" },
+    { "type": "R", "name": "R1", "nodes": ["out", "0"], "value": "10k" },
+    { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "1u" }
+  ],
+
+  "analyses": [
+    { "type": "op" },
+    { "type": "tran", "tstop": "5m" }
+  ],
+
+  "outputs": ["v(in)", "v(out)", "i(V1)"]
+}
+```
+
+### Zahlen und Parameter
+
+Ein Zahlenwert ist eine JSON-Zahl, ein String mit SI-Präfix und optionaler
+Einheit (`"4.7k"`, `"100nF"`, `"2.2M"`) oder ein Ausdruck aus Parametern
+(`"2*R0"`, `"1/(2*pi*R0*C0)"`). Die Präfixe unterscheiden Groß-/Kleinschreibung
+(anders als in SPICE):
+
+| f | p | n | u, µ | m | k, K | M, meg | G | T |
+|---|---|---|------|---|------|--------|---|---|
+| 1e-15 | 1e-12 | 1e-9 | 1e-6 | 1e-3 | 1e3 | 1e6 | 1e9 | 1e12 |
+
+Buchstaben nach dem Präfix gelten als Einheit und werden ignoriert (`"1F"` ist
+1, nicht 1 Femto). In Ausdrücken ist nur das Präfix erlaubt (`4.7k*2`), keine
+Einheit.
+
+Parameter sind benannte Konstanten. Sie dürfen sich aufeinander beziehen, die
+Reihenfolge spielt keine Rolle:
+
+```jsonc
+"parameters": { "R0": "1k", "C0": "100n", "tau": "R0*C0" }
+```
+
+### Ausdrücke
+
+Ausdrücke stehen in Gleichungen, Verhaltensquellen, Ausgängen und überall, wo
+eine Zahl erwartet wird (dort nur mit Parametern).
+
+| | |
+|---|---|
+| Operatoren | `+ - * /`, Potenz `^` oder `**`, Vergleiche `< <= > >= == !=`, Logik `&& \|\| !` |
+| Funktionen | `sin cos tan asin acos atan atan2(y,x) sinh cosh tanh exp log ln log10 sqrt abs sign min max pow(a,b)` |
+| Fallunterscheidung | `if(bedingung, dann, sonst)` |
+| Tabellen | `name(x)` für eine unter `tables` definierte Kennlinie |
+| Namen | Variablen, Parameter, `t` (oder `time`), `pi` |
+| Schaltungsgrößen | `v(knoten)`, `v(a,b)`, `i(bauteil)` |
+| Zeitableitung | `der(ausdruck)`, nur in Gleichungen |
+
+Die Ableitungen für das Newton-Verfahren werden automatisch und exakt gebildet.
+Unstetige Ausdrücke (Vergleiche, `if`, `abs`, `sign`, `min`, `max`) sind in
+Gleichungen und Verhaltensquellen erlaubt: Die Stelle, an der ein Vergleich
+kippt, wird als [Ereignis](#ereignisse) exakt bestimmt.
+
+### Tabellen
+
+Kennlinien aus Stützstellen, etwa Messdaten, werden unter `tables` definiert
+und in Ausdrücken wie eine Funktion aufgerufen:
+
+```jsonc
+"tables": {
+  "cell": { "x": [0, 0.3, 0.5, 0.6], "y": [3.0, 2.96, 2.38, 0], "interp": "cubic" },
+  "ntc":  { "file": "ntc_curve.csv", "xcol": 0, "ycol": 1 }
+},
+"components": [
+  { "type": "B", "name": "Bcell", "nodes": ["0", "p"], "i": "cell(v(p))" }
+]
+```
+
+- Daten: `x` und `y`, oder `points` als Liste von `[x, y]`, oder `file`: eine
+  Textdatei mit Zahlenspalten (Komma, Semikolon oder Leerzeichen als Trenner;
+  Zeilen, die nicht mit einer Zahl beginnen, werden übersprungen). Der Pfad
+  gilt relativ zur Eingabedatei, `xcol` und `ycol` wählen die Spalten (ab 0).
+  `x` muss streng steigend sein.
+- `interp`: `linear` (Standard) oder `cubic`. Die kubische Interpolation ist
+  monoton (PCHIP): glatte Steigung, aber kein Überschwingen zwischen den
+  Stützstellen. Für Kennlinien in Gleichungen und Quellen ist sie meist die
+  bessere Wahl, weil das Newton-Verfahren dann eine stetige Ableitung sieht.
+- `extrap`: außerhalb der Daten wird der Randwert gehalten (`hold`, Standard)
+  oder mit der Randsteigung fortgesetzt (`linear`).
+
+### Gleichungen
+
+```jsonc
+"variables": {
+  "y1": 1,                               // Anfangswert
+  "y2": { "init": 0, "abstol": 1e-12 },  // Anfangswert mit eigener Toleranz
+  "y3": { "guess": 0.5 }                 // nur Startwert für den Löser
+},
+"equations": [
+  "der(y1) = -0.04*y1 + 1e4*y2*y3",
+  "der(y2) =  0.04*y1 - 1e4*y2*y3 - 3e7*y2^2",
+  "0 = y1 + y2 + y3 - 1"
+]
+```
+
+Es braucht genauso viele Gleichungen wie Variablen. Eine Gleichung ohne `der()`
+ist eine algebraische Bedingung. `der()` darf einen beliebigen Ausdruck der
+Unbekannten einschließen, muss aber linear mit konstantem Faktor in der
+Gleichung stehen:
+
+    m*der(v) = F - k*x                  ok
+    der(C0*u + C1*u^2) = -u/R           ok (nichtlineare "Ladung")
+    der(x) + der(y) = -x                ok
+    x*der(y) = 1                        nicht erlaubt -> Hilfsvariable einführen:
+                                        der(y) = dy  und  x*dy = 1
+
+Gleichungen höherer Ordnung werden als System erster Ordnung geschrieben
+(`der(x) = v`, `der(v) = ...`).
+
+**Anfangswerte.** Eine Variable, die in einem `der()` vorkommt, ist ein Zustand.
+
+- Zahl oder `"init"`: Der Zustand startet bei diesem Wert.
+- `"guess"` oder `null`: Der Zustand startet im Gleichgewicht (seine
+  Zeitableitung ist bei t = 0 null); der Wert ist nur Startwert für Newton.
+- Für algebraische Variablen ist jeder Wert nur ein Startwert: Vor der
+  Integration werden sie so bestimmt, dass alle algebraischen Gleichungen
+  erfüllt sind (konsistente Anfangswerte).
+
+Die Analysen `op`, `dc` und `ac` rechnen immer mit dem Gleichgewicht aller
+Gleichungen; die vorgegebenen Anfangswerte gelten nur für `tran`.
+
+### Ereignisse
+
+**Automatisch.** Jeder Vergleich (`<`, `<=`, `>`, `>=`) und jedes `abs`, `sign`,
+`min`, `max` in Gleichungen und Verhaltensquellen wird überwacht. Kippt eines
+davon während eines Zeitschritts, sucht der Löser den Zeitpunkt, endet dort,
+schaltet um und startet die Integration neu. Bis dahin rechnet er mit dem alten
+Zweig weiter, sodass z. B. `der(z) = if(t < 1, 1, -2)` exakt bei t = 1 knickt.
+Dafür ist nichts weiter anzugeben.
+
+**Mit Aktion.** Ein Eintrag unter `events` weist Zuständen neue Werte zu. Er
+hat genau einen Auslöser:
+
+| Auslöser | feuert |
+|----------|--------|
+| `"when": "h < 0"` | in dem Moment, in dem die Bedingung wahr *wird* |
+| `"every": "1m"` | periodisch; erstmals nach einer Periode oder bei `"start"` |
+| `"at": 2.5` oder `"at": [1, 2.5]` | zu den angegebenen Zeiten |
+
+Ein Beispiel mit Bedingung:
+
+```jsonc
+"variables": { "h": 1, "v": 0 },
+"equations": [ "der(h) = v", "der(v) = -g" ],
+"events": [
+  { "when": "h < 0", "set": { "v": "-0.8*v" } }      // springender Ball
+]
+```
+
+- Die rechten Seiten von `set` werden mit den Werten vor dem Ereignis
+  berechnet, erst dann wird zugewiesen. Löst eine Zuweisung weitere Bedingungen
+  aus, feuern diese im selben Zeitpunkt.
+- Zuweisen lassen sich Zustände (Variablen in einem `der()`), diskrete
+  Variablen sowie Größen der Schaltung: `"v(c)"` für die Spannung eines
+  Knotens mit Kondensator, `"i(L1)"` für einen Spulenstrom. Algebraische
+  Größen ergeben sich nach dem Ereignis neu aus den Gleichungen; eine
+  Zuweisung an sie bleibt wirkungslos.
+- Zeitereignisse werden exakt getroffen. Mit `every` entsteht ein abgetastetes
+  System: Ein Regler liest zu festen Zeiten die Schaltung aus und ändert seine
+  diskreten Zustände, dazwischen läuft die Strecke kontinuierlich
+  (`examples/digital_pi_control.json`).
+- Eine Bedingung, die schon beim Start wahr ist, löst nicht aus.
+- In der Ausgabe steht am Ereigniszeitpunkt der Zustand *vor* der Zuweisung,
+  der nächste Punkt (unmittelbar danach) zeigt den neuen.
+
+**Diskrete Variablen** ändern sich nur durch Zuweisungen und sind dazwischen
+konstant: Schaltzustände, Betriebsarten, Zähler. Sie brauchen keine Gleichung:
+
+```jsonc
+"variables": { "T": 15, "heat": { "discrete": 1 } },
+"equations": [ "Cth*der(T) = P*heat - (T - Tout)/Rth" ],
+"events": [
+  { "when": "T > 22", "set": { "heat": 0 } },         // Zweipunktregler
+  { "when": "T < 20", "set": { "heat": 1 } }          // mit Hysterese
+]
+```
+
+In `op`, `dc` und `ac` behalten diskrete Variablen ihren Startwert.
+
+**Schalter und ideale Dioden** sind Ereignisse ohne weitere Angaben, ebenso
+Vergleiche in Verhaltensquellen.
+
+**Grenzen.** Ein Modell, das ohne Hysterese hin- und herschaltet
+(`der(x) = if(x < 1, 1, -1)` pendelt um x = 1) oder dessen Ereignisse sich
+häufen (der Ball springt unendlich oft in endlicher Zeit), bricht nach
+`max_events` Ereignissen mit einer Fehlermeldung ab. Der Löser sucht
+Vorzeichenwechsel am Ende und an drei Stellen im Inneren jedes Zeitschritts;
+ein Hin- und Rückwechsel, der kürzer als ein Viertelschritt ist, kann
+unbemerkt bleiben. `tstep` begrenzt die Schrittweite.
+
+### Kopplung mit der Schaltung
+
+Gleichungen lesen die Schaltung über `v(...)` und `i(...)`. In die andere
+Richtung wirkt das Verhaltensbauteil `B`, dessen Strom, Spannung oder Ladung
+ein Ausdruck ist, der auch Variablen enthalten darf:
+
+```jsonc
+"variables": { "T": 298.15, "Rntc": { "guess": 10 } },
+"equations": [
+  "Cth*der(T) = v(in,mid)^2/Rntc - (T - Tamb)/Rth",     // Wärmebilanz
+  "Rntc = R25*exp(B*(1/T - 1/T0))"                       // Kennlinie
+],
+"components": [
+  { "type": "B", "name": "NTC", "nodes": ["in", "mid"], "i": "v(in,mid)/Rntc" }
+]
+```
+
+Das vollständige Beispiel ist `examples/ntc_inrush.json`.
+
+### Knoten
+
+Knotennamen sind beliebige Strings (oder ganze Zahlen). Masse heißt `"0"` oder
+`"gnd"`. Jede Schaltung braucht einen Massebezug, und jeder Knoten braucht einen
+Gleichstrompfad nach Masse. In Ausdrücken sind nur Knotennamen ohne Komma und
+Klammern verwendbar.
+
+### Bauteile
+
+`type` akzeptiert den SPICE-Buchstaben oder den langen Namen. `name` ist
+optional, wird aber für `i(...)`, `dc`-Sweeps und gesteuerte Quellen gebraucht.
+Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibung.
+
+| type | Bauteil | nodes | Parameter |
+|------|---------|-------|-----------|
+| `R`, `resistor` | Widerstand | a, b | `value` |
+| `C`, `capacitor` | Kondensator | a, b | `value`, `ic` (Spannung a−b bei t=0) |
+| `L`, `inductor` | Spule | a, b | `value`, `ic` (Strom a→b bei t=0) |
+| `V`, `vsource` | Spannungsquelle | +, − | `dc`, `wave`, `ac`, `acphase` |
+| `I`, `isource` | Stromquelle (Strom von Knoten 1 durch die Quelle nach Knoten 2) | von, nach | `dc`, `wave`, `ac`, `acphase` |
+| `E`, `vcvs` | spannungsgesteuerte Spannungsquelle | +, −, Steuer+, Steuer− | `gain` |
+| `G`, `vccs` | spannungsgesteuerte Stromquelle | von, nach, Steuer+, Steuer− | `gm` |
+| `F`, `cccs` | stromgesteuerte Stromquelle | von, nach | `control` (Name einer V-Quelle/Spule), `gain` |
+| `H`, `ccvs` | stromgesteuerte Spannungsquelle | +, − | `control`, `r` |
+| `B`, `behavioral` | Verhaltensquelle | +, − | genau eines von `i`, `v`, `q` (Ausdruck) |
+| `K`, `coupling` | magnetische Kopplung | – | `inductors`: zwei Spulennamen, `k` (−1 < k < 1) |
+| `X`, `subcircuit` | Instanz eines Subcircuits | Anschlüsse in der Reihenfolge von `ports` | `subcircuit`, `parameters` |
+| `S`, `switch` | idealer Schalter | a, b [, Steuer+, Steuer−] | `control` (Ausdruck, bei zwei Knoten), `vt`, `vh`, `ron`, `roff`, `initial` |
+| `ideal_diode` | ideale Diode | Anode, Kathode | `vf`, `ron`, `roff` |
+| `D`, `diode` | Diode | Anode, Kathode | `is` `n` `rs` `cj0` `vj` `m` `fc` `tt` `bv` `ibv` `eg` `xti` |
+| `Q`, `npn`, `pnp` | Bipolartransistor | C, B, E | `is` `bf` `br` `nf` `nr` `vaf` `var` `ikf` `ikr` `ise` `ne` `isc` `nc` `rb` `rc` `re` `cje` `vje` `mje` `cjc` `vjc` `mjc` `tf` `tr` `fc` `eg` `xti` `xtb` |
+| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` |
+
+Verhaltensquelle `B`:
+
+- `"i": "..."` Strom vom Plus-Knoten durch das Bauteil zum Minus-Knoten. Ein
+  nichtlinearer Widerstand ist `"i": "1e-3*tanh(v(a,b)/0.1)"`.
+- `"v": "..."` Spannung zwischen den Knoten (mit eigenem Zweigstrom `i(Name)`).
+- `"q": "..."` gespeicherte Ladung; der Strom ist ihre Zeitableitung. Ein
+  spannungsabhängiger Kondensator ist `"q": "C0*v(a,b) + C1*v(a,b)^2"`.
+
+Kopplung `K`: `{ "type": "K", "inductors": ["L1", "L2"], "k": 0.99 }` koppelt zwei
+Spulen mit der Gegeninduktivität `M = k·sqrt(L1·L2)`. Der erste Knoten jeder
+Spule trägt den Punkt. Ein Übertrager mit Übersetzung n hat `L2 = n²·L1`.
+
+Schalter `S`:
+
+- Mit vier Knoten steuert die Spannung zwischen den Steuerknoten (wie in SPICE),
+  mit zwei Knoten ein beliebiger Ausdruck: `"control": "v(gate)"`,
+  `"control": "i(L1)"`, `"control": "sin(2*pi*50*t)"`, eine Variable, …
+- Der Schalter schließt, wenn die Steuergröße über `vt + vh` steigt, und öffnet,
+  wenn sie unter `vt − vh` fällt (`vt` Schwelle, `vh` halbe Hysteresebreite,
+  beide Standard 0).
+- `ron` (Standard 1 mΩ) und `roff` (Standard 1 GΩ) sind die Widerstände in
+  beiden Stellungen. `"initial": "on"` legt die Stellung fest, solange die
+  Steuergröße beim Start innerhalb des Hysteresebands liegt.
+
+Ideale Diode `ideal_diode`: sperrt unterhalb der Flussspannung `vf` (Standard 0)
+mit `roff` und leitet darüber mit der Steigung `1/ron`. Im Unterschied zur
+Diode `D` hat sie keine Exponentialkennlinie und keine Ladung; sie ist für
+Leistungselektronik und Gleichrichter gedacht, wenn nur das Schaltverhalten
+interessiert.
+
+Beide Bauteile schalten als [Ereignis](#ereignisse): Der Umschaltzeitpunkt wird
+exakt bestimmt. Hängen mehrere voneinander ab (ein Schalter öffnet an einer
+Spule, also muss die Freilaufdiode leiten), stellen sie sich im selben
+Zeitpunkt gemeinsam ein, ohne künstliche Spannungsspitze.
+
+Halbleiterparameter können direkt am Bauteil stehen oder über `"model": "<Name>"`
+aus `models` kommen; Angaben am Bauteil überschreiben das Modell (z. B. `w`, `l`).
+Die Polarität eines Transistors ergibt sich aus dem `type` des Bauteils (`npn`,
+`pmos`, …) oder des Modells. Die Parameternamen und Standardwerte folgen SPICE.
+
+Ein Modell kann auch als SPICE-Zeile angegeben werden, wie sie Hersteller
+veröffentlichen:
+
+```jsonc
+"models": {
+  "Q2N2222": ".model Q2N2222 NPN(Is=14.34f Bf=255.9 Vaf=74.03 Ikf=.2847 Ise=14.34f Ne=1.307 Rb=10 Rc=1 Cje=22.01p Cjc=7.306p Tf=411.1p Tr=46.91n)"
+}
+```
+
+Unterstützt werden die Typen `D`, `NPN`, `PNP`, `NMOS`, `PMOS`. Zahlen folgen
+dabei der SPICE-Schreibweise (`m` = Milli, `meg` = Mega, ohne Unterscheidung
+von Groß- und Kleinschreibung). Parameter, die hier keine Wirkung haben, werden
+einmal aufgelistet und übergangen.
+
+Modellumfang:
+
+- **Diode**: Shockley-Gleichung mit Bahnwiderstand, Sperrschicht- und
+  Diffusionskapazität, Durchbruch (`bv`, `ibv`) für Z-Dioden.
+- **BJT**: Gummel-Poon-Modell mit Early-Effekt (`vaf`, `var`),
+  Hochstromabfall der Verstärkung (`ikf`, `ikr`), Leckströmen (`ise`, `ne`,
+  `isc`, `nc`), Bahnwiderständen (`rb`, `rc`, `re`) sowie Sperrschicht- und
+  Diffusionsladungen. Nicht enthalten: Substratdiode, stromabhängiger
+  Basiswiderstand, Arbeitspunktabhängigkeit der Transitzeit (`xtf`, `vtf`, `itf`).
+- **MOSFET**: SPICE Level 1 (Shichman-Hodges) mit Substrateffekt,
+  Kanallängenmodulation, Bulk-Dioden, Überlapp- und Sperrschichtkapazitäten.
+  Mit `tox` (Oxiddicke) kommt die Ladung des Kanals hinzu: ladungserhaltend,
+  in Sättigung 40 : 60 auf Drain und Source verteilt, Gate-Kapazität 2/3·Cox in
+  Sättigung und Cox im Widerstandsbereich und unterhalb der Schwelle. Für
+  Kurzkanal-Transistoren (BSIM) ist das Modell nicht gedacht.
+- **Temperatur**: `options.temp` ist die Temperatur der Schaltung, `tnom`
+  (Standard 27 °C) die, für die die Modellparameter gelten. Skaliert werden die
+  Sättigungsströme aller pn-Übergänge (`eg`, `xti`), die Stromverstärkung
+  (`xtb`), die Beweglichkeit im MOSFET (`kp` ~ T^−1,5) und auf Wunsch die
+  Schwellspannung (`tcv` in V/K). Sperrschichtpotentiale und Kapazitäten
+  bleiben unverändert.
+
+### Subcircuits
+
+Wiederverwendbare Teilschaltungen stehen unter `subcircuits` und werden mit dem
+Bauteil `X` eingesetzt:
+
+```jsonc
+"subcircuits": {
+  "divider": {
+    "ports": ["in", "out"],
+    "parameters": { "ratio": 0.5, "rtotal": "10k" },
+    "components": [
+      { "type": "R", "name": "R1", "nodes": ["in", "out"], "value": "(1 - ratio)*rtotal" },
+      { "type": "R", "name": "R2", "nodes": ["out", "0"],  "value": "ratio*rtotal" }
+    ]
+  }
+},
+"components": [
+  { "type": "X", "name": "X1", "subcircuit": "divider", "nodes": ["a", "b"] },
+  { "type": "X", "name": "X2", "subcircuit": "divider", "nodes": ["a", "c"],
+    "parameters": { "ratio": 0.25 } }
+]
+```
+
+- **Knoten:** Die Namen in `ports` stehen für die außen angeschlossenen Knoten,
+  alle anderen Knoten sind lokal. Masse (`"0"`) ist überall dieselbe.
+- **Parameter:** `parameters` enthält die Standardwerte; sie dürfen sich auf
+  globale Parameter und aufeinander beziehen. Die Instanz überschreibt einzelne
+  Werte mit `"parameters": {...}`.
+- **Inhalt:** alle Bauteile, auch weitere Instanzen (Schachtelung bis 20 Ebenen),
+  dazu eigene `variables`, `equations` und `events`. Ein Bauteil mit
+  thermischem Zustand oder eigener Kennlinie lässt sich so als Modell kapseln
+  und mehrfach verwenden.
+- **Namen von außen:** Was in der Instanz `X1` liegt, heißt `X1.<Name>`, bei
+  Schachtelung `X1.U.<Name>`: `v(X1.mid)`, `i(X1.V1)`, die Variable `X1.T`,
+  die Quelle `"source": "X1.V1"` im DC-Sweep. In der Standardausgabe (ohne
+  `outputs`) erscheint das Innere von Instanzen nicht.
+- Innerhalb eines Subcircuits beziehen sich `i(...)` und `control` auf Bauteile
+  desselben Subcircuits.
+
+### Quellen
+
+`dc` ist der Wert für Arbeitspunkt, DC-Sweep und AC-Arbeitspunkt. `wave`
+beschreibt den Zeitverlauf für die Transientenanalyse; ohne `dc` gilt in den
+DC-Analysen der Wert von `wave` bei t = 0. `ac` (Amplitude) und `acphase`
+(Grad) sind die Kleinsignalanregung für die AC-Analyse.
+
+| wave.type | Parameter |
+|-----------|-----------|
+| `sin` | `offset`, `amplitude`, `freq`, `delay`, `damping` (1/s), `phase` (Grad) |
+| `pulse` | `v1`, `v2`, `delay`, `rise`, `fall`, `width`, `period` (ohne `period`: Einzelpuls; `rise`/`fall` Standard 0,1 % der Periode) |
+| `pwl` | `points`: `[[t0, v0], [t1, v1], …]` |
+| `dc` | `value` |
+
+Vorzeichen: `i(V1)` ist der Strom vom Plus-Knoten *durch die Quelle* zum
+Minus-Knoten, also negativ, solange die Quelle Leistung abgibt.
+
+### Analysen
+
+| type | Parameter | Ergebnis |
+|------|-----------|----------|
+| `op` | – | Arbeitspunkt (Konsole) |
+| `dc` | `source`, `start`, `stop`, `step` | Sweep einer V- oder I-Quelle |
+| `ac` | `sweep` (`dec`/`oct`/`lin`), `points`, `fstart`, `fstop` | Betrag und Phase (Grad) je Ausgang |
+| `tran` | `tstop`, optional `tstep`, `hmax`, `hinit`, `hmin`, `method`, `max_order`, `uic`, `output_step`, `max_events` | Zeitverlauf |
+
+Jede Analyse kann mit `"outputs": [...]` eigene Ausgänge und mit `"name"` einen
+eigenen Dateinamen bekommen.
+
+Transientenanalyse:
+
+- Start: Die Schaltung beginnt in ihrem Arbeitspunkt, Zustände von Gleichungen
+  bei ihren Anfangswerten (siehe oben).
+- `"uic": true` überspringt diese Anfangslösung und startet von den
+  Anfangsbedingungen: `ic` an Kondensatoren und Spulen,
+  `"ic": {"knoten": spannung}` auf oberster Ebene, die Startwerte der
+  Variablen; alles andere ist 0.
+- Die Schrittweite wird automatisch gewählt. `tstep` ist die gewünschte
+  Auflösung: kein Schritt wird länger (Standard: `tstop/50`).
+- `method` wählt das Verfahren:
+  - `bdf` (Standard): BDF mit variabler Ordnung 1 bis 5. Nach jedem Schritt
+    wird die Ordnung gewählt, die den größten nächsten Schritt erlaubt. Bei
+    glatten Lösungen und engen Toleranzen braucht es ein Vielfaches weniger
+    Schritte als ein Verfahren fester Ordnung; `"max_order"` begrenzt die Ordnung.
+  - `gear2`: BDF fester Ordnung 2. Robust, klingelt nicht, dämpft
+    Schwingungen leicht.
+  - `trap`: Trapezregel. Keine numerische Dämpfung, deshalb die beste Wahl
+    für schwach gedämpfte Schwingkreise über viele Perioden; dafür können
+    Ströme von Spannungsquellen von Schritt zu Schritt leicht alternieren.
+  - `be`: Rückwärts-Euler, erste Ordnung, sehr robust und stark dämpfend.
+- Sinusquellen begrenzen die Schrittweite auf ein Zwanzigstel ihrer Periode.
+- `"output_step": dt` gibt die Ergebnisse auf dem festen Raster 0, dt, 2·dt, …
+  aus (interpoliert zwischen den Zeitpunkten des Lösers, die Schrittweite
+  bleibt frei). Ohne diese Angabe wird jeder Zeitpunkt des Lösers ausgegeben.
+- `"max_events"` (Standard 100000) begrenzt die Zahl der Ereignisse.
+
+### Messgrößen
+
+Mit `measure` berechnet eine Analyse Kennwerte aus ihren Kurven. Ohne Sweep
+erscheinen sie auf der Konsole:
+
+```jsonc
+{ "type": "tran", "tstop": "200m",
+  "measure": {
+    "vdc":    { "avg": "v(out)", "from": "160m" },
+    "ripple": { "pp":  "v(out)", "from": "160m" },
+    "t90":    { "cross": "v(out)", "level": 13.5 }
+  } }
+```
+
+Jede Messung besteht aus einer Funktion mit dem auszuwertenden Ausdruck und
+Optionen. `x` ist dabei die Zeit, die Frequenz oder der Wert der gesweepten
+Quelle; in der AC-Analyse wird der Betrag ausgewertet.
+
+| Funktion | Ergebnis | Optionen |
+|----------|----------|----------|
+| `min`, `max`, `pp` | Extremwerte, Spitze-Spitze | |
+| `argmin`, `argmax` | x, bei dem der Extremwert liegt | |
+| `avg`, `rms`, `integ` | Mittelwert, Effektivwert, Integral über x | |
+| `final` | letzter Wert | |
+| `at` | Wert an der Stelle `x` | `x` |
+| `cross` | x des `n`-ten Durchgangs durch `level` | `level`, `n` (Standard 1), `edge`: `rise`, `fall`, `both` |
+| `period`, `freq`, `duty` | Periode, Frequenz, Tastgrad aus den steigenden Durchgängen | `level` (Standard: Mitte zwischen Minimum und Maximum) |
+| `rise`, `fall` | Anstiegs- / Abfallzeit zwischen zwei Pegeln | `low`, `high` (Standard: 10 % und 90 % des Hubs) |
+| `f3db`, `f3db_low` | obere / untere Stelle, an der die Kurve auf Maximum/√2 gefallen ist | |
+
+`from` und `to` beschränken jede Messung auf einen Ausschnitt. Eine Messung
+ohne Ergebnis (z. B. kein Durchgang gefunden) liefert „not defined" bzw. `nan`.
+Ausgewertet werden die ausgegebenen Punkte, mit `output_step` also das Raster.
+
+In einem Parameter-Sweep entsteht aus den Messungen eine Tabelle
+`<Name>.<Analyse>.measure.csv` mit einer Zeile je Parameterwert, etwa
+„Periode über C". `"save": false` an der Analyse unterdrückt die Datei mit den
+Kurven, wenn nur die Kennwerte interessieren.
+
+### Parameter-Sweep
+
+Jede Analyse lässt sich für mehrere Werte eines Parameters wiederholen. Alle
+Läufe stehen in einer CSV-Datei, deren erste Spalte der Parameterwert ist:
+
+```jsonc
+"parameters": { "C": "100n" },
+"analyses": [
+  { "type": "tran", "tstop": "8m",
+    "param_sweep": { "param": "C", "values": ["47n", "100n", "220n"] } },
+  { "type": "ac", "fstart": 10, "fstop": "1meg",
+    "param_sweep": { "param": "C", "start": "1n", "stop": "1u", "points": 4, "scale": "log" } }
+]
+```
+
+`scale` ist `lin` (Standard) oder `log`. Mit `op` entsteht eine Tabelle mit
+einer Zeile je Parameterwert. Abhängige Parameter (`"tau": "R*C"`) und alle
+Bauteilwerte, die den Parameter verwenden, werden für jeden Wert neu berechnet.
+
+### Ausgänge
+
+`"outputs"` enthält `v(knoten)`, `v(a,b)`, `i(bauteil)`, Variablennamen oder
+beliebige Ausdrücke daraus, z. B. `"v(out)*i(V1)"` oder `"T - 273.15"`. Die
+AC-Analyse akzeptiert nur die einfachen Formen. Zweigströme gibt es für
+Spannungsquellen, Spulen, E-, H- und B-Spannungsquellen; für andere Ströme eine
+0-V-Quelle in Reihe schalten. Ohne `outputs` werden alle Knotenspannungen,
+Zweigströme und Variablen ausgegeben.
+
+### Optionen und Startwerte
+
+```jsonc
+"options": {
+  "reltol": 1e-4,       // relative Toleranz: Newton und Fehler pro Zeitschritt
+  "vntol": 1e-6,        // absolute Toleranz für Spannungen [V]
+  "abstol": 1e-12,      // absolute Toleranz für Ströme [A]
+  "vartol": 1e-9,       // absolute Toleranz für Variablen (einzeln: "abstol" an der Variable)
+  "lte_floor": 0.1,     // Bezugsgröße des Zeitschrittfehlers, siehe unten
+  "trtol": 1,           // Faktor auf den zulässigen Zeitschrittfehler (>1: gröber, schneller)
+  "gmin": 1e-12,        // Leitwert parallel zu jedem pn-Übergang [S]
+  "temp": 27,           // Temperatur der Schaltung [°C]
+  "tnom": 27,           // Temperatur, für die die Modellparameter gelten [°C]
+  "maxiter_dc": 100,    // Newton-Iterationen im Arbeitspunkt
+  "maxiter_tran": 20    // Newton-Iterationen pro Zeitschritt
+},
+"nodeset": { "out": 2.5 },   // Startwerte für den Arbeitspunkt (z. B. bistabile Schaltungen)
+"ic": { "c1": 5 }            // Knotenspannungen bei t = 0 für "uic"
+```
+
+Genauigkeit der Zeitintegration: Pro Schritt darf der Fehler einer Unbekannten
+`reltol · max(|x|, lte_floor · Spitzenwert von |x|) + absolute Toleranz` betragen.
+
+- `lte_floor: 0` misst den Fehler relativ zum momentanen Wert. Das ist die
+  übliche Definition und richtig für Lösungen, die über Größenordnungen
+  abklingen; bei schwingenden Signalen kostet jeder Nulldurchgang kleine Schritte.
+- `lte_floor: 1` misst relativ zum bisherigen Spitzenwert: am schnellsten, für
+  Signale mit gleichbleibender Amplitude ausreichend.
+- Der Standard 0.1 liegt dazwischen.
+
+Das ist eine Schranke für den Fehler *pro Schritt*. Über viele Schritte
+summiert er sich; für genauere Ergebnisse `reltol` verkleinern. Mit dem
+Standardverfahren `bdf` kostet das wenig, weil es dann höhere Ordnungen nutzt.
+
+## Aufbau
+
+```
+src/core/      generischer DAE-Kern (hängt nur von Eigen ab)   -> Bibliothek esimcore
+  DaeSystem.hpp    Schnittstelle: d/dt q(x) + f(x,t) = 0
+  Newton           Newton-Verfahren für f + a*q + b = 0
+  DcSolver         stationäre Lösung, mit gmin- und Quellen-Stepping als Rückfall
+  Transient        BDF variabler Ordnung, BDF2, Trapez, Rückwärts-Euler;
+                   Schrittweiten- und Ordnungssteuerung, Ereignissuche
+  LinearSolver     dünnbesetzte LU-Zerlegung
+src/expr/      Ausdrücke: Parser, Auswertung, automatisches Differenzieren,
+               Zerlegung von Gleichungen in q und f               (in esimcore)
+src/circuit/   das simulierte System als DaeSystem               -> Bibliothek esimcircuit
+  Circuit          Knoten, Unbekannte, Stempeln aller Bauteile
+  Device.hpp       Basisklasse und StampContext
+  Symbols.hpp      Namen in Ausdrücken -> Unbekannte der Schaltung
+  devices/         R, C, L, Kopplung, Quellen, Diode, BJT, MOSFET,
+                   Equations (Gleichungsblock), Behavioral (B-Quelle),
+                   Switching (Schalter, ideale Diode)
+  Analysis         Arbeitspunkt, AC-Analyse
+src/io/        JSON-Eingabe, SI-Zahlen, Ausgänge, CSV
+src/app/       Ablauf der Analysen aus der Eingabedatei, Messgrößen
+examples/      Eingabedateien und ein DAE in C++ (examples/dae)
+tools/         plot.py zum Zeichnen der Ergebnisse
+tests/         Testsuite gegen analytische Lösungen
+```
+
+Numerik in Kürze:
+
+- **Arbeitspunkt**: Newton mit SPICE-Spannungsbegrenzung an pn-Übergängen
+  (`pnjlim`). Scheitert er, folgen nacheinander eine Pseudo-Transiente (jeder
+  Knoten ist gedämpft an seine vorherige Lösung gebunden, die Dämpfung wird
+  schrittweise gelöst; das folgt dem Einschaltvorgang und bewältigt auch lange
+  Ketten von Stufen hoher Verstärkung), gmin-Stepping und Quellen-Stepping.
+- **Lineare Algebra**: dünnbesetzte LU-Zerlegung. Die Struktur der Matrix wird
+  einmal analysiert; die Bauteile melden ihre Einträge in fester Reihenfolge,
+  sodass sie über eine gespeicherte Zuordnung direkt an ihren Platz
+  geschrieben werden. Ist die Matrix gegenüber dem letzten Schritt unverändert
+  (lineare Schaltung bei gleicher Schrittweite), entfällt die Zerlegung ganz.
+- **Anfangspunkt einer Transientenanalyse**: dasselbe Problem, wobei für jeden
+  Zustand mit vorgegebenem Anfangswert eine Differentialgleichung durch
+  "Zustand = Anfangswert" ersetzt wird. Algebraische Unbekannte ergeben sich
+  daraus konsistent.
+- **Transient**: implizite Integration, pro Schritt ein Newton-Problem
+  `f(x) + a·q(x) + b = 0`. Die Schrittweite folgt aus dem Abbruchfehler der
+  Ladungen `q` (Differenz zur Extrapolation ihres Verlaufs), nicht der
+  Unbekannten selbst: So bleiben algebraische Größen außen vor, und Knoten,
+  deren Potential gegen Masse nur schwach bestimmt ist (potentialfreie
+  Schaltungsteile), stören die Schrittweitensteuerung nicht. Knicke der
+  Quellen (Pulsflanken, PWL-Stützstellen) werden als Breakpoints exakt
+  getroffen; danach startet die Integration neu mit Ordnung 1. Auch der erste
+  Schritt nach einem Neustart ist fehlerkontrolliert: Als Vergleich dient die
+  Tangente, deren Steigung das System selbst liefert (`dq/dt = −f`).
+- **Ordnung** (Verfahren `bdf`): Aus dem Verlauf der Ladungen wird geschätzt,
+  welchen Fehler derselbe Schritt mit der nächstniedrigeren und der
+  nächsthöheren Ordnung gehabt hätte; gewählt wird die Ordnung mit dem größten
+  zulässigen Schritt. Die Schrittweite bleibt konstant, bis sie verdoppelt
+  werden kann oder verkleinert werden muss (wie in DASSL), weil Formeln hoher
+  Ordnung ein stetig wachsendes Raster nicht vertragen.
+- **Ereignisse**: Jeder Vergleich in einem Ausdruck liefert eine
+  Ereignisfunktion. Wechselt eine davon in einem Schritt das Vorzeichen, wird
+  der Schritt so lange verkürzt (Sekantenverfahren mit Bisektion als
+  Absicherung, jeder Versuch ein vollständiger Schritt), bis er knapp hinter
+  dem Vorzeichenwechsel endet. Zwischen zwei Ereignissen sind die Ausgänge der
+  Vergleiche und die Stellungen der Schalter eingefroren, die rechte Seite
+  ist also glatt, auch für Newton. Danach folgen Zuweisungen und Umschalten.
+  Ein sehr kurzer Schritt, in dem alle Stellungen frei dem Newton-Verfahren
+  folgen, bringt voneinander abhängige Schaltelemente und die algebraischen
+  Unbekannten in Einklang; dann startet die Integration neu.
+- **AC**: Linearisierung im Arbeitspunkt, `(G + jωC)·X = B` mit `G = ∂f/∂x`,
+  `C = ∂q/∂x`. Gleichungen und Verhaltensquellen sind darin enthalten.
+- **Gleichungen**: Jede Variable ist eine Unbekannte, jede Gleichung eine Zeile
+  desselben Systems wie die Schaltung. `der(...)`-Terme gehen nach `q`, der
+  Rest nach `f`; die Jacobi-Einträge kommen aus dem automatischen Differenzieren
+  (Rückwärtsmodus).
+
+### Neues Bauteil
+
+Von `Device` ableiten und `stamp()` implementieren: Ströme, die einen Knoten
+verlassen, nach `f`, Ladungen nach `q`, die Ableitungen nach `G` und `C`
+(`StampContext` hat Hilfsfunktionen dafür). Zusätzliche Unbekannte (innere
+Knoten, Zweigströme) werden in `setup()` mit `Circuit::addUnknown()` angelegt.
+Danach das Bauteil in `src/io/Netlist.cpp` (`componentKind`, `addComponent`)
+eintragen. `devices/Passive.cpp` und `devices/Diode.cpp` sind gute Vorlagen.
+Für viele Fälle genügt allerdings eine `B`-Quelle mit Gleichungen.
+
+### Eigenes System in C++
+
+Wer den Kern ohne Eingabedatei nutzen will, leitet von `DaeSystem` ab und
+implementiert `size()` und `evaluate()` (liefert `f`, `q` und die
+Jacobi-Matrizen als Triplets). Optional sind `eventFunctions()` und
+`eventUpdate()` für Ereignisse, `nextBreakpoint()` für Knicke in der Zeit und
+`absTol()`. [`examples/dae/Robertson.hpp`](examples/dae/Robertson.hpp)
+zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
+
+    ./build/dae_robertson
+
+## Grenzen und nächste Schritte
+
+- **Index**: Die Verfahren lösen Systeme vom Index 1 und 2. Index 2 haben
+  Schaltungen mit einem Kondensator direkt an einer Spannungsquelle oder einer
+  Spule in Reihe zu einer Stromquelle, und mechanische Systeme, wenn man zur
+  Lagebedingung die Geschwindigkeitsbedingung hinzunimmt
+  (`examples/pendulum.json` zeigt das Schema). Eine Lagebedingung allein ergibt
+  Index 3 und muss auf diese Weise von Hand umformuliert werden; eine
+  automatische Indexreduktion gibt es nicht. Solche Systeme mit `"uic": true`
+  starten, weil sich ihre Multiplikatoren nicht aus den algebraischen
+  Gleichungen allein bestimmen lassen.
+- **Ereignisse**: Gleiten entlang einer Schaltfläche (z. B.
+  Reibung als `if`, ein Schalter ohne Hysterese in einer Rückkopplung) führt
+  zu endlosem Umschalten und wird abgebrochen; solche Modelle brauchen eine
+  Hysterese oder eine geglättete Kennlinie.
+- **Schalter und ideale Dioden** haben endliche Widerstände (`ron`, `roff`),
+  keine echten Kurz- und Leerläufe. Sehr große Verhältnisse `roff/ron`
+  verschlechtern die Kondition der Gleichungen.
+- **Genauigkeit**: `reltol` begrenzt den Fehler pro Schritt, nicht den
+  Gesamtfehler. Beispiel: Der Kippschwinger trifft seine Periode mit den
+  Standardwerten auf 0,004 %, mit `reltol: 1e-9` und `vntol: 1e-10` auf 1 ns.
+- **Schwach gedämpfte Schwingungen**: BDF-Formeln der Ordnung 3 bis 5 sind
+  dafür nicht stabil genug; die Ordnungssteuerung weicht dann auf niedrige
+  Ordnungen aus, die numerisch dämpfen. Für Schwingkreise hoher Güte `trap`
+  verwenden.
+- **Schaltungen**: kein Rauschen. Die Halbleitermodelle entsprechen den
+  klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1); moderne
+  Kurzkanal-Modelle und JFETs fehlen.
+- **Große Schaltungen**: Getestet mit einigen tausend Knoten. Es gibt keine
+  Parallelisierung und kein Überspringen ruhender Schaltungsteile; die
+  Rechenzeit wächst mit der Zahl der Bauteile mal der Zahl der Zeitschritte.
+- **Sweeps** laufen über einen Parameter; verschachtelte Sweeps über zwei
+  Parameter gibt es nicht.
+- **Potentialfreie Schaltungsteile** (Sekundärseite eines Transformators,
+  Brückengleichrichter) brauchen einen Gleichstrompfad nach Masse, z. B. einen
+  großen Widerstand. Ihre Spannungen gegen Masse sind dann nur auf Millivolt
+  genau; Differenzen wie `v(plus,minus)` sind davon nicht betroffen.

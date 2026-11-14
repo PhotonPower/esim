@@ -1,0 +1,16 @@
+# build output and editor caches
+/build/
+/build-*/
+/.cache/
+/compile_commands.json
+.DS_Store
+
+# simulation results
+/results/
+*.tran.csv
+*.ac.csv
+*.dc.csv
+*.op.csv
+*.measure.csv
+*.fourier.csv
+*.noise.csv

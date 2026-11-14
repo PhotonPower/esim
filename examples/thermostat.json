@@ -1,0 +1,36 @@
+{
+  // Two-point controller with hysteresis. "heat" is a discrete variable: it
+  // only changes when an event assigns a new value.
+  //
+  //   room:   Cth dT/dt = P heat - (T - Tout) / Rth
+  //   heater: on below 20 degC, off above 22 degC
+  "title": "Room thermostat with hysteresis",
+
+  "parameters": {
+    "P": 2000,        // heater power [W]
+    "Rth": 0.02,      // thermal resistance room -> outside [K/W]
+    "Cth": 2e5,       // heat capacity of the room [J/K]
+    "Tout": 0,        // outside temperature [degC]
+    "Ton": 20,
+    "Toff": 22
+  },
+
+  "variables": {
+    "T": 15,
+    "heat": { "discrete": 1 }
+  },
+
+  "equations": [
+    "Cth*der(T) = P*heat - (T - Tout)/Rth"
+  ],
+
+  "events": [
+    { "when": "T > Toff", "set": { "heat": 0 } },
+    { "when": "T < Ton",  "set": { "heat": 1 } }
+  ],
+
+  "analyses": [
+    // Samples every 30 s, interpolated from the solver's own time points.
+    { "type": "tran", "tstop": 14400, "output_step": 30 }
+  ]
+}

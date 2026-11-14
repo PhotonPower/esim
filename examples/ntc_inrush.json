@@ -1,0 +1,45 @@
+{
+  // Circuit and equations coupled: an NTC thermistor limits the inrush current
+  // into a capacitor and then heats itself up until its resistance is small.
+  //
+  //   electrical:  supply -> NTC -> capacitor || load
+  //   thermal:     Cth dT/dt = P - (T - Tamb) / Rth        (differential)
+  //                Rntc = R25 exp(B (1/T - 1/T0))           (algebraic)
+  //
+  // The equations read the circuit through v(in,mid); the behavioral source
+  // "NTC" reads the variable Rntc. Time scales: 22 ms electrical, 30 s thermal.
+  "title": "Inrush current limiter: NTC thermistor with self-heating",
+
+  "parameters": {
+    "R25": 10,          // resistance at T0 [Ohm]
+    "B": 3200,          // material constant [K]
+    "T0": 298.15,       // reference temperature [K]
+    "Tamb": 298.15,     // ambient temperature [K]
+    "Rth": 60,          // thermal resistance to ambient [K/W]
+    "Cth": 0.5          // heat capacity [J/K]
+  },
+
+  "variables": {
+    "T": "Tamb",                  // state: starts at ambient temperature
+    "Rntc": { "guess": 10 }       // algebraic: follows from T
+  },
+
+  "equations": [
+    "Cth*der(T) = v(in,mid)^2/Rntc - (T - Tamb)/Rth",
+    "Rntc = R25*exp(B*(1/T - 1/T0))"
+  ],
+
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["in", "0"],
+      "wave": { "type": "pulse", "v1": 0, "v2": 24, "delay": 0.1, "rise": "1m" } },
+    { "type": "B", "name": "NTC", "nodes": ["in", "mid"], "i": "v(in,mid)/Rntc" },
+    { "type": "C", "name": "C1", "nodes": ["mid", "0"], "value": "2200u" },
+    { "type": "R", "name": "RL", "nodes": ["mid", "0"], "value": 12 }
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": 150 }
+  ],
+
+  "outputs": ["v(mid)", "-i(V1)", "T - 273.15", "Rntc", "v(in,mid)^2/Rntc"]
+}

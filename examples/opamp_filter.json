@@ -1,0 +1,71 @@
+{
+  // Subcircuits: a 4th-order Butterworth low-pass built from two Sallen-Key
+  // stages. Each stage is a subcircuit that contains an op-amp subcircuit.
+  // Corner frequency 1 kHz, 80 dB per decade above it.
+  "title": "Active low-pass filter from nested subcircuits",
+
+  "parameters": { "fc": "1k" },
+
+  "subcircuits": {
+    // Op-amp macro model: differential input resistance, one pole, output resistance.
+    "opamp": {
+      "ports": ["inp", "inn", "out"],
+      "parameters": {
+        "a0": 2e5,            // DC gain
+        "gbw": "3meg",        // gain-bandwidth product [Hz]
+        "rin": "2meg",
+        "rout": 50,
+        "fp": "gbw/a0"        // frequency of the dominant pole
+      },
+      "components": [
+        { "type": "R", "name": "Rin", "nodes": ["inp", "inn"], "value": "rin" },
+        { "type": "E", "name": "Egain", "nodes": ["g", "0", "inp", "inn"], "gain": "a0" },
+        { "type": "R", "name": "Rp", "nodes": ["g", "p"], "value": "1k" },
+        { "type": "C", "name": "Cp", "nodes": ["p", "0"], "value": "1/(2*pi*fp*1k)" },
+        { "type": "E", "name": "Ebuf", "nodes": ["b", "0", "p", "0"], "gain": 1 },
+        { "type": "R", "name": "Rout", "nodes": ["b", "out"], "value": "rout" }
+      ]
+    },
+
+    // Unity-gain Sallen-Key low-pass with corner frequency f0 and quality factor Q.
+    "sallen_key": {
+      "ports": ["in", "out"],
+      "parameters": { "f0": "1k", "Q": 0.707, "R": "10k", "w0": "2*pi*f0" },
+      "components": [
+        { "type": "R", "name": "R1", "nodes": ["in", "a"], "value": "R" },
+        { "type": "R", "name": "R2", "nodes": ["a", "b"], "value": "R" },
+        { "type": "C", "name": "C1", "nodes": ["a", "out"], "value": "2*Q/(w0*R)" },
+        { "type": "C", "name": "C2", "nodes": ["b", "0"], "value": "1/(2*Q*w0*R)" },
+        { "type": "X", "name": "U", "subcircuit": "opamp", "nodes": ["b", "out", "out"] }
+      ]
+    }
+  },
+
+  "components": [
+    { "type": "V", "name": "Vin", "nodes": ["in", "0"], "dc": 0, "ac": 1,
+      "wave": { "type": "pulse", "v1": 0, "v2": 1, "delay": "1m", "rise": "1u" } },
+    // Butterworth, 4th order: Q = 0.5412 and 1.3066
+    { "type": "X", "name": "S1", "subcircuit": "sallen_key", "nodes": ["in", "mid"],
+      "parameters": { "f0": "fc", "Q": 0.5412 } },
+    { "type": "X", "name": "S2", "subcircuit": "sallen_key", "nodes": ["mid", "out"],
+      "parameters": { "f0": "fc", "Q": 1.3066 } },
+    { "type": "R", "name": "RL", "nodes": ["out", "0"], "value": "10k" }
+  ],
+
+  "analyses": [
+    { "type": "ac", "sweep": "dec", "points": 50, "fstart": 10, "fstop": "100k",
+      "measure": {
+        "f3db":      { "f3db": "v(out)" },
+        "gain_dc":   { "at": "v(out)", "x": 10 },
+        "gain_10fc": { "at": "v(out)", "x": "10*fc" }
+      } },
+    { "type": "tran", "tstop": "6m",
+      "measure": {
+        "overshoot": { "max": "v(out)" },
+        "rise_time": { "rise": "v(out)", "low": 0.1, "high": 0.9 }
+      } }
+  ],
+
+  // Nodes inside an instance are addressed with its name: v(S1.a), v(S2.U.p)
+  "outputs": ["v(in)", "v(mid)", "v(out)"]
+}

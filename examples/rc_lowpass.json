@@ -1,0 +1,21 @@
+{
+  // RC low-pass, fc = 1 / (2 pi R C) = 159 Hz.
+  "title": "RC low-pass: operating point, frequency response and pulse response",
+
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["in", "0"],
+      "dc": 0, "ac": 1,
+      "wave": { "type": "pulse", "v1": 0, "v2": 1, "delay": "1m", "rise": "10u", "fall": "10u",
+                "width": "5m", "period": "10m" } },
+    { "type": "R", "name": "R1", "nodes": ["in", "out"], "value": "1k" },
+    { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "1u" }
+  ],
+
+  "analyses": [
+    { "type": "op" },
+    { "type": "ac", "sweep": "dec", "points": 20, "fstart": 1, "fstop": "100k" },
+    { "type": "tran", "tstop": "20m" }
+  ],
+
+  "outputs": ["v(in)", "v(out)"]
+}

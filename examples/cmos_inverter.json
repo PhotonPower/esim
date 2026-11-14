@@ -1,0 +1,32 @@
+{
+  "title": "CMOS inverter: transfer curve (DC sweep) and switching (transient)",
+
+  "models": {
+    // "tox" switches on the charge of the channel (gate capacitance).
+    "nch": { "type": "nmos", "vto": 0.7, "kp": "120u", "lambda": 0.05, "gamma": 0.4, "tox": "8n",
+             "cgso": "0.3n", "cgdo": "0.3n", "cbd": "5f", "cbs": "5f" },
+    "pch": { "type": "pmos", "vto": -0.7, "kp": "40u", "lambda": 0.05, "gamma": 0.4, "tox": "8n",
+             "cgso": "0.3n", "cgdo": "0.3n", "cbd": "10f", "cbs": "10f" }
+  },
+
+  "components": [
+    { "type": "V", "name": "VDD", "nodes": ["vdd", "0"], "dc": 3.3 },
+    { "type": "V", "name": "VIN", "nodes": ["in", "0"], "dc": 0,
+      "wave": { "type": "pulse", "v1": 0, "v2": 3.3, "delay": "1n", "rise": "100p",
+                "fall": "100p", "width": "4n", "period": "10n" } },
+
+    // nodes: drain, gate, source, bulk
+    { "type": "M", "name": "MP", "nodes": ["out", "in", "vdd", "vdd"], "model": "pch",
+      "w": "3u", "l": "0.35u" },
+    { "type": "M", "name": "MN", "nodes": ["out", "in", "0", "0"], "model": "nch",
+      "w": "1u", "l": "0.35u" },
+    { "type": "C", "name": "CL", "nodes": ["out", "0"], "value": "50f" }
+  ],
+
+  "analyses": [
+    { "type": "dc", "source": "VIN", "start": 0, "stop": 3.3, "step": 0.05 },
+    { "type": "tran", "tstop": "20n" }
+  ],
+
+  "outputs": ["v(in)", "v(out)", "i(VDD)"]
+}

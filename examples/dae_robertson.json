@@ -1,0 +1,32 @@
+{
+  // A DAE without any circuit: Robertson's stiff reaction kinetics. Two rate
+  // equations plus the conservation law as an algebraic constraint.
+  // The same problem written in C++ is in examples/dae/Robertson.hpp.
+  "title": "Robertson kinetics (stiff index-1 DAE)",
+
+  "parameters": { "k1": 0.04, "k2": 1e4, "k3": 3e7 },
+
+  "variables": {
+    "y1": 1,
+    "y2": { "init": 0, "abstol": 1e-12 },
+    // Algebraic variable: the start value is only a guess, the consistent
+    // value (here 0) is computed before the integration starts.
+    "y3": { "guess": 0.5 }
+  },
+
+  "equations": [
+    "der(y1) = -k1*y1 + k2*y2*y3",
+    "der(y2) =  k1*y1 - k2*y2*y3 - k3*y2^2",
+    "0 = y1 + y2 + y3 - 1"
+  ],
+
+  // The solution decays over many decades: measure the error relative to the
+  // current value instead of the largest value so far ("lte_floor": 0).
+  "options": { "reltol": 1e-5, "lte_floor": 0 },
+
+  "analyses": [
+    { "type": "tran", "tstop": 4e5, "hinit": 1e-6, "hmax": 4e4 }
+  ],
+
+  "outputs": ["y1", "y2", "y3", "y1 + y2 + y3 - 1"]
+}

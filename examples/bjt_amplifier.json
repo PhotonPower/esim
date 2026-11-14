@@ -1,0 +1,32 @@
+{
+  "title": "Common-emitter amplifier: bias point, frequency response, 1 kHz sine",
+
+  // A model can be pasted as a SPICE ".model" line; parameters this simulator
+  // does not use are listed once and ignored.
+  "models": {
+    "BC547": ".model BC547B NPN(IS=2.39E-14 NF=1.008 ISE=3.545E-15 NE=1.541 BF=294.3 IKF=0.1357 VAF=63.2 NR=1.004 ISC=6.272E-14 NC=1.243 BR=7.946 IKR=0.1144 VAR=25.9 RB=1 RE=0.4683 RC=0.85 XTB=0 EG=1.11 XTI=3 CJE=1.358E-11 VJE=0.65 MJE=0.3279 TF=4.391E-10 CJC=3.728E-12 VJC=0.3997 MJC=0.2955 TR=1E-32)"
+  },
+
+  "components": [
+    { "type": "V", "name": "VCC", "nodes": ["vcc", "0"], "dc": 12 },
+    { "type": "V", "name": "Vin", "nodes": ["in", "0"], "dc": 0, "ac": 1,
+      "wave": { "type": "sin", "amplitude": "10m", "freq": "1k" } },
+
+    { "type": "C", "name": "Cin", "nodes": ["in", "b"], "value": "10u" },
+    { "type": "R", "name": "R1", "nodes": ["vcc", "b"], "value": "47k" },
+    { "type": "R", "name": "R2", "nodes": ["b", "0"], "value": "10k" },
+    { "type": "Q", "name": "Q1", "nodes": ["c", "b", "e"], "model": "BC547" },
+    { "type": "R", "name": "RC", "nodes": ["vcc", "c"], "value": "4.7k" },
+    { "type": "R", "name": "RE", "nodes": ["e", "0"], "value": "1k" },
+    { "type": "C", "name": "CE", "nodes": ["e", "0"], "value": "100u" },
+    { "type": "C", "name": "Cout", "nodes": ["c", "out"], "value": "10u" },
+    { "type": "R", "name": "RL", "nodes": ["out", "0"], "value": "10k" }
+  ],
+
+  "analyses": [
+    { "type": "op", "outputs": ["v(b)", "v(c)", "v(e)", "v(c,e)", "i(VCC)"] },
+    { "type": "ac", "sweep": "dec", "points": 20, "fstart": 1, "fstop": "100meg",
+      "outputs": ["v(out)"] },
+    { "type": "tran", "tstop": "5m", "tstep": "10u", "outputs": ["v(in)", "v(out)", "v(c)"] }
+  ]
+}
