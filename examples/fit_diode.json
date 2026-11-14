@@ -1,0 +1,29 @@
+{
+  // Fit model parameters to measured data: saturation current, emission
+  // coefficient and series resistance of a diode from its forward
+  // characteristic (examples/data/diode_iv.csv, 1 uA .. 5.6 mA).
+  //
+  // The current spans almost four decades, so the logarithm of model/data is
+  // minimized ("residual": "log"); "log": true varies the logarithm of "is0".
+  "title": "Diode parameters from a measured characteristic",
+
+  "parameters": { "is0": 1e-10, "n0": 1.5, "rs0": 1 },
+
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 0.5 },
+    { "type": "D", "name": "D1", "nodes": ["a", "0"], "is": "is0", "n": "n0", "rs": "rs0" }
+  ],
+
+  "analyses": [
+    { "type": "fit",
+      "analysis": { "type": "dc", "source": "V1", "start": 0.25, "stop": 0.75, "step": 0.005 },
+      "output": "-i(V1)",
+      "data": { "file": "data/diode_iv.csv", "xcol": 0, "ycol": 1 },
+      "parameters": {
+        "is0": { "min": 1e-14, "max": 1e-6, "log": true },
+        "n0":  { "min": 1, "max": 3 },
+        "rs0": { "min": 0.01, "max": 20, "log": true }
+      },
+      "residual": "log" }
+  ]
+}

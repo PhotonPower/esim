@@ -1,0 +1,36 @@
+{
+  // Tolerance analysis: corner frequency of an RC low-pass with a 1 % resistor
+  // and a 10 % capacitor. Every run draws new values; the measurements of all
+  // runs go to a table, their statistics to the console.
+  "title": "Monte Carlo: spread of a corner frequency",
+
+  "parameters": { "R": "10k", "C": "10n" },
+
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["in", "0"], "ac": 1 },
+    { "type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R" },
+    { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "C" }
+  ],
+
+  "analyses": [
+    { "type": "ac", "sweep": "dec", "points": 100, "fstart": 1, "fstop": "100k",
+      "monte_carlo": {
+        "runs": 500, "seed": 1,
+        "vary": {
+          "R": { "tol": 0.01 },                     // uniform within +-1 %
+          "C": { "tol": 0.10, "dist": "gauss" }     // normal, 10 % = 3 sigma
+        }
+      },
+      "measure": {
+        "fc":   { "f3db": "v(out)" },
+        "g_1k": { "at": "v(out)", "x": "1k" }
+      } },
+
+    // Two nested sweeps give the same quantity on a grid of R and C.
+    { "type": "ac", "name": "grid", "sweep": "dec", "points": 100, "fstart": 1, "fstop": "100k",
+      "save": false,
+      "param_sweep": [ { "param": "R", "values": ["9.9k", "10k", "10.1k"] },
+                       { "param": "C", "values": ["9n", "10n", "11n"] } ],
+      "measure": { "fc": { "f3db": "v(out)" } } }
+  ]
+}

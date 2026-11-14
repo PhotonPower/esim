@@ -60,6 +60,8 @@ Beispiele in [`examples/`](examples):
 | `solar_cell.json` | Kennlinie aus einer Tabelle, Punkt maximaler Leistung per DC-Sweep |
 | `digital_pi_control.json` | abgetasteter PI-Regler (Zeitereignisse) an einer Regelstrecke |
 | `pendulum.json` | Mechanik mit Zwangsbedingung (DAE vom Index 2) |
+| `monte_carlo_filter.json` | Toleranzanalyse (Monte Carlo) und verschachtelter Sweep |
+| `fit_diode.json` | Modellparameter an eine gemessene Kennlinie anpassen |
 
 ### Ergebnisse plotten
 
@@ -99,6 +101,8 @@ t, v = res.tran["time"], res.tran["v(out)"]
 
 - `res.op`, `res.dc`, `res.ac`, `res.tran` sind die erste Analyse des Typs,
   `res["name"]` eine benannte, `res.analyses` alle.
+- Monte Carlo liefert `statistics`, ein Fit `parameters`; `info` enthält alles,
+  was der Simulator zu der Analyse gemeldet hat.
 - Jede Analyse hat `data` (Spalten, auch per `analyse["spalte"]`), `measures`,
   `values` (Arbeitspunkt) und `stats`. Bei einem Parameter-Sweep enthält
   `measures` je Messung eine Liste, und `runs()` liefert die Kurven je
@@ -640,6 +644,67 @@ Läufe stehen in einer CSV-Datei, deren erste Spalte der Parameterwert ist:
 einer Zeile je Parameterwert. Abhängige Parameter (`"tau": "R*C"`) und alle
 Bauteilwerte, die den Parameter verwenden, werden für jeden Wert neu berechnet.
 
+Eine Liste von Sweeps wird verschachtelt (der erste ist der äußere); die
+Tabellen bekommen dann eine Spalte je Parameter:
+
+```jsonc
+"param_sweep": [ { "param": "R", "values": ["9.9k", "10k", "10.1k"] },
+                 { "param": "C", "start": "9n", "stop": "11n", "points": 3 } ]
+```
+
+### Monte Carlo
+
+Mit `monte_carlo` wird eine Analyse mit zufällig gestreuten Parametern
+wiederholt. Ausgewertet werden ihre Messgrößen:
+
+```jsonc
+{ "type": "ac", "fstart": 1, "fstop": "100k", "points": 100,
+  "monte_carlo": { "runs": 500, "seed": 1,
+                   "vary": { "R": { "tol": 0.01 },
+                             "C": { "tol": 0.10, "dist": "gauss" },
+                             "Voff": { "sigma": "2m" } } },
+  "measure": { "fc": { "f3db": "v(out)" } } }
+```
+
+- `tol` ist eine relative Toleranz: gleichverteilt in ±tol, mit
+  `"dist": "gauss"` normalverteilt mit Standardabweichung tol/3.
+- `sigma` ist eine absolute Standardabweichung (normalverteilt).
+- Auf der Konsole stehen Mittelwert, Standardabweichung, Minimum und Maximum
+  jeder Messgröße; `<Name>.<Analyse>.measure.csv` enthält je Lauf die gezogenen
+  Parameter und die Messwerte. Derselbe `seed` liefert dieselben Läufe.
+- Die Kurven aller Läufe werden nur mit `"save": true` gespeichert.
+
+### Anpassung an Messdaten
+
+Die Analyse `fit` verändert Parameter so, dass eine simulierte Kurve möglichst
+gut auf Datenpunkten liegt (kleinste Quadrate, Levenberg-Marquardt):
+
+```jsonc
+{ "type": "fit",
+  "analysis": { "type": "dc", "source": "V1", "start": 0.25, "stop": 0.75, "step": 0.005 },
+  "output": "-i(V1)",
+  "data": { "file": "data/diode_iv.csv", "xcol": 0, "ycol": 1 },
+  "parameters": { "is0": { "min": 1e-14, "max": 1e-6, "log": true },
+                  "n0":  { "min": 1, "max": 3 } },
+  "residual": "log" }
+```
+
+- `analysis` ist eine `dc`-, `ac`- oder `tran`-Analyse; `output` die Größe, die
+  mit den Daten verglichen wird (bei `ac` ihr Betrag). Die Daten müssen
+  innerhalb des simulierten Bereichs liegen; dazwischen wird linear interpoliert.
+- `data`: `x` und `y`, `points` oder eine Datei wie bei den Tabellen.
+- `parameters`: je Parameter optional `start` (sonst der Wert aus
+  `parameters`), `min`, `max` und `"log": true`, wenn sich der Wert über
+  Größenordnungen bewegen kann.
+- `residual`: `lin` (Differenz, Standard), `rel` (relativ zu den Daten) oder
+  `log` (Logarithmus des Verhältnisses, für Daten über mehrere Dekaden).
+- Ergebnis: die angepassten Werte und der mittlere Restfehler auf der Konsole,
+  Daten und Modellkurve in `<Name>.fit.csv`.
+
+Das Verfahren findet ein lokales Minimum; die Startwerte sollten in der
+richtigen Größenordnung liegen. Parameter, die die Kurve im gemessenen Bereich
+kaum beeinflussen, bleiben unbestimmt.
+
 ### Ausgänge
 
 `"outputs"` enthält `v(knoten)`, `v(a,b)`, `i(bauteil)`, Variablennamen oder
@@ -815,8 +880,6 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
 - **Große Schaltungen**: Getestet mit einigen tausend Knoten. Es gibt keine
   Parallelisierung und kein Überspringen ruhender Schaltungsteile; die
   Rechenzeit wächst mit der Zahl der Bauteile mal der Zahl der Zeitschritte.
-- **Sweeps** laufen über einen Parameter; verschachtelte Sweeps über zwei
-  Parameter gibt es nicht.
 - **Potentialfreie Schaltungsteile** (Sekundärseite eines Transformators,
   Brückengleichrichter) brauchen einen Gleichstrompfad nach Masse, z. B. einen
   großen Widerstand. Ihre Spannungen gegen Masse sind dann nur auf Millivolt

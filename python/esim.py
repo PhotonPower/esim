@@ -48,7 +48,11 @@ class Analysis:
     measures  {name: value}; None for a measurement without result.
               For a parameter sweep each value is a list, one entry per run.
     stats     transient: steps, rejected steps, Newton iterations, events, ...
-    sweep     parameter sweep: {"param": name, "values": [...]}, else None
+    sweep     parameter sweep: {"param": name, "values": [...]}, for nested sweeps
+              {"params": [...], "grid": [[...], ...]}, else None
+    statistics  Monte Carlo: {measurement: {"mean", "std", "min", "max", "count"}}
+    parameters  fit: {parameter: adjusted value}
+    info      the complete entry of the simulator's summary
     warnings  not per analysis, see Result.log
     """
 
@@ -60,8 +64,13 @@ class Analysis:
         self.stats = entry.get("stats", {})
         self.sweep = entry.get("sweep")
         self.measures = entry.get("measures", {})
-        if measure_table:  # sweep: one row of measurements per parameter value
-            self.measures = {k: v for k, v in measure_table.items() if k != self.sweep["param"]}
+        if measure_table:  # series of runs: one row of measurements per run
+            keys = self.sweep.get("params") or [self.sweep.get("param")]
+            self.measures = {k: v for k, v in measure_table.items() if k not in keys}
+        self.statistics = entry.get("statistics", {})   # Monte Carlo: mean, std, min, max
+        self.parameters = entry.get("parameters", {})   # fit: the adjusted values
+        self.fourier = entry.get("fourier", {})
+        self.info = entry                               # everything the simulator reported
 
     def __getitem__(self, column):
         try:
@@ -75,8 +84,8 @@ class Analysis:
 
     def runs(self):
         """Parameter sweep: yield (parameter value, {column: values}) for every run."""
-        if not self.sweep:
-            raise ValueError("not a parameter sweep")
+        if not self.sweep or "param" not in self.sweep:
+            raise ValueError("not a sweep over a single parameter")
         key = self.data[self.sweep["param"]]
         for value in self.sweep["values"]:
             rows = [i for i, k in enumerate(key) if k == value]

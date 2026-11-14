@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <sstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -1645,6 +1646,130 @@ void testFourier() {
     checkTrue(header == "harmonic,freq,mag(v(a)),phase(v(a))", "fourier block: table");
 }
 
+void testParameterStudies() {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "esim_tests";
+    const auto runAll = [&](const std::string& text, const std::string& stem) {
+        Netlist nl = parseNetlistText(text);
+        RunConfig cfg;
+        cfg.outDir = dir.string();
+        cfg.stem = stem;
+        nlohmann::json summary = nlohmann::json::array();
+        cfg.summary = &summary;
+        std::ostringstream log;
+        runAnalyses(nl, cfg, log);
+        return summary;
+    };
+    const auto lines = [&](const std::string& name) {
+        std::ifstream in(dir / name);
+        std::vector<std::string> out;
+        for (std::string line; std::getline(in, line);) out.push_back(line);
+        return out;
+    };
+
+    // --- two nested sweeps: the first parameter is the outer one ---
+    runAll(R"json({
+        "parameters": {"R": "1k", "V": 1},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": "V"},
+            {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R"},
+            {"type": "R", "name": "R2", "nodes": ["out", "0"], "value": "1k"}
+        ],
+        "analyses": [{"type": "op", "param_sweep": [{"param": "R", "values": ["1k", "3k"]},
+                                                    {"param": "V", "values": [1, 2]}]}],
+        "outputs": ["v(out)"]
+    })json", "nested");
+    const auto nested = lines("nested.op.csv");
+    checkTrue(nested.size() == 5 && nested[0] == "R,V,v(out)", "nested sweep: table with two parameter columns");
+    if (nested.size() == 5) {
+        checkTrue(nested[1] == "1000,1,0.5" && nested[2] == "1000,2,1", "nested sweep: inner parameter runs fastest");
+        checkTrue(nested[3] == "3000,1,0.25" && nested[4] == "3000,2,0.5", "nested sweep: outer parameter");
+    }
+
+    // --- Monte Carlo: divider with a resistor of +-10 % (uniform) ---
+    const char* mc = R"json({
+        "parameters": {"R": "1k"},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 1},
+            {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R"},
+            {"type": "R", "name": "R2", "nodes": ["out", "0"], "value": "1k"}
+        ],
+        "analyses": [{"type": "dc", "source": "V1", "start": 1, "stop": 1, "step": 1,
+                      "monte_carlo": {"runs": 2000, "seed": 7, "vary": {"R": {"tol": 0.1}}},
+                      "measure": {"vout": {"final": "v(out)"}}}]
+    })json";
+    const nlohmann::json s1 = runAll(mc, "mc");
+    const nlohmann::json stat = s1[0]["statistics"]["vout"];
+    // v = 1/(1 + R/1k): sensitivity -0.25 per unit of R/1k, standard deviation of R/1k is 0.1/sqrt(3)
+    checkNear(stat["mean"].get<double>(), 0.5, 3e-3, "monte carlo: mean");
+    checkNear(stat["std"].get<double>() / (0.25 * 0.1 / std::sqrt(3.0)), 1.0, 0.05, "monte carlo: standard deviation");
+    checkTrue(stat["min"].get<double>() > 1.0 / 2.1 - 1e-9 && stat["max"].get<double>() < 1.0 / 1.9 + 1e-9,
+              "monte carlo: values stay inside the tolerance");
+    checkTrue(stat["count"].get<int>() == 2000 && lines("mc.dc.measure.csv").size() == 2001,
+              "monte carlo: one row per run");
+    checkTrue(lines("mc.dc.measure.csv")[0] == "run,R,vout", "monte carlo: table with the drawn parameters");
+    checkTrue(runAll(mc, "mc")[0]["statistics"] == s1[0]["statistics"], "monte carlo: a seed reproduces the result");
+
+    // --- fit: recover the parameters of a diode from its characteristic ---
+    const double vt = 8.617333262e-5 * 300.15, isTrue = 2e-12, nTrue = 1.7;
+    std::string xs, ys;
+    for (double v = 0.40; v < 0.701; v += 0.05) {
+        xs += (xs.empty() ? "" : ", ") + std::to_string(v);
+        std::ostringstream os;
+        os << std::setprecision(12) << isTrue * (std::exp(v / (nTrue * vt)) - 1.0);
+        ys += (ys.empty() ? "" : ", ") + os.str();
+    }
+    const nlohmann::json fit = runAll(R"json({
+        "parameters": {"is0": 1e-13, "n0": 1.2},
+        "options": {"gmin": 1e-30},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 0.5},
+            {"type": "D", "name": "D1", "nodes": ["a", "0"], "is": "is0", "n": "n0"}
+        ],
+        "analyses": [{"type": "fit",
+            "analysis": {"type": "dc", "source": "V1", "start": 0.35, "stop": 0.75, "step": 0.01},
+            "output": "-i(V1)",
+            "data": {"x": [)json" + xs + R"json(], "y": [)json" + ys + R"json(]},
+            "parameters": {"is0": {"start": 1e-13, "min": 1e-16, "max": 1e-9, "log": true},
+                           "n0": {"start": 1.2, "min": 1, "max": 3}},
+            "residual": "log"}]
+    })json", "fit");
+    checkNear(fit[0]["parameters"]["is0"].get<double>() / isTrue, 1.0, 1e-3, "fit: saturation current recovered");
+    checkNear(fit[0]["parameters"]["n0"].get<double>(), nTrue, 1e-3, "fit: emission coefficient recovered");
+    checkTrue(fit[0]["rms_residual"].get<double>() < 1e-4, "fit: residual is small");
+    checkTrue(lines("fit.fit.csv").size() == 8 && lines("fit.fit.csv")[0] == "x,data,model", "fit: table of data and model");
+
+    // --- fit of a transient: time constant of an RC step response ---
+    std::string pts;
+    for (int k = 1; k <= 8; ++k) {
+        const double t = 0.5e-3 * k;
+        std::ostringstream os;
+        os << std::setprecision(12) << "[" << t << ", " << 1.0 - std::exp(-t / 2e-3) << "]";
+        pts += (pts.empty() ? "" : ", ") + os.str();
+    }
+    const nlohmann::json fr = runAll(R"json({
+        "parameters": {"C": "0.5u"},
+        "options": {"reltol": 1e-7},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 1},
+            {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "1k"},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "C", "ic": 0}
+        ],
+        "analyses": [{"type": "fit",
+            "analysis": {"type": "tran", "tstop": "5m", "uic": true},
+            "output": "v(out)",
+            "data": {"points": [)json" + pts + R"json(]},
+            "parameters": {"C": {"min": "10n", "max": "100u", "log": true}}}]
+    })json", "fitrc");
+    checkNear(fr[0]["parameters"]["C"].get<double>() / 2e-6, 1.0, 1e-3, "fit of a transient: capacitance recovered");
+
+    checkTrue(throws([&] {
+                  runAll(R"json({"parameters": {"R": 1}, "components": [{"type": "R", "nodes": ["a", "0"], "value": "R"}],
+                      "analyses": [{"type": "fit", "analysis": {"type": "op"}, "output": "v(a)",
+                                    "data": {"x": [0, 1], "y": [0, 1]}, "parameters": {"R": {}}}]})json", "bad");
+              }),
+              "fit with an unsuitable analysis is rejected");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -1878,6 +2003,7 @@ int main() {
         {"device models", testDeviceModels},
         {"noise", testNoise},
         {"fourier", testFourier},
+        {"parameter studies", testParameterStudies},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},

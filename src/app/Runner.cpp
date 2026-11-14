@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
+#include <fstream>
+#include <cstdint>
+#include <Eigen/Dense>
 #include <filesystem>
 #include <iomanip>
 #include <map>
@@ -23,15 +27,21 @@ using json = nlohmann::json;
 
 namespace {
 
-// A parameter sweep in progress: all runs write to one CSV file whose first
-// column is the parameter value.
+// A series of runs of one analysis (parameter sweep, Monte Carlo, fit): all
+// runs write to shared tables whose leading columns identify the run.
 struct Sweep {
-    std::string param;
-    std::string path;         // curves of all runs
-    std::string measurePath;  // one row of measurements per run
-    double value = 0.0;
+    std::vector<std::string> columns;  // names of the leading columns
+    std::vector<double> values;        // their values for the current run
+    std::string path;                  // curves of all runs
+    std::string measurePath;           // one row of measurements per run
     std::unique_ptr<CsvWriter> csv;
     std::unique_ptr<CsvWriter> measureCsv;
+    // Measurements of all runs, for statistics.
+    std::vector<std::string> measureNames;
+    std::vector<std::vector<double>> measureValues;
+    // Fit: the curve of one output is captured here instead of being measured.
+    std::string capture;
+    std::vector<double> captureX, captureY;
 };
 
 struct Context {
@@ -98,12 +108,12 @@ public:
         }
         if (c.sweep) {
             if (!c.sweep->csv) {
-                header.insert(header.begin(), c.sweep->param);
+                header.insert(header.begin(), c.sweep->columns.begin(), c.sweep->columns.end());
                 c.sweep->csv = std::make_unique<CsvWriter>(c.sweep->path, header);
             }
             csv_ = c.sweep->csv.get();
             path_ = c.sweep->path;
-            prefix_ = {c.sweep->value};
+            prefix_ = c.sweep->values;
         } else {
             path_ = outputPath(c, a, type);
             owned_ = std::make_unique<CsvWriter>(path_, header);
@@ -149,20 +159,27 @@ private:
 class Measures {
 public:
     Measures(Context& c, const json& a) {
-        if (!a.contains("measure")) return;
-        specs_ = parseMeasures(a["measure"], c.ckt().parameters);
+        if (a.contains("measure")) specs_ = parseMeasures(a["measure"], c.ckt().parameters);
         for (const MeasureSpec& spec : specs_) probes_.push_back(parseProbe(c.ckt(), spec.expression));
-        y_.resize(specs_.size());
+        if (c.sweep && !c.sweep->capture.empty()) {  // a fit wants this curve
+            probes_.push_back(parseProbe(c.ckt(), c.sweep->capture));
+            capturing_ = true;
+        }
+        y_.resize(probes_.size());
     }
 
     template <class ValueOf>
     void sample(double x, ValueOf&& valueOf) {
-        if (specs_.empty()) return;
+        if (probes_.empty()) return;
         x_.push_back(x);
         for (size_t k = 0; k < probes_.size(); ++k) y_[k].push_back(valueOf(probes_[k]));
     }
 
     void report(Context& c, json* entry = nullptr) {
+        if (capturing_) {
+            c.sweep->captureX = x_;
+            c.sweep->captureY = y_.back();
+        }
         if (specs_.empty()) return;
         std::vector<double> results;
         for (size_t k = 0; k < specs_.size(); ++k)
@@ -171,14 +188,20 @@ public:
             for (size_t k = 0; k < specs_.size(); ++k)
                 (*entry)["measures"][specs_[k].name] = number(results[k]);
 
-        if (c.sweep) {  // table: one row per parameter value
-            if (!c.sweep->measureCsv) {
-                std::vector<std::string> header{c.sweep->param};
-                for (const MeasureSpec& spec : specs_) header.push_back(spec.name);
-                c.sweep->measureCsv = std::make_unique<CsvWriter>(c.sweep->measurePath, header);
+        if (c.sweep) {  // table: one row per run
+            Sweep& sw = *c.sweep;
+            if (!sw.measureCsv) {
+                std::vector<std::string> header = sw.columns;
+                for (const MeasureSpec& spec : specs_) {
+                    header.push_back(spec.name);
+                    sw.measureNames.push_back(spec.name);
+                }
+                sw.measureValues.resize(specs_.size());
+                sw.measureCsv = std::make_unique<CsvWriter>(sw.measurePath, header);
             }
-            results.insert(results.begin(), c.sweep->value);
-            c.sweep->measureCsv->row(results);
+            for (size_t k = 0; k < results.size(); ++k) sw.measureValues[k].push_back(results[k]);
+            results.insert(results.begin(), sw.values.begin(), sw.values.end());
+            sw.measureCsv->row(results);
             return;
         }
         size_t width = 0;
@@ -193,7 +216,8 @@ public:
 
 private:
     std::vector<MeasureSpec> specs_;
-    std::vector<Probe> probes_;
+    std::vector<Probe> probes_;  // one per measurement, plus the captured curve
+    bool capturing_ = false;
     std::vector<double> x_;
     std::vector<std::vector<double>> y_;
 };
@@ -585,8 +609,11 @@ void runOne(Context& c, const json& a, const std::string& type) {
                                  "\" (op, dc, tran, ac, noise)");
 }
 
-// "param_sweep": {"param": "R1", "values": [...]}
-//             or {"param": "R1", "start": 1e3, "stop": 1e5, "points": 5, "scale": "log"}
+void runOne(Context& c, const json& a, const std::string& type);
+
+// One series of values of "param_sweep":
+//   {"param": "R1", "values": [...]}
+//   {"param": "R1", "start": 1e3, "stop": 1e5, "points": 5, "scale": "log"}
 std::vector<double> sweepValues(Context& c, const json& spec) {
     const std::string where = "param_sweep";
     checkKeys(spec, where, {"param", "values", "start", "stop", "points", "scale"}, c.log);
@@ -614,47 +641,420 @@ std::vector<double> sweepValues(Context& c, const json& spec) {
     return values;
 }
 
-// Repeat one analysis for several values of a parameter. Parameters are
-// resolved while the input is read, so every value gets a freshly built system.
-void runParamSweep(Context& c, const json& a, const std::string& type) {
-    const json& spec = a["param_sweep"];
-    if (!spec.is_object() || !spec.contains("param") || !spec["param"].is_string())
-        throw std::runtime_error("param_sweep: needs \"param\": \"<parameter name>\"");
-    Sweep sweep;
-    sweep.param = spec["param"].get<std::string>();
-    if (!c.ckt().parameters.count(sweep.param))
-        throw std::runtime_error("param_sweep: '" + sweep.param +
+const std::string& definedParameter(Context& c, const std::string& name, const char* where) {
+    if (!c.ckt().parameters.count(name))
+        throw std::runtime_error(std::string(where) + ": '" + name +
                                  "' is not defined under \"parameters\"");
-    const std::vector<double> values = sweepValues(c, spec);
+    return name;
+}
+
+// One run of an analysis with changed parameters. Parameters are resolved
+// while the input is read, so every run gets a freshly built system.
+void runWith(Context& c, Sweep& sweep, const json& inner, const std::string& type,
+             const std::vector<std::pair<std::string, double>>& parameters) {
+    json root = c.nl.source;
+    for (const auto& [name, value] : parameters) root["parameters"][name] = value;
+    Netlist sub = parseNetlist(root, /*warnings=*/false, c.nl.baseDir);
+    std::ostringstream quiet;  // per-run progress is not reported
+    Context sc{sub, c.cfg, quiet, {}, &sweep};  // sc.entry() stays silent inside a series
+    runOne(sc, inner, type);
+}
+
+std::string describe(const std::vector<std::pair<std::string, double>>& parameters) {
+    std::ostringstream os;
+    for (size_t k = 0; k < parameters.size(); ++k)
+        os << (k ? ", " : "") << parameters[k].first << " = " << parameters[k].second;
+    return os.str();
+}
+
+// "param_sweep": one sweep, or a list of sweeps that are nested (the first
+// one is the outermost).
+void runParamSweep(Context& c, const json& a, const std::string& type) {
+    const json specs = a["param_sweep"].is_array() ? a["param_sweep"] : json::array({a["param_sweep"]});
+    Sweep sweep;
+    std::vector<std::vector<double>> axes;
+    for (const json& spec : specs) {
+        if (!spec.is_object() || !spec.contains("param") || !spec["param"].is_string())
+            throw std::runtime_error("param_sweep: needs \"param\": \"<parameter name>\"");
+        sweep.columns.push_back(definedParameter(c, spec["param"].get<std::string>(), "param_sweep"));
+        axes.push_back(sweepValues(c, spec));
+    }
+    if (axes.empty()) throw std::runtime_error("param_sweep: no sweep given");
     sweep.path = outputPath(c, a, type);
     sweep.measurePath = sweep.path.substr(0, sweep.path.size() - 4) + ".measure.csv";
 
     json inner = a;
     inner.erase("param_sweep");
-    std::ostringstream quiet;  // per-run progress is not reported
-    for (double value : values) {
-        sweep.value = value;
+    size_t runs = 0;
+    std::vector<size_t> index(axes.size(), 0);
+    for (bool done = false; !done;) {
+        std::vector<std::pair<std::string, double>> parameters;
+        sweep.values.clear();
+        for (size_t k = 0; k < axes.size(); ++k) {
+            parameters.emplace_back(sweep.columns[k], axes[k][index[k]]);
+            sweep.values.push_back(axes[k][index[k]]);
+        }
         try {
-            json root = c.nl.source;
-            root["parameters"][sweep.param] = value;
-            Netlist sub = parseNetlist(root, /*warnings=*/false, c.nl.baseDir);
-            Context sc{sub, c.cfg, quiet, {}, &sweep};  // sc.entry() stays silent in a sweep
-            runOne(sc, inner, type);
+            runWith(c, sweep, inner, type, parameters);
         } catch (const std::exception& e) {
-            std::ostringstream os;
-            os << "param_sweep, " << sweep.param << " = " << value << ": " << e.what();
-            throw std::runtime_error(os.str());
+            throw std::runtime_error("param_sweep, " + describe(parameters) + ": " + e.what());
+        }
+        ++runs;
+        // Advance like an odometer; the last parameter runs fastest.
+        done = true;
+        for (size_t k = axes.size(); k-- > 0;) {
+            if (++index[k] < axes[k].size()) {
+                done = false;
+                break;
+            }
+            index[k] = 0;
         }
     }
-    c.log << "[" << type << "] sweep of " << sweep.param << " = " << values.front() << " .. "
-          << values.back() << ": " << values.size() << " runs";
+
+    c.log << "[" << type << "] sweep of";
+    for (size_t k = 0; k < axes.size(); ++k)
+        c.log << (k ? "," : "") << ' ' << sweep.columns[k] << " = " << axes[k].front() << " .. "
+              << axes[k].back();
+    c.log << ": " << runs << " runs";
     if (sweep.csv) c.log << " -> " << sweep.path;
     if (sweep.measureCsv) c.log << " -> " << sweep.measurePath;
     c.log << '\n';
     if (json* e = c.entry(a, type)) {
-        (*e)["sweep"] = {{"param", sweep.param}, {"values", values}};
+        if (axes.size() == 1) (*e)["sweep"] = {{"param", sweep.columns[0]}, {"values", axes[0]}};
+        else (*e)["sweep"] = {{"params", sweep.columns}, {"grid", axes}};
         (*e)["file"] = sweep.csv ? json(sweep.path) : json(nullptr);
         (*e)["measure_file"] = sweep.measureCsv ? json(sweep.measurePath) : json(nullptr);
+    }
+}
+
+// "monte_carlo": {"runs": 200, "seed": 1,
+//                 "vary": {"R": {"tol": 0.05}, "C": {"tol": 0.1, "dist": "gauss"}, "V": {"sigma": 0.01}}}
+// Repeats the analysis with randomly varied parameters and reports the
+// statistics of the measurements.
+//   tol    relative tolerance: uniform within +-tol, or with "dist": "gauss"
+//          normal with standard deviation tol/3
+//   sigma  absolute standard deviation of a normal distribution
+void runMonteCarlo(Context& c, const json& a, const std::string& type) {
+    const json& mc = a["monte_carlo"];
+    if (!mc.is_object() || !mc.contains("vary") || !mc["vary"].is_object() || mc["vary"].empty())
+        throw std::runtime_error("monte_carlo: needs \"vary\": {\"parameter\": {\"tol\": 0.05}, ...}");
+    checkKeys(mc, "monte_carlo", {"runs", "seed", "vary"}, c.log);
+    const int runs = static_cast<int>(num(c, mc, "runs", "monte_carlo", 100));
+    if (runs < 1) throw std::runtime_error("monte_carlo: \"runs\" must be at least 1");
+
+    struct Varied {
+        std::string name;
+        double nominal, spread;
+        bool gauss;
+    };
+    std::vector<Varied> varied;
+    Sweep sweep;
+    sweep.columns = {"run"};
+    for (const auto& [name, v] : mc["vary"].items()) {
+        const std::string where = "monte_carlo, " + name;
+        definedParameter(c, name, "monte_carlo");
+        if (!v.is_object()) throw std::runtime_error(where + ": expected {\"tol\": ...} or {\"sigma\": ...}");
+        checkKeys(v, where, {"tol", "sigma", "dist"}, c.log);
+        Varied p{name, c.ckt().parameters.at(name), 0.0, false};
+        if (v.contains("sigma") == v.contains("tol"))
+            throw std::runtime_error(where + ": give either \"tol\" or \"sigma\"");
+        const std::string dist = v.value("dist", std::string(v.contains("sigma") ? "gauss" : "uniform"));
+        if (dist != "gauss" && dist != "uniform")
+            throw std::runtime_error(where + ": \"dist\" must be \"uniform\" or \"gauss\"");
+        p.gauss = dist == "gauss";
+        if (v.contains("sigma")) {
+            if (!p.gauss) throw std::runtime_error(where + ": \"sigma\" belongs to \"dist\": \"gauss\"");
+            p.spread = num(c, v, "sigma", where);
+        } else {
+            const double tol = num(c, v, "tol", where);
+            p.spread = std::abs(p.nominal) * (p.gauss ? tol / 3.0 : tol);
+        }
+        varied.push_back(p);
+        sweep.columns.push_back(name);
+    }
+
+    // Own generator and transformation, so that a seed gives the same numbers everywhere.
+    std::mt19937_64 rng(static_cast<std::uint64_t>(num(c, mc, "seed", "monte_carlo", 1)));
+    auto uniform = [&]() { return (static_cast<double>(rng() >> 11) + 0.5) / 9007199254740992.0; };
+    auto normal = [&]() { return std::sqrt(-2.0 * std::log(uniform())) * std::cos(2.0 * kPi * uniform()); };
+
+    sweep.path = outputPath(c, a, type);
+    sweep.measurePath = sweep.path.substr(0, sweep.path.size() - 4) + ".measure.csv";
+    json inner = a;
+    inner.erase("monte_carlo");
+    inner["save"] = a.value("save", false);  // the curves of all runs only on request
+    if (!a.contains("measure"))
+        throw std::runtime_error("monte_carlo: the analysis needs \"measure\" (the statistics are "
+                                 "taken over the measurements)");
+    for (int run = 0; run < runs; ++run) {
+        std::vector<std::pair<std::string, double>> parameters;
+        sweep.values = {static_cast<double>(run)};
+        for (const Varied& p : varied) {
+            const double value = p.nominal + p.spread * (p.gauss ? normal() : 2.0 * uniform() - 1.0);
+            parameters.emplace_back(p.name, value);
+            sweep.values.push_back(value);
+        }
+        try {
+            runWith(c, sweep, inner, type, parameters);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("monte_carlo, run " + std::to_string(run) + " (" +
+                                     describe(parameters) + "): " + e.what());
+        }
+    }
+
+    c.log << "[" << type << "] monte carlo: " << runs << " runs -> " << sweep.measurePath << '\n';
+    json* e = c.entry(a, type);
+    if (e) {
+        std::vector<double> index(runs);
+        for (int k = 0; k < runs; ++k) index[k] = k;
+        (*e)["sweep"] = {{"param", "run"}, {"values", index}};
+        (*e)["file"] = sweep.csv ? json(sweep.path) : json(nullptr);
+        (*e)["measure_file"] = sweep.measurePath;
+    }
+    size_t width = 0;
+    for (const std::string& n : sweep.measureNames) width = std::max(width, n.size());
+    for (size_t k = 0; k < sweep.measureNames.size(); ++k) {
+        double sum = 0.0, sum2 = 0.0, lo = 0.0, hi = 0.0;
+        int count = 0;
+        for (double v : sweep.measureValues[k]) {
+            if (std::isnan(v)) continue;
+            lo = count ? std::min(lo, v) : v;
+            hi = count ? std::max(hi, v) : v;
+            sum += v;
+            sum2 += v * v;
+            ++count;
+        }
+        const double mean = count ? sum / count : 0.0;
+        const double sdev = count > 1 ? std::sqrt(std::max(0.0, (sum2 - count * mean * mean) / (count - 1))) : 0.0;
+        c.log << "  " << std::left << std::setw(static_cast<int>(width)) << sweep.measureNames[k]
+              << "  mean " << std::setprecision(6) << mean << "  std " << sdev << "  min " << lo
+              << "  max " << hi;
+        if (count < runs) c.log << "  (" << runs - count << " runs without result)";
+        c.log << '\n';
+        if (e)
+            (*e)["statistics"][sweep.measureNames[k]] = {
+                {"mean", number(mean)}, {"std", number(sdev)}, {"min", number(lo)},
+                {"max", number(hi)},    {"count", count}};
+    }
+}
+
+// Linear interpolation of a sampled curve at x; NaN outside its range.
+double interpolate(const std::vector<double>& xs, const std::vector<double>& ys, double x) {
+    if (xs.empty() || x < std::min(xs.front(), xs.back()) || x > std::max(xs.front(), xs.back()))
+        return std::numeric_limits<double>::quiet_NaN();
+    for (size_t k = 1; k < xs.size(); ++k) {
+        const double a = xs[k - 1], b = xs[k];
+        if ((x - a) * (x - b) <= 0.0)
+            return b == a ? ys[k] : ys[k - 1] + (ys[k] - ys[k - 1]) * (x - a) / (b - a);
+    }
+    return ys.back();
+}
+
+// {"type": "fit",
+//  "analysis": {"type": "dc", "source": "V1", "start": 0.4, "stop": 0.8, "step": 0.01},
+//  "output": "-i(V1)",
+//  "data": {"x": [...], "y": [...]}      (or "points", or "file" with "xcol"/"ycol")
+//  "parameters": {"is": {"start": 1e-13, "min": 1e-16, "max": 1e-9, "log": true}, "n": {...}},
+//  "residual": "log"}
+// Adjusts parameters so that the simulated curve matches the data in the
+// least-squares sense (Levenberg-Marquardt with finite-difference derivatives).
+void runFit(Context& c, const json& a) {
+    checkKeys(a, "fit",
+              {"type", "name", "analysis", "output", "data", "parameters", "residual",
+               "max_iterations", "tol"},
+              c.log);
+    if (!a.contains("analysis") || !a["analysis"].is_object() || !a["analysis"].contains("type"))
+        throw std::runtime_error("fit: needs \"analysis\": {\"type\": \"dc\" | \"ac\" | \"tran\", ...}");
+    const std::string innerType = a["analysis"]["type"].get<std::string>();
+    if (innerType != "dc" && innerType != "ac" && innerType != "tran")
+        throw std::runtime_error("fit: the analysis must be of type dc, ac or tran");
+    if (!a.contains("output") || !a["output"].is_string())
+        throw std::runtime_error("fit: needs \"output\", the simulated quantity");
+    const std::string residual = a.value("residual", std::string("lin"));
+    if (residual != "lin" && residual != "rel" && residual != "log")
+        throw std::runtime_error("fit: \"residual\" must be \"lin\", \"rel\" or \"log\"");
+
+    // Data points
+    std::vector<double> dx, dy;
+    if (!a.contains("data") || !a["data"].is_object())
+        throw std::runtime_error("fit: needs \"data\": {\"x\": [...], \"y\": [...]}, \"points\" or \"file\"");
+    {
+        const json& d = a["data"];
+        const auto& par = c.ckt().parameters;
+        if (d.contains("x") && d.contains("y")) {
+            for (const json& v : d["x"]) dx.push_back(jsonNumber(v, "fit, data", &par));
+            for (const json& v : d["y"]) dy.push_back(jsonNumber(v, "fit, data", &par));
+        } else if (d.contains("points")) {
+            for (const json& pt : d["points"]) {
+                if (!pt.is_array() || pt.size() != 2)
+                    throw std::runtime_error("fit, data: each point must be [x, y]");
+                dx.push_back(jsonNumber(pt[0], "fit, data", &par));
+                dy.push_back(jsonNumber(pt[1], "fit, data", &par));
+            }
+        } else if (d.contains("file")) {
+            std::filesystem::path path(d["file"].get<std::string>());
+            if (path.is_relative() && !c.nl.baseDir.empty())
+                path = std::filesystem::path(c.nl.baseDir) / path;
+            std::ifstream in(path);
+            if (!in) throw std::runtime_error("fit: cannot open '" + path.string() + "'");
+            const int xcol = d.value("xcol", 0), ycol = d.value("ycol", 1);
+            for (std::string line; std::getline(in, line);) {
+                for (char& ch : line)
+                    if (ch == ',' || ch == ';' || ch == '\t') ch = ' ';
+                std::istringstream fields(line);
+                std::vector<double> row;
+                for (std::string field; fields >> field;) {
+                    char* end = nullptr;
+                    const double v = std::strtod(field.c_str(), &end);
+                    if (end == field.c_str() || *end != '\0') break;
+                    row.push_back(v);
+                }
+                if (static_cast<int>(row.size()) <= std::max(xcol, ycol)) continue;
+                dx.push_back(row[xcol]);
+                dy.push_back(row[ycol]);
+            }
+        }
+        if (dx.size() != dy.size() || dx.size() < 2)
+            throw std::runtime_error("fit: the data need at least two points with x and y");
+    }
+
+    // Parameters to adjust. With "log": true the logarithm is varied.
+    struct Fitted {
+        std::string name;
+        double lo, hi;
+        bool log;
+    };
+    std::vector<Fitted> fitted;
+    if (!a.contains("parameters") || !a["parameters"].is_object() || a["parameters"].empty())
+        throw std::runtime_error("fit: needs \"parameters\": {\"name\": {\"start\": ...}, ...}");
+    Eigen::VectorXd u(static_cast<Eigen::Index>(a["parameters"].size()));
+    for (const auto& [name, p] : a["parameters"].items()) {
+        const std::string where = "fit, parameter " + name;
+        definedParameter(c, name, "fit");
+        if (!p.is_object()) throw std::runtime_error(where + ": expected {\"start\": ..., \"min\": ..., \"max\": ...}");
+        checkKeys(p, where, {"start", "min", "max", "log"}, c.log);
+        Fitted f{name, num(c, p, "min", where, -std::numeric_limits<double>::infinity()),
+                 num(c, p, "max", where, std::numeric_limits<double>::infinity()),
+                 p.value("log", false)};
+        const double start = num(c, p, "start", where, c.ckt().parameters.at(name));
+        if (f.log && !(start > 0.0 && f.lo > 0.0))
+            throw std::runtime_error(where + ": \"log\" needs a positive start value and \"min\"");
+        if (!(start >= f.lo && start <= f.hi))
+            throw std::runtime_error(where + ": the start value lies outside min .. max");
+        u[static_cast<Eigen::Index>(fitted.size())] = f.log ? std::log(start) : start;
+        fitted.push_back(f);
+    }
+    const auto np = static_cast<Eigen::Index>(fitted.size());
+    const auto nd = static_cast<Eigen::Index>(dx.size());
+    auto value = [&](const Eigen::VectorXd& v, Eigen::Index k) {
+        const Fitted& f = fitted[static_cast<size_t>(k)];
+        return std::min(f.hi, std::max(f.lo, f.log ? std::exp(v[k]) : v[k]));
+    };
+
+    // Residual vector for a parameter set; also returns the model at the data points.
+    Sweep sweep;
+    sweep.capture = a["output"].get<std::string>();
+    json inner = a["analysis"];
+    inner["save"] = false;
+    inner.erase("measure");
+    int evaluations = 0;
+    std::vector<double> model(dx.size());
+    auto residuals = [&](const Eigen::VectorXd& v, Eigen::VectorXd& r) {
+        std::vector<std::pair<std::string, double>> parameters;
+        for (Eigen::Index k = 0; k < np; ++k) parameters.emplace_back(fitted[static_cast<size_t>(k)].name, value(v, k));
+        try {
+            runWith(c, sweep, inner, innerType, parameters);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("fit, " + describe(parameters) + ": " + e.what());
+        }
+        ++evaluations;
+        r.resize(nd);
+        for (Eigen::Index i = 0; i < nd; ++i) {
+            const double m = interpolate(sweep.captureX, sweep.captureY, dx[static_cast<size_t>(i)]);
+            const double d = dy[static_cast<size_t>(i)];
+            if (std::isnan(m))
+                throw std::runtime_error("fit: the data point x = " + std::to_string(dx[static_cast<size_t>(i)]) +
+                                         " lies outside the range of the analysis");
+            model[static_cast<size_t>(i)] = m;
+            if (residual == "lin") r[i] = m - d;
+            else if (residual == "rel") r[i] = (m - d) / d;
+            else {
+                if (!(m > 0.0 && d > 0.0))
+                    throw std::runtime_error("fit: \"residual\": \"log\" needs positive data and model values");
+                r[i] = std::log(m / d);
+            }
+        }
+    };
+
+    // Levenberg-Marquardt
+    const int maxIterations = a.value("max_iterations", 50);
+    const double tol = num(c, a, "tol", "fit", 1e-8);
+    Eigen::VectorXd r, rTrial, uTrial;
+    residuals(u, r);
+    double cost = r.squaredNorm(), lambda = 1e-3;
+    const double startCost = cost;
+    Eigen::MatrixXd J(nd, np);
+    int iterations = 0;
+    for (; iterations < maxIterations; ++iterations) {
+        for (Eigen::Index k = 0; k < np; ++k) {  // forward differences
+            const double h = 1e-4 * std::max(std::abs(u[k]), 1e-3);
+            uTrial = u;
+            uTrial[k] += h;
+            residuals(uTrial, rTrial);
+            J.col(k) = (rTrial - r) / h;
+        }
+        const Eigen::MatrixXd JtJ = J.transpose() * J;
+        const Eigen::VectorXd g = J.transpose() * r;
+        bool improved = false;
+        double newCost = cost;
+        for (int attempt = 0; attempt < 12 && !improved; ++attempt) {
+            Eigen::MatrixXd A = JtJ;
+            for (Eigen::Index k = 0; k < np; ++k) A(k, k) += lambda * std::max(JtJ(k, k), 1e-30);
+            uTrial = u - A.ldlt().solve(g);
+            for (Eigen::Index k = 0; k < np; ++k) {  // stay inside the limits
+                const Fitted& f = fitted[static_cast<size_t>(k)];
+                const double lo = f.log ? std::log(f.lo) : f.lo, hi = f.log ? std::log(f.hi) : f.hi;
+                uTrial[k] = std::min(hi, std::max(lo, uTrial[k]));
+            }
+            residuals(uTrial, rTrial);
+            newCost = rTrial.squaredNorm();
+            if (newCost < cost) improved = true;
+            else lambda *= 4.0;
+        }
+        if (!improved) break;
+        const double decrease = (cost - newCost) / std::max(cost, 1e-300);
+        u = uTrial;
+        r = rTrial;
+        cost = newCost;
+        lambda = std::max(lambda / 3.0, 1e-12);
+        if (decrease < tol) {
+            ++iterations;
+            break;
+        }
+    }
+    residuals(u, r);  // the model curve of the result
+
+    const std::string path = outputPath(c, a, "fit");
+    CsvWriter csv(path, {"x", "data", "model"});
+    for (size_t i = 0; i < dx.size(); ++i) csv.row({dx[i], dy[i], model[i]});
+    const double rms = std::sqrt(cost / static_cast<double>(nd));
+    c.log << "[fit] " << iterations << " iterations, " << evaluations
+          << " simulations, rms residual " << std::setprecision(6) << rms << " (start "
+          << std::sqrt(startCost / static_cast<double>(nd)) << ") -> " << path << '\n';
+    json* e = c.entry(a, "fit");
+    if (e) {
+        (*e)["file"] = path;
+        (*e)["rms_residual"] = number(rms);
+        (*e)["iterations"] = iterations;
+        (*e)["simulations"] = evaluations;
+    }
+    size_t width = 0;
+    for (const Fitted& f : fitted) width = std::max(width, f.name.size());
+    for (Eigen::Index k = 0; k < np; ++k) {
+        const Fitted& f = fitted[static_cast<size_t>(k)];
+        c.log << "  " << std::left << std::setw(static_cast<int>(width)) << f.name << " = "
+              << std::setprecision(6) << value(u, k) << '\n';
+        if (e) (*e)["parameters"][f.name] = number(value(u, k));
     }
 }
 
@@ -668,7 +1068,9 @@ void runAnalyses(Netlist& nl, const RunConfig& cfg, std::ostream& log) {
         if (!a.is_object() || !a.contains("type") || !a["type"].is_string())
             throw std::runtime_error("analyses: each entry needs a \"type\"");
         const std::string type = a["type"].get<std::string>();
-        if (a.contains("param_sweep")) runParamSweep(c, a, type);
+        if (type == "fit") runFit(c, a);
+        else if (a.contains("monte_carlo")) runMonteCarlo(c, a, type);
+        else if (a.contains("param_sweep")) runParamSweep(c, a, type);
         else runOne(c, a, type);
     }
 }
