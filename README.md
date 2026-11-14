@@ -116,6 +116,21 @@ Für eigene Programme schreibt `esim netz.json --summary ergebnis.json` eine
 maschinenlesbare Übersicht aller Analysen (Dateien, Arbeitspunktwerte,
 Messgrößen, Statistik).
 
+### SPICE-Netzlisten übernehmen
+
+`tools/spice2json.py` übersetzt eine SPICE-Netzliste in das JSON-Format:
+
+    python3 tools/spice2json.py examples/spice/amplifier.cir -o amplifier.json
+    ./build/esim amplifier.json
+
+Übersetzt werden die Bauteile R, C, L, K, V, I, E, G, F, H, D, Q, M, J, X und
+S, die Quellenformen DC, AC, SIN, PULSE und PWL sowie `.model`, `.subckt`,
+`.param`, `.op`, `.dc`, `.ac`, `.tran`, `.noise`, `.four`, `.ic`, `.nodeset`,
+`.temp`, `.options` und `.print`. Namen und Knoten werden kleingeschrieben
+(SPICE unterscheidet keine Groß- und Kleinschreibung). Was nicht übersetzt
+werden kann, wird gemeldet und ausgelassen; eingebundene Dateien (`.include`,
+`.lib`) werden nicht gelesen.
+
 ## Eingabeformat
 
 Kommentare (`//`, `/* */`) sind erlaubt. Unbekannte Schlüssel erzeugen eine
@@ -797,7 +812,7 @@ src/circuit/   das simulierte System als DaeSystem               -> Bibliothek e
 src/io/        JSON-Eingabe, SI-Zahlen, Ausgänge, CSV
 src/app/       Ablauf der Analysen aus der Eingabedatei, Messgrößen
 examples/      Eingabedateien und ein DAE in C++ (examples/dae)
-tools/         plot.py zum Zeichnen der Ergebnisse
+tools/         plot.py zum Zeichnen der Ergebnisse, spice2json.py für SPICE-Netzlisten
 python/        esim.py: Aufruf aus Python
 tests/         Testsuite gegen analytische Lösungen
 ```

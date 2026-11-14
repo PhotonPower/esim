@@ -101,5 +101,8 @@ if(ESIM_BUILD_TESTS)
     add_test(NAME python_interface
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/python/test_esim.py)
+    add_test(NAME spice_import
+      COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
+              ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/test_spice2json.py)
   endif()
 endif()
