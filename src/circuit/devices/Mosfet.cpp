@@ -27,6 +27,7 @@ Mosfet::Mosfet(std::string name, int d, int g, int s, int b, int polarity, const
 void Mosfet::setup(Circuit& ckt) {
     const CircuitOptions& o = ckt.options;
     const double vt = o.vt();
+    kT_ = kBoltzmann * (o.temp + 273.15);
     const double is = o.saturationCurrent(p_.is, 1.0, 1.11, 3.0);
     jbd_.configure(is, vt);
     jbs_.configure(is, vt);
@@ -92,6 +93,16 @@ void Mosfet::addChannelCharge(Local& m, int D, int S, double a, double vds, doub
     add(D, qd, qdA, qdV);
     add(S, qs, qsA, qsV);
     add(kB, qb, qbA, 0.0);
+}
+
+// Thermal noise of the channel: (8/3) kT gm in saturation, 4 kT gds as the
+// channel becomes a resistor (the larger of the two is used). Flicker noise as
+// in SPICE: kf id^af / (f cox' L^2), or kf id^af / f without tox.
+void Mosfet::noiseSources(std::vector<NoiseSource>& out) const {
+    const double thermal = 4.0 * kT_ * std::max(2.0 / 3.0 * opGm_, opGds_);
+    double flicker = p_.kf * std::pow(std::abs(opId_), p_.af);
+    if (cox_ > 0.0) flicker /= cox_ / (p_.w * p_.l) * p_.l * p_.l;
+    out.push_back({name(), d_, s_, thermal, flicker});
 }
 
 // Bulk diode from the bulk to the terminal at position `to` (drain or source).
@@ -184,6 +195,9 @@ void Mosfet::stamp(StampContext& ctx) {
     }
     const double gmbs = -gm * p_.gamma * dsarg;  // gm * (-dvth/dvbs)
 
+    opId_ = id;
+    opGm_ = gm;
+    opGds_ = gds;
     id += ctx.gmin * vds;
     gds += ctx.gmin;
 

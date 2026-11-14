@@ -34,4 +34,20 @@ using AcCallback = std::function<void(double freq, const Eigen::VectorXcd& x)>;
 void runAc(Circuit& ckt, const Vector& xop, const std::vector<double>& freqs,
            const AcCallback& onPoint);
 
+struct NoiseSource;
+class IndependentSource;
+
+// Noise analysis around the operating point xop. For every frequency:
+//   onoise2        spectral density of the output noise, squared (e.g. V^2/Hz)
+//   gain           |output / input source| (0 without an input source)
+//   contributions  share of every noise source in onoise2 (same order as `sources`)
+// The output is x[outPos] - x[outNeg]. Each noise source is a current
+// injected between two nodes; its transfer to the output comes from one
+// adjoint solve per frequency, (G + jwC)^T y = e_out.
+using NoiseCallback = std::function<void(double freq, double onoise2, double gain,
+                                         const std::vector<double>& contributions)>;
+void runNoise(Circuit& ckt, const Vector& xop, const std::vector<double>& freqs, int outPos,
+              int outNeg, const IndependentSource* input, std::vector<NoiseSource>& sources,
+              const NoiseCallback& onPoint);
+
 }  // namespace esim

@@ -19,6 +19,8 @@ struct DiodeParams {
     double ibv = 1e-3;   // current at breakdown voltage [A]
     double eg = 1.11;    // energy gap [eV]           (temperature dependence of is)
     double xti = 3.0;    // temperature exponent of is
+    double kf = 0.0;     // flicker noise coefficient
+    double af = 1.0;     // flicker noise exponent
 };
 
 // pn diode:
@@ -29,9 +31,12 @@ public:
     Diode(std::string name, int anode, int cathode, const DiodeParams& p);
     void setup(Circuit& ckt) override;
     void stamp(StampContext& ctx) override;
+    void noiseSources(std::vector<NoiseSource>& out) const override;
 
 private:
     int a_, c_, ai_;  // ai_: internal anode behind the series resistance
+    double kT_ = 0.0;
+    double opCurrent_ = 0.0;  // junction current of the last evaluation
     DiodeParams p_;
     bool hasBv_;
     double is_ = 0.0;  // saturation current at the circuit temperature

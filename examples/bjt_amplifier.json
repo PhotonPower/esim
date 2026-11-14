@@ -27,6 +27,12 @@
     { "type": "op", "outputs": ["v(b)", "v(c)", "v(e)", "v(c,e)", "i(VCC)"] },
     { "type": "ac", "sweep": "dec", "points": 20, "fstart": 1, "fstop": "100meg",
       "outputs": ["v(out)"] },
-    { "type": "tran", "tstop": "5m", "tstep": "10u", "outputs": ["v(in)", "v(out)", "v(c)"] }
+    // Noise at the output and referred to the input source, with the largest contributors.
+    { "type": "noise", "output": "v(out)", "input": "Vin",
+      "sweep": "dec", "points": 20, "fstart": 10, "fstop": "100k" },
+    // Spectrum of the last period: the transistor distorts the 10 mV sine.
+    { "type": "tran", "tstop": "5m", "tstep": "10u", "outputs": ["v(in)", "v(out)", "v(c)"],
+      "fourier": { "freq": "1k", "harmonics": 5, "outputs": ["v(out)"] },
+      "measure": { "thd": { "thd": "v(out)", "fundamental": "1k", "from": "3m" } } }
   ]
 }

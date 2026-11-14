@@ -14,6 +14,12 @@ Resistor::Resistor(std::string name, int a, int b, double r)
     if (!(r != 0.0)) throw std::runtime_error(this->name() + ": resistance must not be zero");
 }
 
+void Resistor::setup(Circuit& ckt) { kT_ = kBoltzmann * (ckt.options.temp + 273.15); }
+
+void Resistor::noiseSources(std::vector<NoiseSource>& out) const {
+    out.push_back({name(), a_, b_, 4.0 * kT_ * std::abs(g_), 0.0});  // thermal
+}
+
 void Resistor::stamp(StampContext& ctx) {
     ctx.stampCurrent(a_, b_, g_ * (ctx.v(a_) - ctx.v(b_)));
     ctx.stampConductance(a_, b_, g_);

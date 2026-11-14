@@ -16,7 +16,8 @@ const double kNaN = std::numeric_limits<double>::quiet_NaN();
 const std::set<std::string>& functions() {
     static const std::set<std::string> f = {"min",    "max",  "pp",     "argmin", "argmax", "avg",
                                             "rms",    "integ", "final",  "at",     "cross",  "period",
-                                            "freq",   "duty", "rise",   "fall",   "f3db",   "f3db_low"};
+                                            "freq",   "duty", "rise",   "fall",   "f3db",   "f3db_low",
+                                            "thd",    "harmonic"};
     return f;
 }
 
@@ -73,6 +74,46 @@ double integral(const std::vector<double>& x, const std::vector<double>& y, bool
 
 }  // namespace
 
+bool fourier(const std::vector<double>& t, const std::vector<double>& y, double freq, int n,
+             int periods, double from, std::vector<std::complex<double>>& amplitudes) {
+    using cd = std::complex<double>;
+    amplitudes.assign(n + 1, cd(0.0));
+    if (t.size() < 2 || !(freq > 0.0)) return false;
+    const double period = 1.0 / freq, end = t.back();
+    int fit = static_cast<int>(std::floor((end - std::max(from, t.front())) / period + 1e-9));
+    if (periods > 0) fit = std::min(fit, periods);
+    if (fit < 1) return false;
+    const double span = fit * period;
+
+    std::vector<double> ts, ys;
+    window(t, y, end - span, end, ts, ys);
+    for (int k = 0; k <= n; ++k) {
+        cd sum(0.0);
+        const cd lambda(0.0, -2.0 * 3.14159265358979323846 * k * freq);
+        for (size_t i = 1; i < ts.size(); ++i) {
+            const double h = ts[i] - ts[i - 1];
+            if (!(h > 0.0)) continue;
+            if (k == 0) {
+                sum += 0.5 * h * (ys[i] + ys[i - 1]);
+            } else {
+                // exact integral of (linear piece) * exp(lambda t)
+                const cd slope = (ys[i] - ys[i - 1]) / h;
+                sum += std::exp(lambda * ts[i]) * (ys[i] / lambda - slope / (lambda * lambda)) -
+                       std::exp(lambda * ts[i - 1]) * (ys[i - 1] / lambda - slope / (lambda * lambda));
+            }
+        }
+        amplitudes[k] = (k == 0 ? 1.0 : 2.0) * sum / span;
+    }
+    return true;
+}
+
+double totalHarmonicDistortion(const std::vector<std::complex<double>>& amplitudes) {
+    if (amplitudes.size() < 3 || std::abs(amplitudes[1]) == 0.0) return kNaN;
+    double sum = 0.0;
+    for (size_t k = 2; k < amplitudes.size(); ++k) sum += std::norm(amplitudes[k]);
+    return std::sqrt(sum) / std::abs(amplitudes[1]);
+}
+
 std::vector<MeasureSpec> parseMeasures(const nlohmann::json& j,
                                        const std::map<std::string, double>& parameters) {
     if (!j.is_object())
@@ -103,6 +144,7 @@ std::vector<MeasureSpec> parseMeasures(const nlohmann::json& j,
             else if (key == "high") spec.high = number();
             else if (key == "x") spec.x = number();
             else if (key == "n") spec.n = static_cast<int>(number());
+            else if (key == "fundamental") spec.freq = number();
             else if (key == "edge") {
                 if (!value.is_string() ||
                     (value != "rise" && value != "fall" && value != "both"))
@@ -122,6 +164,9 @@ std::vector<MeasureSpec> parseMeasures(const nlohmann::json& j,
         if (spec.function == "at" && std::isnan(spec.x))
             throw std::runtime_error(where + ": \"at\" needs the position \"x\"");
         if (spec.n < 1) throw std::runtime_error(where + ": \"n\" must be at least 1");
+        if ((spec.function == "thd" || spec.function == "harmonic") && !(spec.freq > 0.0))
+            throw std::runtime_error(where + ": \"" + spec.function +
+                                     "\" needs the fundamental frequency \"fundamental\"");
         out.push_back(spec);
     }
     return out;
@@ -195,6 +240,13 @@ double evaluateMeasure(const MeasureSpec& spec, const std::vector<double>& xAll,
         for (double e : end)
             if (e >= start.front()) return e - start.front();
         return kNaN;
+    }
+
+    if (f == "thd" || f == "harmonic") {
+        std::vector<std::complex<double>> amp;
+        const int harmonics = f == "thd" ? 15 : spec.n;
+        if (!fourier(x, y, spec.freq, harmonics, 0, x.front(), amp)) return kNaN;
+        return f == "thd" ? totalHarmonicDistortion(amp) : std::abs(amp[spec.n]);
     }
 
     if (f == "f3db" || f == "f3db_low") {

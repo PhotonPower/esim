@@ -12,6 +12,7 @@
 
 #include "app/Measure.hpp"
 #include "circuit/Analysis.hpp"
+#include "circuit/Device.hpp"
 #include "circuit/devices/Sources.hpp"
 #include "core/Transient.hpp"
 #include "io/Output.hpp"
@@ -129,6 +130,12 @@ public:
     std::string arrow() const { return path_.empty() ? std::string() : " -> " + path_; }
     // For the summary: the file with the curves, or null.
     json file() const { return path_.empty() ? json(nullptr) : json(path_); }
+    // Name the curve file has or would have (other results are stored next to it).
+    std::string fileName(Context& c, const json& a) const {
+        if (!path_.empty()) return path_;
+        const std::string tag = a.value("name", std::string("tran"));
+        return (std::filesystem::path(c.cfg.outDir) / (c.cfg.stem + "." + tag + ".csv")).string();
+    }
 
 private:
     CsvWriter* csv_ = nullptr;
@@ -188,6 +195,84 @@ private:
     std::vector<MeasureSpec> specs_;
     std::vector<Probe> probes_;
     std::vector<double> x_;
+    std::vector<std::vector<double>> y_;
+};
+
+// "fourier": {"freq": "1k", "harmonics": 9, "periods": 1, "outputs": ["v(out)"]}
+// Spectrum of the last whole period(s) of a transient analysis.
+class FourierBlock {
+public:
+    FourierBlock(Context& c, const json& a) {
+        if (!a.contains("fourier")) return;
+        const json& f = a["fourier"];
+        if (!f.is_object()) throw std::runtime_error("fourier: expected an object");
+        checkKeys(f, "fourier", {"freq", "harmonics", "periods", "outputs", "from"}, c.log);
+        freq_ = num(c, f, "freq", "fourier");
+        if (!(freq_ > 0.0)) throw std::runtime_error("fourier: \"freq\" must be > 0");
+        harmonics_ = static_cast<int>(num(c, f, "harmonics", "fourier", 9));
+        periods_ = static_cast<int>(num(c, f, "periods", "fourier", 1));
+        from_ = num(c, f, "from", "fourier", 0.0);
+        if (harmonics_ < 1 || periods_ < 0)
+            throw std::runtime_error("fourier: \"harmonics\" must be >= 1 and \"periods\" >= 0");
+        std::vector<std::string> exprs = c.nl.outputs;
+        if (a.contains("outputs")) exprs = a["outputs"].get<std::vector<std::string>>();
+        if (f.contains("outputs")) exprs = f["outputs"].get<std::vector<std::string>>();
+        probes_ = makeProbes(c.ckt(), exprs);
+        y_.resize(probes_.size());
+        active_ = true;
+    }
+
+    void sample(double t, const Vector& x) {
+        if (!active_) return;
+        t_.push_back(t);
+        for (size_t k = 0; k < probes_.size(); ++k) y_[k].push_back(probes_[k].value(x, t));
+    }
+
+    void report(Context& c, const std::string& curveFile, json* entry) {
+        if (!active_ || c.sweep) return;
+        std::vector<std::vector<std::complex<double>>> amp(probes_.size());
+        for (size_t k = 0; k < probes_.size(); ++k)
+            if (!fourier(t_, y_[k], freq_, harmonics_, periods_, from_, amp[k]))
+                throw std::runtime_error("fourier: the analysis is shorter than one period of the "
+                                         "fundamental frequency");
+        std::vector<std::string> header{"harmonic", "freq"};
+        for (const Probe& p : probes_) {
+            header.push_back("mag(" + p.label + ")");
+            header.push_back("phase(" + p.label + ")");
+        }
+        // Next to the curves: <stem>.<name>.fourier.csv
+        const std::string path = curveFile.substr(0, curveFile.size() - 4) + ".fourier.csv";
+        CsvWriter csv(path, header);
+        for (int h = 0; h <= harmonics_; ++h) {
+            std::vector<double> row{static_cast<double>(h), h * freq_};
+            for (const auto& a : amp) {
+                row.push_back(std::abs(a[h]));
+                row.push_back(std::arg(a[h]) * 180.0 / kPi);
+            }
+            csv.row(row);
+        }
+        c.log << "  fourier, fundamental " << freq_ << " Hz -> " << path << '\n';
+        size_t width = 0;
+        for (const Probe& p : probes_) width = std::max(width, p.label.size());
+        for (size_t k = 0; k < probes_.size(); ++k) {
+            const double thd = totalHarmonicDistortion(amp[k]);
+            c.log << "    " << std::left << std::setw(static_cast<int>(width)) << probes_[k].label
+                  << "  fundamental " << std::setprecision(6) << std::abs(amp[k][1]) << ", thd "
+                  << 100.0 * thd << " %\n";
+            if (entry) {
+                (*entry)["fourier"]["thd"][probes_[k].label] = number(thd);
+                (*entry)["fourier"]["fundamental"][probes_[k].label] = number(std::abs(amp[k][1]));
+            }
+        }
+        if (entry) (*entry)["fourier"]["file"] = path;
+    }
+
+private:
+    bool active_ = false;
+    double freq_ = 0.0, from_ = 0.0;
+    int harmonics_ = 9, periods_ = 1;
+    std::vector<Probe> probes_;
+    std::vector<double> t_;
     std::vector<std::vector<double>> y_;
 };
 
@@ -290,7 +375,7 @@ IntegrationMethod parseMethod(const std::string& m) {
 void runTran(Context& c, const json& a) {
     checkKeys(a, "tran",
               {"type", "name", "outputs", "tstop", "tstep", "hmax", "hmin", "hinit", "method",
-               "uic", "output_step", "max_events", "max_order", "measure", "save"},
+               "uic", "output_step", "max_events", "max_order", "measure", "save", "fourier"},
               c.log);
     const SimOptions& so = c.nl.options;
     TransientOptions to;
@@ -317,6 +402,7 @@ void runTran(Context& c, const json& a) {
     for (const Probe& p : probes) header.push_back(p.label);
     Table table(c, a, "tran", header);
     Measures measures(c, a);
+    FourierBlock fourierBlock(c, a);
 
     Circuit& ckt = c.ckt();
     ckt.setTransientMode(true);
@@ -337,6 +423,7 @@ void runTran(Context& c, const json& a) {
             for (const Probe& p : probes) row.push_back(p.value(x, t));
             table.row(t, row);
             measures.sample(t, [&](const Probe& p) { return p.value(x, t); });
+            fourierBlock.sample(t, x);
         });
     } catch (...) {
         ckt.setInitialPointMode(false);
@@ -362,6 +449,7 @@ void runTran(Context& c, const json& a) {
                          {"max_order", stats.maxOrder}};
     }
     measures.report(c, e);
+    fourierBlock.report(c, table.fileName(c, a), e);
 }
 
 void runAcSweep(Context& c, const json& a) {
@@ -401,13 +489,100 @@ void runAcSweep(Context& c, const json& a) {
     measures.report(c, e);
 }
 
+// {"type": "noise", "output": "v(out)", "input": "Vin", "sweep": "dec", "points": 10,
+//  "fstart": 10, "fstop": "100k"}
+void runNoiseAnalysis(Context& c, const json& a) {
+    checkKeys(a, "noise",
+              {"type", "name", "output", "input", "sweep", "points", "fstart", "fstop", "save"},
+              c.log);
+    if (!a.contains("output") || !a["output"].is_string())
+        throw std::runtime_error("noise: needs \"output\", e.g. \"v(out)\" or \"v(a,b)\"");
+    const Probe out = parseProbe(c.ckt(), a["output"].get<std::string>());
+    if (out.expression)
+        throw std::runtime_error("noise: \"output\" must be v(node), v(a,b) or i(component)");
+    const IndependentSource* input = nullptr;
+    if (a.contains("input")) {
+        const std::string name = a["input"].get<std::string>();
+        input = dynamic_cast<const IndependentSource*>(c.ckt().findDevice(name));
+        if (!input) throw std::runtime_error("noise: input '" + name + "' is not an independent source");
+    }
+    const auto freqs =
+        frequencySweep(a.value("sweep", std::string("dec")), a.value("points", 10),
+                       num(c, a, "fstart", "noise"), num(c, a, "fstop", "noise"));
+
+    // Densities are reported as square roots (V/sqrt(Hz) for a voltage output).
+    std::vector<std::string> header{"freq", "onoise"};
+    if (input) {
+        header.push_back("inoise");
+        header.push_back("gain");
+    }
+    Table table(c, a, "noise", header);
+
+    c.ckt().setTransientMode(false);
+    const Vector xop = solveOperatingPoint(c.ckt(), c.nl.options);
+    std::vector<NoiseSource> sources;
+    std::vector<double> integrated;  // per source, V^2 over the band
+    double total = 0.0, totalIn = 0.0, prevF = 0.0, prevOn = 0.0, prevIn = 0.0;
+    std::vector<double> prev;
+    bool first = true;
+    std::vector<double> row;
+    runNoise(c.ckt(), xop, freqs, out.pos, out.neg, input, sources,
+             [&](double f, double onoise2, double gain, const std::vector<double>& contrib) {
+                 const double inoise2 = gain > 0.0 ? onoise2 / (gain * gain) : 0.0;
+                 row = {std::sqrt(onoise2)};
+                 if (input) {
+                     row.push_back(std::sqrt(inoise2));
+                     row.push_back(gain);
+                 }
+                 table.row(f, row);
+                 if (first) integrated.assign(contrib.size(), 0.0);
+                 else {  // trapezoidal rule over the frequency
+                     const double df = f - prevF;
+                     total += 0.5 * df * (onoise2 + prevOn);
+                     totalIn += 0.5 * df * (inoise2 + prevIn);
+                     for (size_t k = 0; k < contrib.size(); ++k)
+                         integrated[k] += 0.5 * df * (contrib[k] + prev[k]);
+                 }
+                 first = false;
+                 prevF = f;
+                 prevOn = onoise2;
+                 prevIn = inoise2;
+                 prev = contrib;
+             });
+
+    c.log << "[noise] " << freqs.front() << " .. " << freqs.back() << " Hz: " << freqs.size()
+          << " points" << table.arrow() << '\n';
+    c.log << "  output noise in the band: " << std::setprecision(6) << std::sqrt(total) << " rms\n";
+    if (input) c.log << "  referred to the input:    " << std::sqrt(totalIn) << " rms\n";
+    // Largest contributors
+    std::vector<size_t> order(sources.size());
+    for (size_t k = 0; k < order.size(); ++k) order[k] = k;
+    std::sort(order.begin(), order.end(), [&](size_t i, size_t j) { return integrated[i] > integrated[j]; });
+    json* e = c.entry(a, "noise");
+    if (e) {
+        (*e)["file"] = table.file();
+        (*e)["onoise_rms"] = number(std::sqrt(total));
+        if (input) (*e)["inoise_rms"] = number(std::sqrt(totalIn));
+    }
+    for (size_t r = 0; r < order.size(); ++r) {
+        const size_t k = order[r];
+        if (r < 5 && total > 0.0)
+            c.log << "    " << std::left << std::setw(12) << sources[k].name << ' '
+                  << std::setprecision(4) << 100.0 * integrated[k] / total << " %\n";
+        if (e) (*e)["contributions"][sources[k].name] = number(std::sqrt(integrated[k]));
+    }
+}
+
 void runOne(Context& c, const json& a, const std::string& type) {
     c.ckt().resetDevices();
     if (type == "op") runOp(c, a);
     else if (type == "dc") runDcSweep(c, a);
     else if (type == "tran") runTran(c, a);
     else if (type == "ac") runAcSweep(c, a);
-    else throw std::runtime_error("analyses: unknown type \"" + type + "\" (op, dc, tran, ac)");
+    else if (type == "noise") runNoiseAnalysis(c, a);
+    else
+        throw std::runtime_error("analyses: unknown type \"" + type +
+                                 "\" (op, dc, tran, ac, noise)");
 }
 
 // "param_sweep": {"param": "R1", "values": [...]}

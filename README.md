@@ -368,9 +368,9 @@ Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibun
 | `X`, `subcircuit` | Instanz eines Subcircuits | Anschlüsse in der Reihenfolge von `ports` | `subcircuit`, `parameters` |
 | `S`, `switch` | idealer Schalter | a, b [, Steuer+, Steuer−] | `control` (Ausdruck, bei zwei Knoten), `vt`, `vh`, `ron`, `roff`, `initial` |
 | `ideal_diode` | ideale Diode | Anode, Kathode | `vf`, `ron`, `roff` |
-| `D`, `diode` | Diode | Anode, Kathode | `is` `n` `rs` `cj0` `vj` `m` `fc` `tt` `bv` `ibv` `eg` `xti` |
-| `Q`, `npn`, `pnp` | Bipolartransistor | C, B, E | `is` `bf` `br` `nf` `nr` `vaf` `var` `ikf` `ikr` `ise` `ne` `isc` `nc` `rb` `rc` `re` `cje` `vje` `mje` `cjc` `vjc` `mjc` `tf` `tr` `fc` `eg` `xti` `xtb` |
-| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` |
+| `D`, `diode` | Diode | Anode, Kathode | `is` `n` `rs` `cj0` `vj` `m` `fc` `tt` `bv` `ibv` `eg` `xti` `kf` `af` |
+| `Q`, `npn`, `pnp` | Bipolartransistor | C, B, E | `is` `bf` `br` `nf` `nr` `vaf` `var` `ikf` `ikr` `ise` `ne` `isc` `nc` `rb` `rc` `re` `cje` `vje` `mje` `cjc` `vjc` `mjc` `tf` `tr` `fc` `eg` `xti` `xtb` `kf` `af` |
+| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` `kf` `af` |
 
 Verhaltensquelle `B`:
 
@@ -511,7 +511,8 @@ Minus-Knoten, also negativ, solange die Quelle Leistung abgibt.
 | `op` | – | Arbeitspunkt (Konsole) |
 | `dc` | `source`, `start`, `stop`, `step` | Sweep einer V- oder I-Quelle |
 | `ac` | `sweep` (`dec`/`oct`/`lin`), `points`, `fstart`, `fstop` | Betrag und Phase (Grad) je Ausgang |
-| `tran` | `tstop`, optional `tstep`, `hmax`, `hinit`, `hmin`, `method`, `max_order`, `uic`, `output_step`, `max_events` | Zeitverlauf |
+| `tran` | `tstop`, optional `tstep`, `hmax`, `hinit`, `hmin`, `method`, `max_order`, `uic`, `output_step`, `max_events`, `fourier` | Zeitverlauf |
+| `noise` | `output`, optional `input`, dazu `sweep`, `points`, `fstart`, `fstop` wie bei `ac` | Rauschdichte am Ausgang und auf den Eingang bezogen |
 
 Jede Analyse kann mit `"outputs": [...]` eigene Ausgänge und mit `"name"` einen
 eigenen Dateinamen bekommen.
@@ -543,6 +544,43 @@ Transientenanalyse:
   bleibt frei). Ohne diese Angabe wird jeder Zeitpunkt des Lösers ausgegeben.
 - `"max_events"` (Standard 100000) begrenzt die Zahl der Ereignisse.
 
+### Fourier-Analyse
+
+Der Block `fourier` einer Transientenanalyse berechnet das Spektrum der letzten
+ganzen Periode(n) zur Grundfrequenz `freq`:
+
+```jsonc
+{ "type": "tran", "tstop": "5m", "tstep": "10u",
+  "fourier": { "freq": "1k", "harmonics": 9, "outputs": ["v(out)"] } }
+```
+
+Das Ergebnis steht in `<Name>.tran.fourier.csv` (Betrag und Phase je
+Harmonischer, Zeile 0 ist der Mittelwert); Grundschwingung und Klirrfaktor
+erscheinen auf der Konsole. `periods` (Standard 1) wählt die Zahl der
+ausgewerteten Perioden, `from` den frühesten Zeitpunkt. Die Genauigkeit hängt
+von der Auflösung des Zeitverlaufs ab: für kleine Klirrfaktoren `tstep` und
+`reltol` klein wählen. Als einzelne Kennwerte gibt es die Messgrößen `thd` und
+`harmonic` (siehe unten).
+
+### Rauschanalyse
+
+```jsonc
+{ "type": "noise", "output": "v(out)", "input": "Vin",
+  "sweep": "dec", "points": 20, "fstart": 10, "fstop": "100k" }
+```
+
+Berechnet im Arbeitspunkt die spektrale Rauschdichte am Ausgang (`onoise`, bei
+einer Spannung in V/√Hz) und, wenn eine Quelle als `input` genannt ist, die
+auf sie bezogene Dichte (`inoise`) samt Verstärkung. Auf der Konsole stehen das
+über das Band integrierte Rauschen und die größten Beiträge. `output` ist
+`v(knoten)`, `v(a,b)` oder `i(bauteil)`.
+
+Rauschquellen: thermisches Rauschen aller Widerstände (auch der Bahnwiderstände
+von Diode und Transistor), Schrotrauschen von Dioden-, Kollektor- und
+Basisstrom, thermisches Kanalrauschen des MOSFET, dazu 1/f-Rauschen über die
+Modellparameter `kf` und `af`. Schalter, ideale Dioden und Verhaltensquellen
+rauschen nicht.
+
 ### Messgrößen
 
 Mit `measure` berechnet eine Analyse Kennwerte aus ihren Kurven. Ohne Sweep
@@ -572,6 +610,7 @@ Quelle; in der AC-Analyse wird der Betrag ausgewertet.
 | `period`, `freq`, `duty` | Periode, Frequenz, Tastgrad aus den steigenden Durchgängen | `level` (Standard: Mitte zwischen Minimum und Maximum) |
 | `rise`, `fall` | Anstiegs- / Abfallzeit zwischen zwei Pegeln | `low`, `high` (Standard: 10 % und 90 % des Hubs) |
 | `f3db`, `f3db_low` | obere / untere Stelle, an der die Kurve auf Maximum/√2 gefallen ist | |
+| `thd`, `harmonic` | Klirrfaktor (bis zur 15. Harmonischen) bzw. Amplitude der `n`-ten Harmonischen | `fundamental` (Grundfrequenz), `n` |
 
 `from` und `to` beschränken jede Messung auf einen Ausschnitt. Eine Messung
 ohne Ergebnis (z. B. kein Durchgang gefunden) liefert „not defined" bzw. `nan`.
@@ -716,6 +755,9 @@ Numerik in Kürze:
   Unbekannten in Einklang; dann startet die Integration neu.
 - **AC**: Linearisierung im Arbeitspunkt, `(G + jωC)·X = B` mit `G = ∂f/∂x`,
   `C = ∂q/∂x`. Gleichungen und Verhaltensquellen sind darin enthalten.
+- **Rauschen**: Jede Rauschquelle ist ein Strom zwischen zwei Knoten. Ihre
+  Übertragung zum Ausgang liefert eine adjungierte Lösung je Frequenz,
+  `(G + jωC)ᵀ·y = e_aus`; die Beiträge werden quadratisch summiert.
 - **Gleichungen**: Jede Variable ist eine Unbekannte, jede Gleichung eine Zeile
   desselben Systems wie die Schaltung. `der(...)`-Terme gehen nach `q`, der
   Rest nach `f`; die Jacobi-Einträge kommen aus dem automatischen Differenzieren
@@ -767,7 +809,7 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   dafür nicht stabil genug; die Ordnungssteuerung weicht dann auf niedrige
   Ordnungen aus, die numerisch dämpfen. Für Schwingkreise hoher Güte `trap`
   verwenden.
-- **Schaltungen**: kein Rauschen. Die Halbleitermodelle entsprechen den
+- **Schaltungen**: Die Halbleitermodelle entsprechen den
   klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1); moderne
   Kurzkanal-Modelle und JFETs fehlen.
 - **Große Schaltungen**: Getestet mit einigen tausend Knoten. Es gibt keine

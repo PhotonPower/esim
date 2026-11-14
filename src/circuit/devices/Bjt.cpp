@@ -24,6 +24,7 @@ Bjt::Bjt(std::string name, int c, int b, int e, int polarity, const BjtParams& p
 void Bjt::setup(Circuit& ckt) {
     const CircuitOptions& o = ckt.options;
     const double vt = o.vt();
+    kT_ = kBoltzmann * (o.temp + 273.15);
     const double ratio = o.tempRatio();
     const double is = o.saturationCurrent(p_.is, 1.0, p_.eg, p_.xti);
     jbe_.configure(is, p_.nf * vt);
@@ -40,6 +41,16 @@ void Bjt::setup(Circuit& ckt) {
     if (p_.rc > 0.0) ci_ = ckt.addUnknown("v(" + name() + ":c)", UnknownKind::Voltage, true);
     if (p_.rb > 0.0) bi_ = ckt.addUnknown("v(" + name() + ":b)", UnknownKind::Voltage, true);
     if (p_.re > 0.0) ei_ = ckt.addUnknown("v(" + name() + ":e)", UnknownKind::Voltage, true);
+}
+
+void Bjt::noiseSources(std::vector<NoiseSource>& out) const {
+    const double ib = std::abs(opIb_);
+    out.push_back({name() + ".ic", ci_, ei_, 2.0 * kElementaryCharge * std::abs(opIc_), 0.0});
+    out.push_back({name() + ".ib", bi_, ei_, 2.0 * kElementaryCharge * ib,
+                   p_.kf * std::pow(ib, p_.af)});
+    if (bi_ != b_) out.push_back({name() + ".rb", b_, bi_, 4.0 * kT_ / p_.rb, 0.0});
+    if (ci_ != c_) out.push_back({name() + ".rc", c_, ci_, 4.0 * kT_ / p_.rc, 0.0});
+    if (ei_ != e_) out.push_back({name() + ".re", e_, ei_, 4.0 * kT_ / p_.re, 0.0});
 }
 
 void Bjt::stamp(StampContext& ctx) {
@@ -100,6 +111,8 @@ void Bjt::stamp(StampContext& ctx) {
     const double ic = ict - ibc + gcBe * dbe + gcBc * dbc;
     const double ib = ibe + ibc + gbBe * dbe + gbBc * dbc;
 
+    opIc_ = ict;
+    opIb_ = ibe + ibc;
     ctx.addF(ci_, pol_ * ic);
     ctx.addF(bi_, pol_ * ib);
     ctx.addF(ei_, -pol_ * (ic + ib));

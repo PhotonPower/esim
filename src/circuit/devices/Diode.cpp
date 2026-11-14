@@ -19,10 +19,18 @@ Diode::Diode(std::string name, int anode, int cathode, const DiodeParams& p)
 
 void Diode::setup(Circuit& ckt) {
     nvt_ = p_.n * ckt.options.vt();
+    kT_ = kBoltzmann * (ckt.options.temp + 273.15);
     is_ = ckt.options.saturationCurrent(p_.is, p_.n, p_.eg, p_.xti);
     vcrit_ = junctionVcrit(is_, nvt_);
     vcritBv_ = junctionVcrit(p_.ibv, nvt_);
     if (p_.rs > 0.0) ai_ = ckt.addUnknown("v(" + name() + ":a)", UnknownKind::Voltage, true);
+}
+
+void Diode::noiseSources(std::vector<NoiseSource>& out) const {
+    const double id = std::abs(opCurrent_);
+    out.push_back({name(), ai_, c_, 2.0 * kElementaryCharge * id,  // shot noise
+                   p_.kf * std::pow(id, p_.af)});
+    if (ai_ != a_) out.push_back({name() + ".rs", a_, ai_, 4.0 * kT_ / p_.rs, 0.0});
 }
 
 void Diode::stamp(StampContext& ctx) {
@@ -62,6 +70,7 @@ void Diode::stamp(StampContext& ctx) {
 
     // Linear extrapolation from the limited to the actual junction voltage.
     i += g * (vd - vl);
+    opCurrent_ = i;
     q += c * (vd - vl);
 
     ctx.stampCurrent(ai_, c_, i);

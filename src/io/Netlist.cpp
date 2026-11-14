@@ -401,6 +401,8 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             d.ibv = p.num("ibv", d.ibv);
             d.eg = p.num("eg", d.eg);
             d.xti = p.num("xti", d.xti);
+            d.kf = p.num("kf", d.kf);
+            d.af = p.num("af", d.af);
             ckt.add(std::make_unique<Diode>(name, n[0], n[1], d));
             break;
         }
@@ -435,6 +437,8 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             b.eg = p.num("eg", b.eg);
             b.xti = p.num("xti", b.xti);
             b.xtb = p.num("xtb", b.xtb);
+            b.kf = p.num("kf", b.kf);
+            b.af = p.num("af", b.af);
             const int pol = polarity(type, modelType, "npn", "pnp", p.where());
             ckt.add(std::make_unique<Bjt>(name, n[0], n[1], n[2], pol, b));
             break;
@@ -550,6 +554,8 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             m.is = p.num("is", m.is);
             m.tox = p.num("tox", m.tox);
             m.tcv = p.num("tcv", m.tcv);
+            m.kf = p.num("kf", m.kf);
+            m.af = p.num("af", m.af);
             const int pol = polarity(type, modelType, "nmos", "pmos", p.where());
             const int bulk = n.size() == 4 ? n[3] : n[2];
             ckt.add(std::make_unique<Mosfet>(name, n[0], n[1], n[2], bulk, pol, m));
@@ -984,17 +990,18 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
         throw std::runtime_error(where + ": expected \".model NAME TYPE (KEY=VALUE ...)\"");
 
     static const std::map<std::string, std::pair<std::string, std::set<std::string>>> types = {
-        {"d", {"diode", {"is", "n", "rs", "cj0", "vj", "m", "fc", "tt", "bv", "ibv", "eg", "xti"}}},
+        {"d", {"diode", {"is", "n", "rs", "cj0", "vj", "m", "fc", "tt", "bv", "ibv", "eg", "xti",
+                         "kf", "af"}}},
         {"npn", {"npn", {}}}, {"pnp", {"pnp", {}}},
         {"nmos", {"nmos", {}}}, {"pmos", {"pmos", {}}},
     };
     static const std::set<std::string> bjtKeys = {
         "is", "bf", "br", "nf", "nr", "vaf", "var", "ikf", "ikr", "ise", "ne", "isc", "nc",
         "rb", "rc", "re", "cje", "vje", "mje", "cjc", "vjc", "mjc", "tf", "tr", "fc", "eg",
-        "xti", "xtb"};
+        "xti", "xtb", "kf", "af"};
     static const std::set<std::string> mosKeys = {
         "vto", "kp", "gamma", "phi", "lambda", "cgso", "cgdo", "cgbo", "cbd", "cbs", "pb",
-        "mj", "fc", "is", "tox", "tcv", "w", "l"};
+        "mj", "fc", "is", "tox", "tcv", "w", "l", "kf", "af"};
     const std::string type = lower(tok[2]);
     auto it = types.find(type);
     if (it == types.end())

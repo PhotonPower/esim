@@ -28,6 +28,8 @@ struct BjtParams {
     double eg = 1.11;   // energy gap [eV]            (temperature dependence of is)
     double xti = 3.0;   // temperature exponent of is
     double xtb = 0.0;   // temperature exponent of bf and br
+    double kf = 0.0;    // flicker noise coefficient (on the base current)
+    double af = 1.0;    // flicker noise exponent
 };
 
 // Bipolar transistor, Gummel-Poon model:
@@ -45,8 +47,11 @@ public:
     Bjt(std::string name, int c, int b, int e, int polarity, const BjtParams& p);
     void setup(Circuit& ckt) override;
     void stamp(StampContext& ctx) override;
+    void noiseSources(std::vector<NoiseSource>& out) const override;
 
 private:
+    double kT_ = 0.0;
+    double opIc_ = 0.0, opIb_ = 0.0;  // transport and base current of the last evaluation
     int c_, b_, e_;     // terminals
     int ci_, bi_, ei_;  // nodes of the intrinsic transistor (behind the series resistances)
     double pol_;

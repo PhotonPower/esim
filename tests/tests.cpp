@@ -15,6 +15,8 @@
 #include "app/Measure.hpp"
 #include "app/Runner.hpp"
 #include "circuit/Analysis.hpp"
+#include "circuit/Device.hpp"
+#include "circuit/devices/Sources.hpp"
 #include "core/Transient.hpp"
 #include "dae/Robertson.hpp"
 #include "expr/Expression.hpp"
@@ -1518,6 +1520,131 @@ void testDeviceModels() {
               "unsupported SPICE model type is rejected");
 }
 
+void testNoise() {
+    const double kT = 1.380649e-23 * 300.15, q = 1.602176634e-19, vt = 8.617333262e-5 * 300.15;
+    // Output noise density (squared) of a circuit at the given frequencies.
+    const auto noise = [](Netlist& nl, const std::string& output, const char* input,
+                          const std::vector<double>& freqs, std::vector<double>* gains = nullptr) {
+        Circuit& ckt = *nl.circuit;
+        const Vector xop = solveOperatingPoint(ckt, nl.options);
+        const Probe out = parseProbe(ckt, output);
+        const auto* src = input ? dynamic_cast<const IndependentSource*>(ckt.findDevice(input)) : nullptr;
+        std::vector<NoiseSource> sources;
+        std::vector<double> result;
+        runNoise(ckt, xop, freqs, out.pos, out.neg, src, sources,
+                 [&](double, double onoise2, double gain, const std::vector<double>&) {
+                     result.push_back(onoise2);
+                     if (gains) gains->push_back(gain);
+                 });
+        return result;
+    };
+
+    // Thermal noise of a resistor: 4 k T R; of two in parallel: 4 k T (R1 || R2).
+    Netlist r1 = parseNetlistText(R"json({"components": [
+        {"type": "R", "name": "R1", "nodes": ["a", "0"], "value": "1k"}]})json");
+    checkNear(noise(r1, "v(a)", nullptr, {1e3})[0] / (4.0 * kT * 1e3), 1.0, 1e-9, "thermal noise of a resistor");
+    Netlist r2 = parseNetlistText(R"json({"components": [
+        {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 1},
+        {"type": "R", "name": "R1", "nodes": ["in", "a"], "value": "1k"},
+        {"type": "R", "name": "R2", "nodes": ["a", "0"], "value": "3k"}]})json");
+    std::vector<double> gains;
+    checkNear(noise(r2, "v(a)", "V1", {1e3}, &gains)[0] / (4.0 * kT * 750.0), 1.0, 1e-9,
+              "thermal noise of a divider");
+    checkNear(gains[0], 0.75, 1e-12, "noise analysis: gain from the input source");
+
+    // RC low-pass: the noise integrated over all frequencies is k T / C.
+    Netlist rc = parseNetlistText(R"json({"components": [
+        {"type": "R", "name": "R1", "nodes": ["a", "0"], "value": "1k"},
+        {"type": "C", "name": "C1", "nodes": ["a", "0"], "value": "1n"}]})json");
+    const std::vector<double> freqs = frequencySweep("dec", 200, 1.0, 1e10);
+    const std::vector<double> dens = noise(rc, "v(a)", nullptr, freqs);
+    double integral = 0.0;
+    for (size_t k = 1; k < freqs.size(); ++k)
+        integral += 0.5 * (freqs[k] - freqs[k - 1]) * (dens[k] + dens[k - 1]);
+    checkNear(integral / (kT / 1e-9), 1.0, 2e-3, "integrated noise of an RC low-pass is kT/C");
+
+    // Shot noise of a diode: 2 q I into its small-signal resistance.
+    Netlist dn = parseNetlistText(R"json({"options": {"gmin": 1e-30}, "components": [
+        {"type": "I", "name": "I1", "nodes": ["0", "a"], "dc": "1m"},
+        {"type": "D", "name": "D1", "nodes": ["a", "0"], "is": 1e-14}]})json");
+    const double gd = (1e-3 + 1e-14) / vt;
+    checkNear(noise(dn, "v(a)", nullptr, {1e3})[0] / (2.0 * q * 1e-3 / (gd * gd)), 1.0, 1e-6,
+              "shot noise of a diode");
+
+    // Common-emitter stage with base resistance: sum of the four contributions.
+    Netlist ce = parseNetlistText(R"json({"options": {"gmin": 1e-30}, "components": [
+        {"type": "V", "name": "VCC", "nodes": ["vcc", "0"], "dc": 10},
+        {"type": "V", "name": "VB", "nodes": ["b", "0"], "dc": 0.65},
+        {"type": "R", "name": "RC", "nodes": ["vcc", "c"], "value": "1k"},
+        {"type": "npn", "name": "Q1", "nodes": ["c", "b", "0"], "is": 1e-15, "bf": 100, "rb": 100}]})json");
+    const Vector xce = solveOperatingPoint(*ce.circuit, ce.options);
+    const double ic = (10.0 - probe(*ce.circuit, xce, "v(c)")) / 1e3, ib = -probe(*ce.circuit, xce, "i(VB)");
+    const double gm = ic / vt, rpi = vt / ib, rb = 100.0, RC = 1e3;
+    const double av = gm * RC;                 // from the internal base to the collector
+    const double div = rpi / (rpi + rb);       // base resistance against r_pi
+    const double par = rb * rpi / (rb + rpi);
+    const double expected = 2.0 * q * ic * RC * RC + 2.0 * q * ib * par * par * av * av +
+                            4.0 * kT * rb * div * div * av * av + 4.0 * kT * RC;
+    gains.clear();
+    const double on = noise(ce, "v(c)", "VB", {1e3}, &gains)[0];
+    checkNear(on / expected, 1.0, 1e-4, "noise of a common-emitter stage");
+    checkNear(gains[0] / (av * div), 1.0, 1e-4, "gain of the common-emitter stage");
+    std::cout << "    common-emitter stage: input-referred noise " << std::sqrt(on) / gains[0] * 1e9
+              << " nV/sqrt(Hz)\n";
+}
+
+void testFourier() {
+    // 0.5 + 2 cos(w t + 30 deg) + 0.2 cos(3 w t - 45 deg), f = 50 Hz, two periods.
+    std::vector<double> t, y;
+    const double w = 2.0 * kPi * 50.0;
+    for (int k = 0; k <= 8000; ++k) {
+        t.push_back(5e-6 * k);
+        y.push_back(0.5 + 2.0 * std::cos(w * t.back() + kPi / 6.0) + 0.2 * std::cos(3.0 * w * t.back() - kPi / 4.0));
+    }
+    std::vector<std::complex<double>> amp;
+    checkTrue(fourier(t, y, 50.0, 5, 0, 0.0, amp), "fourier analysis over whole periods");
+    checkNear(amp[0].real(), 0.5, 1e-6, "fourier: mean value");
+    checkNear(std::abs(amp[1]), 2.0, 1e-5, "fourier: fundamental amplitude");
+    checkNear(std::arg(amp[1]), kPi / 6.0, 1e-5, "fourier: fundamental phase");
+    checkNear(std::abs(amp[2]), 0.0, 1e-5, "fourier: absent harmonic");
+    checkNear(std::abs(amp[3]), 0.2, 1e-5, "fourier: third harmonic amplitude");
+    checkNear(std::arg(amp[3]), -kPi / 4.0, 1e-4, "fourier: third harmonic phase");
+    checkNear(totalHarmonicDistortion(amp), 0.1, 1e-5, "total harmonic distortion");
+    checkTrue(!fourier(t, y, 10.0, 3, 0, 0.0, amp), "fourier: fewer samples than one period");
+
+    // Square wave: odd harmonics 4/(pi k); thd of the first 15 harmonics is 0.45.
+    Netlist nl = parseNetlistText(R"json({
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["a", "0"],
+             "wave": {"type": "pulse", "v1": -1, "v2": 1, "rise": "1u", "fall": "1u",
+                      "width": "499u", "period": "1m"}},
+            {"type": "R", "name": "R1", "nodes": ["a", "0"], "value": "1k"}
+        ],
+        "analyses": [
+            {"type": "tran", "tstop": "4m", "tstep": "5u",
+             "fourier": {"freq": "1k", "harmonics": 5},
+             "measure": {"thd": {"thd": "v(a)", "fundamental": "1k"},
+                         "h3": {"harmonic": "v(a)", "fundamental": "1k", "n": 3}}}
+        ],
+        "outputs": ["v(a)"]
+    })json");
+    RunConfig cfg;
+    cfg.outDir = (std::filesystem::temp_directory_path() / "esim_tests").string();
+    cfg.stem = "square";
+    nlohmann::json summary = nlohmann::json::array();
+    cfg.summary = &summary;
+    std::ostringstream log;
+    runAnalyses(nl, cfg, log);
+    checkNear(summary[0]["measures"]["h3"].get<double>(), 4.0 / (3.0 * kPi), 2e-3, "square wave: third harmonic");
+    checkNear(summary[0]["measures"]["thd"].get<double>(), 0.45, 5e-3, "square wave: distortion");
+    checkNear(summary[0]["fourier"]["fundamental"]["v(a)"].get<double>(), 4.0 / kPi, 2e-3,
+              "fourier block: fundamental of a square wave");
+    std::ifstream in(std::filesystem::path(cfg.outDir) / "square.tran.fourier.csv");
+    std::string header;
+    std::getline(in, header);
+    checkTrue(header == "harmonic,freq,mag(v(a)),phase(v(a))", "fourier block: table");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -1749,6 +1876,8 @@ int main() {
         {"timed events", testTimedEvents},
         {"constrained mechanics", testConstrainedMechanics},
         {"device models", testDeviceModels},
+        {"noise", testNoise},
+        {"fourier", testFourier},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},

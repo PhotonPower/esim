@@ -27,6 +27,8 @@ public:
 
     double nextBreakpoint(double t) const override;
     double maxStep() const override { return wave_ ? wave_->maxStep() : Device::maxStep(); }
+    // Excitation of magnitude 1 (to compute the gain from this source).
+    virtual void stampUnit(Eigen::VectorXcd& rhs) const = 0;
 
 protected:
     // Transient analysis uses the waveform. DC analyses use the DC value and
@@ -50,6 +52,7 @@ public:
     void setup(Circuit& ckt) override;
     void stamp(StampContext& ctx) override;
     void stampAc(Eigen::VectorXcd& rhs) const override;
+    void stampUnit(Eigen::VectorXcd& rhs) const override { rhs[br_] += 1.0; }
     int branch() const override { return br_; }
 
 private:
@@ -62,6 +65,10 @@ public:
     using IndependentSource::IndependentSource;
     void stamp(StampContext& ctx) override;
     void stampAc(Eigen::VectorXcd& rhs) const override;
+    void stampUnit(Eigen::VectorXcd& rhs) const override {
+        if (p_ >= 0) rhs[p_] -= 1.0;
+        if (n_ >= 0) rhs[n_] += 1.0;
+    }
 };
 
 // E: v(p) - v(n) = gain * (v(cp) - v(cn))

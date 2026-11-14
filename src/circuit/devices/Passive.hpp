@@ -10,11 +10,14 @@ namespace esim {
 class Resistor final : public Device {
 public:
     Resistor(std::string name, int a, int b, double r);
+    void setup(Circuit& ckt) override;
     void stamp(StampContext& ctx) override;
+    void noiseSources(std::vector<NoiseSource>& out) const override;
 
 private:
     int a_, b_;
     double g_;
+    double kT_ = 0.0;
 };
 
 class Capacitor final : public Device {

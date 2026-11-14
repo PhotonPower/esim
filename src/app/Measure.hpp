@@ -1,5 +1,6 @@
 #pragma once
 
+#include <complex>
 #include <limits>
 #include <map>
 #include <nlohmann/json.hpp>
@@ -27,6 +28,8 @@ namespace esim {
 //   period freq duty    from the rising crossings of "level" (default: middle of the range)
 //   rise fall           transition time between "low" and "high" (default: 10 % and 90 %)
 //   f3db f3db_low       where the curve has dropped to max/sqrt(2) above / below its maximum
+//   thd harmonic        distortion and amplitude of harmonic "n" for the fundamental "freq",
+//                       from the last whole periods inside the window
 //
 // "from" and "to" restrict the evaluation to a window of x. A measurement that
 // is not defined (no crossing found, ...) yields NaN.
@@ -42,7 +45,18 @@ struct MeasureSpec {
     double x = std::numeric_limits<double>::quiet_NaN();
     std::string edge = "rise";
     int n = 1;
+    double freq = std::numeric_limits<double>::quiet_NaN();  // fundamental for thd, harmonic
 };
+
+// Fourier analysis of a sampled curve, taken as piecewise linear: the complex
+// amplitudes A_0 .. A_n of  y(t) = A_0 + sum_k |A_k| cos(2 pi k f t + arg A_k)
+// over the last whole periods that fit between `from` and the end (at most
+// `periods`; 0: as many as fit). Returns false if not even one period fits.
+bool fourier(const std::vector<double>& t, const std::vector<double>& y, double freq, int n,
+             int periods, double from, std::vector<std::complex<double>>& amplitudes);
+
+// Total harmonic distortion sqrt(sum_{k>=2} |A_k|^2) / |A_1|.
+double totalHarmonicDistortion(const std::vector<std::complex<double>>& amplitudes);
 
 std::vector<MeasureSpec> parseMeasures(const nlohmann::json& j,
                                        const std::map<std::string, double>& parameters);

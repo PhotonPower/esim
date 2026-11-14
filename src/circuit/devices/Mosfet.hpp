@@ -24,6 +24,8 @@ struct MosfetParams {
     double is = 1e-14;    // bulk junction saturation current [A]
     double tox = 0.0;     // gate oxide thickness [m]; 0: no intrinsic gate charge
     double tcv = 0.0;     // temperature coefficient of the threshold voltage [V/K]
+    double kf = 0.0;      // flicker noise coefficient
+    double af = 1.0;      // flicker noise exponent
 };
 
 // MOSFET, SPICE level 1 (Shichman-Hodges) with body effect, channel length
@@ -45,8 +47,11 @@ public:
     Mosfet(std::string name, int d, int g, int s, int b, int polarity, const MosfetParams& p);
     void setup(Circuit& ckt) override;
     void stamp(StampContext& ctx) override;
+    void noiseSources(std::vector<NoiseSource>& out) const override;
 
 private:
+    double kT_ = 0.0;
+    double opId_ = 0.0, opGm_ = 0.0, opGds_ = 0.0;  // channel at the last evaluation
     // Positions of the terminals in the local block of the device.
     enum { kD = 0, kG = 1, kS = 2, kB = 3 };
     struct Local {

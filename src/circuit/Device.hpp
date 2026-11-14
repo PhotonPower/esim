@@ -4,6 +4,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "core/DaeSystem.hpp"
 
@@ -87,6 +88,19 @@ struct StampContext {
     }
 };
 
+// A noise current source between two nodes (from a to b), with the spectral
+// density  white + flicker / f  in A^2/Hz, valid at the operating point of the
+// device's last evaluation.
+struct NoiseSource {
+    std::string name;  // e.g. "R1", "Q1.ic"
+    int a, b;
+    double white;
+    double flicker;
+};
+
+constexpr double kBoltzmann = 1.380649e-23;       // J/K
+constexpr double kElementaryCharge = 1.602176634e-19;  // C
+
 class Device {
 public:
     explicit Device(std::string name) : name_(std::move(name)) {}
@@ -105,6 +119,9 @@ public:
     // Small-signal excitation: contribution to the right-hand side of
     // (G + jwC) X = rhs.
     virtual void stampAc(Eigen::VectorXcd& /*rhs*/) const {}
+
+    // Noise sources at the operating point of the last evaluation.
+    virtual void noiseSources(std::vector<NoiseSource>& /*out*/) const {}
 
     // Index of the branch-current unknown, -1 if the device has none.
     virtual int branch() const { return -1; }

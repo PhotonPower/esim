@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "circuit/Device.hpp"
+#include "circuit/devices/Sources.hpp"
 
 namespace esim {
 
@@ -82,6 +83,58 @@ void runAc(Circuit& ckt, const Vector& xop, const std::vector<double>& freqs,
         }
         const Eigen::VectorXcd x = lu.solve(rhs);
         onPoint(f, x);
+    }
+}
+
+void runNoise(Circuit& ckt, const Vector& xop, const std::vector<double>& freqs, int outPos,
+              int outNeg, const IndependentSource* input, std::vector<NoiseSource>& sources,
+              const NoiseCallback& onPoint) {
+    using cd = std::complex<double>;
+    const int n = ckt.size();
+
+    Evaluation ev;
+    ckt.evaluate(0.0, xop, LimitMode::Off, ev);  // also fixes the operating point of the devices
+    sources.clear();
+    for (const auto& d : ckt.devices()) d->noiseSources(sources);
+
+    Eigen::VectorXcd eout = Eigen::VectorXcd::Zero(n), bin = Eigen::VectorXcd::Zero(n);
+    if (outPos >= 0) eout[outPos] += 1.0;
+    if (outNeg >= 0) eout[outNeg] -= 1.0;
+    if (input) input->stampUnit(bin);
+
+    std::vector<Eigen::Triplet<cd>> trip;
+    Eigen::SparseMatrix<cd> At(n, n);
+    Eigen::SparseLU<Eigen::SparseMatrix<cd>, Eigen::COLAMDOrdering<int>> lu;
+    std::vector<double> contributions(sources.size());
+    bool analyzed = false;
+    for (double f : freqs) {
+        const double w = 2.0 * kPi * f;
+        trip.clear();  // transposed system
+        for (const Triplet& g : ev.G) trip.emplace_back(g.col(), g.row(), cd(g.value(), 0.0));
+        for (const Triplet& c : ev.C) trip.emplace_back(c.col(), c.row(), cd(0.0, w * c.value()));
+        At.setFromTriplets(trip.begin(), trip.end());
+        if (!analyzed) {
+            lu.analyzePattern(At);
+            analyzed = true;
+        }
+        lu.factorize(At);
+        if (lu.info() != Eigen::Success) {
+            std::ostringstream os;
+            os << "noise: singular matrix at f = " << f << " Hz";
+            throw std::runtime_error(os.str());
+        }
+        const Eigen::VectorXcd y = lu.solve(eout);
+
+        double total = 0.0;
+        for (size_t k = 0; k < sources.size(); ++k) {
+            const NoiseSource& s = sources[k];
+            const cd h = (s.a >= 0 ? y[s.a] : cd(0.0)) - (s.b >= 0 ? y[s.b] : cd(0.0));
+            contributions[k] = std::norm(h) * (s.white + s.flicker / f);
+            total += contributions[k];
+        }
+        // output = e^T A^-1 b = y^T b (plain transpose, no conjugation)
+        const double gain = input ? std::abs((y.array() * bin.array()).sum()) : 0.0;
+        onPoint(f, total, gain, contributions);
     }
 }
 
