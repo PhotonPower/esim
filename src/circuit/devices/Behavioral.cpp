@@ -13,7 +13,7 @@ BehavioralSource::BehavioralSource(std::string name, int p, int n, Kind kind, st
       ast_(std::move(expression)) {}
 
 void BehavioralSource::setup(Circuit& ckt) {
-    if (kind_ == Kind::Voltage)
+    if (kind_ == Kind::Voltage || kind_ == Kind::Flux)
         br_ = ckt.addUnknown("i(" + name() + ")", UnknownKind::Current, false);
 }
 
@@ -23,9 +23,9 @@ void BehavioralSource::bind(Circuit& ckt) {
     } catch (const std::runtime_error& e) {
         throw std::runtime_error("component '" + name() + "': \"" + text_ + "\": " + e.what());
     }
-    if (kind_ == Kind::Charge && prog_.dependsOnTime())
+    if ((kind_ == Kind::Charge || kind_ == Kind::Flux) && prog_.dependsOnTime())
         throw std::runtime_error("component '" + name() +
-                                 "': a charge must not depend on time explicitly");
+                                 "': a charge or flux must not depend on time explicitly");
 }
 
 void BehavioralSource::stamp(StampContext& ctx) {
@@ -50,6 +50,11 @@ void BehavioralSource::stamp(StampContext& ctx) {
             ctx.stampBranch(p_, n_, br_);
             ctx.addF(br_, -value);
             for (size_t k = 0; k < vars.size(); ++k) ctx.addG(br_, vars[k], -grad_[k]);
+            break;
+        case Kind::Flux:  // v(p) - v(n) - d/dt flux = 0, like an inductor with flux = L i
+            ctx.stampBranch(p_, n_, br_);
+            ctx.addQ(br_, -value);
+            for (size_t k = 0; k < vars.size(); ++k) ctx.addC(br_, vars[k], -grad_[k]);
             break;
     }
 }

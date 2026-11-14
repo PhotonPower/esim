@@ -18,6 +18,7 @@
 #include "circuit/devices/Bjt.hpp"
 #include "circuit/devices/Diode.hpp"
 #include "circuit/devices/Equations.hpp"
+#include "circuit/devices/Jfet.hpp"
 #include "circuit/devices/Mosfet.hpp"
 #include "circuit/devices/Passive.hpp"
 #include "circuit/devices/Sources.hpp"
@@ -191,6 +192,7 @@ char componentKind(const std::string& type) {
         {"b", 'b'}, {"behavioral", 'b'},
         {"s", 's'}, {"switch", 's'},
         {"ideal_diode", 'y'},
+        {"j", 'j'}, {"jfet", 'j'}, {"njf", 'j'}, {"pjf", 'j'},
         {"k", 'k'}, {"coupling", 'k'},
         {"x", 'x'}, {"subcircuit", 'x'},
     };
@@ -509,7 +511,8 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             const std::pair<const char*, BehavioralSource::Kind> forms[] = {
                 {"i", BehavioralSource::Kind::Current},
                 {"v", BehavioralSource::Kind::Voltage},
-                {"q", BehavioralSource::Kind::Charge}};
+                {"q", BehavioralSource::Kind::Charge},
+                {"phi", BehavioralSource::Kind::Flux}};
             int given = 0;
             for (const auto& [key, kindOf] : forms) {
                 if (!p.has(key)) continue;
@@ -529,8 +532,25 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             }
             if (given != 1)
                 throw std::runtime_error(p.where() +
-                                         ": needs exactly one of \"i\", \"v\" or \"q\" "
-                                         "(expression for current, voltage or charge)");
+                                         ": needs exactly one of \"i\", \"v\", \"q\" or \"phi\" "
+                                         "(expression for current, voltage, charge or flux)");
+            break;
+        }
+        case 'j': {
+            needNodes(3, 3, "[drain, gate, source]");
+            JfetParams j;
+            j.vto = p.num("vto", j.vto);
+            j.beta = p.num("beta", j.beta);
+            j.lambda = p.num("lambda", j.lambda);
+            j.is = p.num("is", j.is);
+            j.cgs = p.num("cgs", j.cgs);
+            j.cgd = p.num("cgd", j.cgd);
+            j.pb = p.num("pb", j.pb);
+            j.fc = p.num("fc", j.fc);
+            j.kf = p.num("kf", j.kf);
+            j.af = p.num("af", j.af);
+            const int pol = polarity(type, modelType, "njf", "pjf", p.where());
+            ckt.add(std::make_unique<Jfet>(name, n[0], n[1], n[2], pol, j));
             break;
         }
         case 'm': {
@@ -994,6 +1014,8 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
                          "kf", "af"}}},
         {"npn", {"npn", {}}}, {"pnp", {"pnp", {}}},
         {"nmos", {"nmos", {}}}, {"pmos", {"pmos", {}}},
+        {"njf", {"njf", {"vto", "beta", "lambda", "is", "cgs", "cgd", "pb", "fc", "kf", "af"}}},
+        {"pjf", {"pjf", {"vto", "beta", "lambda", "is", "cgs", "cgd", "pb", "fc", "kf", "af"}}},
     };
     static const std::set<std::string> bjtKeys = {
         "is", "bf", "br", "nf", "nr", "vaf", "var", "ikf", "ikr", "ise", "ne", "isc", "nc",
@@ -1006,9 +1028,10 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
     auto it = types.find(type);
     if (it == types.end())
         throw std::runtime_error(where + ": SPICE model type '" + tok[2] +
-                                 "' is not supported (D, NPN, PNP, NMOS, PMOS)");
+                                 "' is not supported (D, NPN, PNP, NMOS, PMOS, NJF, PJF)");
     const std::set<std::string>& keys =
-        type == "d" ? it->second.second : (type == "npn" || type == "pnp") ? bjtKeys : mosKeys;
+        (type == "d" || type == "njf" || type == "pjf") ? it->second.second
+        : (type == "npn" || type == "pnp") ? bjtKeys : mosKeys;
 
     json out = json::object();
     out["type"] = it->second.first;
@@ -1052,7 +1075,7 @@ Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir
     static const std::set<std::string> known = {"title",      "options",   "models",    "components",
                                                 "analyses",   "outputs",   "nodeset",   "ic",
                                                 "parameters", "variables", "equations", "events",
-                                                "subcircuits", "tables"};
+                                                "subcircuits", "tables", "functions"};
     for (const auto& [k, v] : root.items())
         if (!known.count(k))
             warn() << "netlist: unknown top-level key \"" << k << "\" ignored\n";
@@ -1070,6 +1093,39 @@ Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir
         if (!root["tables"].is_object()) throw std::runtime_error("tables: expected an object");
         for (const auto& [name, t] : root["tables"].items())
             ckt.tables[name] = parseTable(name, t, ckt.parameters, baseDir);
+    }
+
+    // "functions": {"sat(x, lim)": "max(-lim, min(lim, x))"}
+    if (root.contains("functions")) {
+        if (!root["functions"].is_object()) throw std::runtime_error("functions: expected an object");
+        for (const auto& [signature, body] : root["functions"].items()) {
+            const std::string where = "function \"" + signature + "\"";
+            const size_t open = signature.find('('), close = signature.rfind(')');
+            if (open == std::string::npos || close != signature.size() - 1 || !body.is_string())
+                throw std::runtime_error(where + ": expected \"name(a, b)\": \"expression\"");
+            auto trim = [](std::string t) {
+                t.erase(0, t.find_first_not_of(" \t"));
+                t.erase(t.find_last_not_of(" \t") + 1);
+                return t;
+            };
+            const std::string name = trim(signature.substr(0, open));
+            if (!isIdentifier(name)) throw std::runtime_error(where + ": invalid name");
+            if (expr::isBuiltinFunction(name) || name == "v" || name == "i")
+                throw std::runtime_error(where + ": '" + name + "' is a built-in function");
+            expr::FunctionDef def;
+            std::istringstream list(signature.substr(open + 1, close - open - 1));
+            for (std::string arg; std::getline(list, arg, ',');) {
+                arg = trim(arg);
+                if (!isIdentifier(arg)) throw std::runtime_error(where + ": invalid parameter name");
+                def.params.push_back(arg);
+            }
+            try {
+                def.body = expr::parseExpression(body.get<std::string>());
+            } catch (const std::runtime_error& e) {
+                throw std::runtime_error(where + ": " + e.what());
+            }
+            ckt.functions[name] = def;
+        }
     }
 
     Builder b{ckt, {}, {}, {}, {}, {}, {}};

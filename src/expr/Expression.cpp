@@ -381,6 +381,7 @@ public:
                     throw std::runtime_error("der() is only allowed in equations");
                 const Function* fn = findFunction(n->name);
                 if (!fn) {
+                    if (const FunctionDef* def = symbols_.function(n->name)) return call(*def, *n);
                     const std::shared_ptr<const Table> tb = symbols_.table(n->name);
                     if (!tb) throw std::runtime_error("unknown function '" + n->name + "'");
                     if (n->args.size() != 1)
@@ -413,6 +414,25 @@ public:
     }
 
 private:
+    // Call of a user-defined function: compile its body with the arguments
+    // substituted for the parameters.
+    int call(const FunctionDef& def, const Ast& n) {
+        if (n.args.size() != def.params.size())
+            throw std::runtime_error("function '" + n.name + "' takes " +
+                                     std::to_string(def.params.size()) + " argument(s)");
+        if (++depth_ > 50)
+            throw std::runtime_error("function '" + n.name + "' calls itself without end");
+        const AstPtr body = mapLeaves(def.body, [&](const Ast& leaf) -> AstPtr {
+            if (leaf.kind != Ast::Kind::Symbol) return nullptr;
+            for (size_t k = 0; k < def.params.size(); ++k)
+                if (def.params[k] == leaf.name) return n.args[k];
+            return nullptr;
+        });
+        const int slot = emit(body);
+        --depth_;
+        return slot;
+    }
+
     int constant(double v) {
         Instr in{Op::Const};
         in.k = v;
@@ -486,6 +506,7 @@ private:
     std::vector<int>& events_;
     std::vector<std::shared_ptr<const Table>>& tables_;
     bool& usesTime_;
+    int depth_ = 0;  // nesting of user-defined function calls
 };
 
 // --- Equations: separate the der() terms ----------------------------------------
@@ -661,6 +682,8 @@ AstPtr mapLeaves(const AstPtr& ast, const std::function<AstPtr(const Ast&)>& rep
     for (AstPtr& a : copy->args) a = mapLeaves(a, replace);
     return copy;
 }
+
+bool isBuiltinFunction(const std::string& name) { return findFunction(name) != nullptr || name == "der"; }
 
 AstPtr parseExpression(const std::string& text) { return Parser(text).expression(); }
 

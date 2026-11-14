@@ -1341,6 +1341,10 @@ void testDeviceModels() {
                 "cgdo": "0.2n", "cbd": "10f", "cbs": "10f"})json",
         R"json({"type": "pmos", "name": "X", "nodes": ["a", "b", "c", "d"], "vto": -0.8, "kp": 4e-5,
                 "gamma": 0.4, "lambda": 0.05, "w": "40u", "l": "1u", "tox": "10n", "cbd": "10f"})json",
+        R"json({"type": "njf", "name": "X", "nodes": ["a", "b", "c"], "vto": -0.4, "beta": 1e-3,
+                "lambda": 0.02, "cgs": "3p", "cgd": "2p"})json",
+        R"json({"type": "pjf", "name": "X", "nodes": ["a", "b", "c"], "vto": -0.3, "beta": 5e-4,
+                "lambda": 0.01, "cgs": "3p"})json",
     };
     for (const char* dev : devices) {
         const std::string text = std::string(R"json({"components": [
@@ -1770,6 +1774,82 @@ void testParameterStudies() {
               "fit with an unsuitable analysis is rejected");
 }
 
+void testMoreDevices() {
+    // --- JFET: saturation current idss = beta vto^2 at vgs = 0, pinch-off below vto ---
+    const auto drain = [](double vgs, double vds, const char* type) {
+        Netlist nl = parseNetlistText(R"json({"options": {"gmin": 1e-30}, "components": [
+            {"type": "V", "name": "VD", "nodes": ["d", "0"], "dc": )json" + std::to_string(vds) + R"json(},
+            {"type": "V", "name": "VG", "nodes": ["g", "0"], "dc": )json" + std::to_string(vgs) + R"json(},
+            {"type": ")json" + type + R"json(", "name": "J1", "nodes": ["d", "g", "0"], "vto": -2, "beta": 1e-3,
+             "lambda": 0.01}]})json");
+        const Vector x = solveOperatingPoint(*nl.circuit, nl.options);
+        return -probe(*nl.circuit, x, "i(VD)");
+    };
+    checkNear(drain(0.0, 5.0, "njf") / (1e-3 * 4.0 * 1.05), 1.0, 1e-6, "jfet: saturation current at vgs = 0");
+    checkNear(drain(-1.0, 5.0, "njf") / (1e-3 * 1.0 * 1.05), 1.0, 1e-6, "jfet: square law");
+    checkNear(drain(-1.0, 0.5, "njf") / (1e-3 * 0.5 * 1.5 * 1.005), 1.0, 1e-6, "jfet: linear region");
+    checkTrue(std::abs(drain(-3.0, 5.0, "njf")) < 1e-10, "jfet: pinched off below vto");
+    checkNear(drain(1.0, -5.0, "pjf"), -drain(-1.0, 5.0, "njf"), 1e-12, "p-channel jfet mirrors the n-channel");
+
+    // --- nonlinear inductor from a flux expression ---
+    // Linear flux: identical to an inductor. RL step response i = (1 - exp(-t R/L)) V/R.
+    Netlist lin = parseNetlistText(R"json({
+        "options": {"reltol": 1e-7},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 1},
+            {"type": "R", "name": "R1", "nodes": ["in", "a"], "value": 10},
+            {"type": "B", "name": "LB", "nodes": ["a", "0"], "phi": "1m * i(LB)"}
+        ]})json");
+    const Trace tl = transient(lin, 5e-4, IntegrationMethod::Bdf, true);
+    double maxErr = 0.0;
+    for (size_t k = 0; k < tl.t.size(); ++k)
+        maxErr = std::max(maxErr, std::abs(probe(*lin.circuit, tl.x[k], "i(LB)") - 0.1 * (1.0 - std::exp(-tl.t[k] * 1e4))));
+    checkNear(maxErr, 0.0, 1e-6, "flux element with linear flux behaves like an inductor");
+
+    // Saturating core at a constant voltage: flux = V t, so i = Isat atanh(V t / (L Isat)).
+    Netlist sat = parseNetlistText(R"json({
+        "parameters": {"L0": "1m", "Isat": 2},
+        "options": {"reltol": 1e-7},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 1},
+            {"type": "B", "name": "LB", "nodes": ["a", "0"], "phi": "L0*Isat*tanh(i(LB)/Isat)"}
+        ]})json");
+    const Trace ts = transient(sat, 1.6e-3, IntegrationMethod::Bdf, true);
+    maxErr = 0.0;
+    for (size_t k = 0; k < ts.t.size(); ++k)
+        maxErr = std::max(maxErr, std::abs(probe(*sat.circuit, ts.x[k], "i(LB)") - 2.0 * std::atanh(ts.t[k] / 2e-3)));
+    checkNear(maxErr, 0.0, 1e-4, "saturating inductor: current follows the flux");
+    checkTrue(probe(*sat.circuit, ts.x.back(), "i(LB)") > 2.0, "saturating inductor: current exceeds Isat");
+
+    // --- user-defined functions ---
+    Netlist fn = parseNetlistText(R"json({
+        "parameters": {"lim": 2},
+        "functions": {
+            "clip(x, a)": "max(-a, min(a, x))",
+            "clip2(x)": "clip(x, lim) * 2",
+            "hyp(a, b)": "sqrt(a^2 + b^2)"
+        },
+        "variables": {"y1": {"guess": 0}, "y2": {"guess": 0}, "y3": {"guess": 0}},
+        "equations": ["y1 = clip(5, 1.5)", "y2 = clip2(-7)", "y3 = hyp(3, y1 + 2.5)"]
+    })json");
+    const Vector xf = solveOperatingPoint(*fn.circuit, fn.options);
+    checkNear(probe(*fn.circuit, xf, "y1"), 1.5, 1e-12, "user function");
+    checkNear(probe(*fn.circuit, xf, "y2"), -4.0, 1e-12, "user function calling another one, with a parameter");
+    checkNear(probe(*fn.circuit, xf, "y3"), 5.0, 1e-9, "user function of an unknown");
+    checkNear(probe(*fn.circuit, xf, "clip(y3, 1) + hyp(y1, 2)"), 1.0 + 2.5, 1e-9, "user function in an output");
+
+    const auto fails = [](const char* text) { return throws([&] { parseNetlistText(text); }); };
+    checkTrue(fails(R"json({"functions": {"f(x)": "f(x) + 1"}, "variables": {"y": {"guess": 0}},
+                        "equations": ["y = f(1)"]})json"),
+              "endless recursion of a function is rejected");
+    checkTrue(fails(R"json({"functions": {"f(x)": "x"}, "variables": {"y": {"guess": 0}},
+                        "equations": ["y = f(1, 2)"]})json"),
+              "wrong number of arguments is rejected");
+    checkTrue(fails(R"json({"functions": {"sin(x)": "x"}, "variables": {"y": {"guess": 0}},
+                        "equations": ["y = 1"]})json"),
+              "redefining a built-in function is rejected");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -2004,6 +2084,7 @@ int main() {
         {"noise", testNoise},
         {"fourier", testFourier},
         {"parameter studies", testParameterStudies},
+        {"jfet, flux element, functions", testMoreDevices},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},

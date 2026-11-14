@@ -17,6 +17,7 @@
 //   functions    sin cos tan asin acos atan atan2 sinh cosh tanh exp log ln log10
 //                sqrt abs sign min max pow if(condition, a, b)
 //   tables       name(x) for a table registered under that name
+//   own          name(a, b, ...) for a function defined by the user
 //   symbols      names of unknowns and constants, t (or time), pi
 //   circuit      v(node)  v(a,b)  i(component)
 //   equations    der(expression) for a time derivative
@@ -61,11 +62,22 @@ private:
     Extrap extrap_;
 };
 
+// A function defined by the user, e.g. sat(x, lim) = max(-lim, min(lim, x)).
+// A call is replaced by the body with the arguments put in place of the
+// parameters; other names in the body are resolved where the call stands.
+struct FunctionDef {
+    std::vector<std::string> params;
+    AstPtr body;
+};
+
+bool isBuiltinFunction(const std::string& name);
+
 // Meaning of the names in an expression. Unknowns are identified by their
 // index in the solution vector.
 class Symbols {
 public:
     virtual ~Symbols() = default;
+    virtual const FunctionDef* function(const std::string& /*name*/) const { return nullptr; }
     // A table that can be called like a function, or nullptr.
     virtual std::shared_ptr<const Table> table(const std::string& /*name*/) const {
         return nullptr;

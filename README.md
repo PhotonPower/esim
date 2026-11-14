@@ -62,6 +62,7 @@ Beispiele in [`examples/`](examples):
 | `pendulum.json` | Mechanik mit Zwangsbedingung (DAE vom Index 2) |
 | `monte_carlo_filter.json` | Toleranzanalyse (Monte Carlo) und verschachtelter Sweep |
 | `fit_diode.json` | Modellparameter an eine gemessene Kennlinie anpassen |
+| `saturating_inductor.json` | nichtlineare Induktivität über ihren Fluss, eigene Funktion |
 
 ### Ergebnisse plotten
 
@@ -178,6 +179,7 @@ eine Zahl erwartet wird (dort nur mit Parametern).
 | Funktionen | `sin cos tan asin acos atan atan2(y,x) sinh cosh tanh exp log ln log10 sqrt abs sign min max pow(a,b)` |
 | Fallunterscheidung | `if(bedingung, dann, sonst)` |
 | Tabellen | `name(x)` für eine unter `tables` definierte Kennlinie |
+| eigene Funktionen | `name(a, b)` für eine unter `functions` definierte Funktion |
 | Namen | Variablen, Parameter, `t` (oder `time`), `pi` |
 | Schaltungsgrößen | `v(knoten)`, `v(a,b)`, `i(bauteil)` |
 | Zeitableitung | `der(ausdruck)`, nur in Gleichungen |
@@ -186,6 +188,24 @@ Die Ableitungen für das Newton-Verfahren werden automatisch und exakt gebildet.
 Unstetige Ausdrücke (Vergleiche, `if`, `abs`, `sign`, `min`, `max`) sind in
 Gleichungen und Verhaltensquellen erlaubt: Die Stelle, an der ein Vergleich
 kippt, wird als [Ereignis](#ereignisse) exakt bestimmt.
+
+### Eigene Funktionen
+
+Wiederkehrende Ausdrücke lassen sich als Funktionen ablegen und dann in
+Gleichungen, Verhaltensquellen, Schaltern, Ereignissen und Ausgängen aufrufen:
+
+```jsonc
+"functions": {
+  "clip(x, lim)":  "max(-lim, min(lim, x))",
+  "core(i, L, is)": "L*is*tanh(i/is)"
+}
+```
+
+Ein Aufruf wird durch den Funktionsrumpf ersetzt, mit den Argumenten anstelle
+der Parameter. Funktionen dürfen Parameter der Eingabedatei und andere
+Funktionen verwenden; sie dürfen sich nicht selbst aufrufen und keine
+eingebaute Funktion überschreiben. In Zahlenwerten (Bauteilwerte, `parameters`)
+stehen sie nicht zur Verfügung.
 
 ### Tabellen
 
@@ -367,7 +387,8 @@ Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibun
 | `G`, `vccs` | spannungsgesteuerte Stromquelle | von, nach, Steuer+, Steuer− | `gm` |
 | `F`, `cccs` | stromgesteuerte Stromquelle | von, nach | `control` (Name einer V-Quelle/Spule), `gain` |
 | `H`, `ccvs` | stromgesteuerte Spannungsquelle | +, − | `control`, `r` |
-| `B`, `behavioral` | Verhaltensquelle | +, − | genau eines von `i`, `v`, `q` (Ausdruck) |
+| `B`, `behavioral` | Verhaltensquelle | +, − | genau eines von `i`, `v`, `q`, `phi` (Ausdruck) |
+| `J`, `njf`, `pjf` | Sperrschicht-FET | D, G, S | `vto` `beta` `lambda` `is` `cgs` `cgd` `pb` `fc` `kf` `af` |
 | `K`, `coupling` | magnetische Kopplung | – | `inductors`: zwei Spulennamen, `k` (−1 < k < 1) |
 | `X`, `subcircuit` | Instanz eines Subcircuits | Anschlüsse in der Reihenfolge von `ports` | `subcircuit`, `parameters` |
 | `S`, `switch` | idealer Schalter | a, b [, Steuer+, Steuer−] | `control` (Ausdruck, bei zwei Knoten), `vt`, `vh`, `ron`, `roff`, `initial` |
@@ -383,6 +404,9 @@ Verhaltensquelle `B`:
 - `"v": "..."` Spannung zwischen den Knoten (mit eigenem Zweigstrom `i(Name)`).
 - `"q": "..."` gespeicherte Ladung; der Strom ist ihre Zeitableitung. Ein
   spannungsabhängiger Kondensator ist `"q": "C0*v(a,b) + C1*v(a,b)^2"`.
+- `"phi": "..."` magnetischer Fluss; die Spannung ist seine Zeitableitung. Der
+  Ausdruck hängt in der Regel vom eigenen Strom `i(Name)` ab. Eine sättigende
+  Drossel ist `"phi": "L0*Isat*tanh(i(L1)/Isat)"`.
 
 Kopplung `K`: `{ "type": "K", "inductors": ["L1", "L2"], "k": 0.99 }` koppelt zwei
 Spulen mit der Gegeninduktivität `M = k·sqrt(L1·L2)`. Der erste Knoten jeder
@@ -425,7 +449,7 @@ veröffentlichen:
 }
 ```
 
-Unterstützt werden die Typen `D`, `NPN`, `PNP`, `NMOS`, `PMOS`. Zahlen folgen
+Unterstützt werden die Typen `D`, `NPN`, `PNP`, `NMOS`, `PMOS`, `NJF`, `PJF`. Zahlen folgen
 dabei der SPICE-Schreibweise (`m` = Milli, `meg` = Mega, ohne Unterscheidung
 von Groß- und Kleinschreibung). Parameter, die hier keine Wirkung haben, werden
 einmal aufgelistet und übergangen.
@@ -439,6 +463,8 @@ Modellumfang:
   `isc`, `nc`), Bahnwiderständen (`rb`, `rc`, `re`) sowie Sperrschicht- und
   Diffusionsladungen. Nicht enthalten: Substratdiode, stromabhängiger
   Basiswiderstand, Arbeitspunktabhängigkeit der Transitzeit (`xtf`, `vtf`, `itf`).
+- **JFET**: Shichman-Hodges-Modell (quadratische Kennlinie, Kanallängen-
+  modulation) mit Gate-Sperrschichten und deren Kapazitäten.
 - **MOSFET**: SPICE Level 1 (Shichman-Hodges) mit Substrateffekt,
   Kanallängenmodulation, Bulk-Dioden, Überlapp- und Sperrschichtkapazitäten.
   Mit `tox` (Oxiddicke) kommt die Ladung des Kanals hinzu: ladungserhaltend,
@@ -875,8 +901,8 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   Ordnungen aus, die numerisch dämpfen. Für Schwingkreise hoher Güte `trap`
   verwenden.
 - **Schaltungen**: Die Halbleitermodelle entsprechen den
-  klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1); moderne
-  Kurzkanal-Modelle und JFETs fehlen.
+  klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET); moderne
+  Kurzkanal-Modelle und Leitungen fehlen.
 - **Große Schaltungen**: Getestet mit einigen tausend Knoten. Es gibt keine
   Parallelisierung und kein Überspringen ruhender Schaltungsteile; die
   Rechenzeit wächst mit der Zahl der Bauteile mal der Zahl der Zeitschritte.

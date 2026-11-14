@@ -51,6 +51,7 @@ public:
     std::map<std::string, double> ic;       // node voltages at t = 0 (transient with uic)
     std::map<std::string, double> parameters;  // named constants for expressions
     std::map<std::string, std::shared_ptr<const expr::Table>> tables;  // callable in expressions
+    std::map<std::string, expr::FunctionDef> functions;                // user-defined functions
 
     // --- construction -----------------------------------------------------
     static bool isGroundName(const std::string& name);

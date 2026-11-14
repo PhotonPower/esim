@@ -1,0 +1,36 @@
+{
+  // A nonlinear inductor defined by its flux linkage, and a function of one's own.
+  // Below Isat the core behaves like L0; above it the inductance collapses and
+  // the current rises steeply, as in a choke that saturates.
+  "title": "Saturating inductor in a switched circuit",
+
+  "parameters": { "L0": "1m", "Isat": 1, "Vin": 12, "T": "200u" },
+
+  "functions": {
+    // flux of a core with initial inductance L and saturation current is
+    "core(i, L, is)": "L*is*tanh(i/is)"
+  },
+
+  "components": [
+    { "type": "V", "name": "VIN", "nodes": ["in", "0"], "dc": "Vin" },
+    { "type": "V", "name": "GATE", "nodes": ["g", "0"],
+      "wave": { "type": "pulse", "v1": 0, "v2": 1, "rise": "T/1000", "fall": "T/1000",
+                "width": "0.6*T", "period": "T" } },
+    { "type": "S", "name": "S1", "nodes": ["in", "a", "g", "0"], "vt": 0.5, "ron": "50m" },
+    { "type": "ideal_diode", "name": "D1", "nodes": ["0", "a"], "vf": 0.5 },
+
+    // The element's own current i(Lsat) is an unknown of the circuit.
+    { "type": "B", "name": "Lsat", "nodes": ["a", "b"], "phi": "core(i(Lsat), L0, Isat)" },
+    { "type": "R", "name": "R1", "nodes": ["b", "0"], "value": 4 }
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": "1m",
+      "measure": {
+        "i_peak": { "max": "i(Lsat)" },
+        "i_avg":  { "avg": "i(Lsat)", "from": "600u" }
+      } }
+  ],
+
+  "outputs": ["i(Lsat)", "v(a)", "core(i(Lsat), L0, Isat)"]
+}

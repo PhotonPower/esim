@@ -15,9 +15,12 @@ namespace esim {
 //   Voltage : the expression is v(p) - v(n); adds a branch current unknown
 //   Charge  : the expression is the charge stored between p and n; the current
 //             is its time derivative (nonlinear capacitor)
+//   Flux    : the expression is the magnetic flux linkage; the voltage is its
+//             time derivative (nonlinear inductor). It normally depends on the
+//             element's own current i(name), which is an additional unknown
 class BehavioralSource final : public Device {
 public:
-    enum class Kind { Current, Voltage, Charge };
+    enum class Kind { Current, Voltage, Charge, Flux };
 
     BehavioralSource(std::string name, int p, int n, Kind kind, std::string text,
                      expr::AstPtr expression);

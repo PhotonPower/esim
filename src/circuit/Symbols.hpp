@@ -24,6 +24,11 @@ public:
 
     int variable(const std::string& name) const override { return ckt_.findVariable(name); }
 
+    const expr::FunctionDef* function(const std::string& name) const override {
+        auto it = ckt_.functions.find(name);
+        return it == ckt_.functions.end() ? nullptr : &it->second;
+    }
+
     std::shared_ptr<const expr::Table> table(const std::string& name) const override {
         auto it = ckt_.tables.find(name);
         return it == ckt_.tables.end() ? nullptr : it->second;
