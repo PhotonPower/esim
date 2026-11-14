@@ -1,5 +1,6 @@
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -10,18 +11,21 @@
 namespace {
 
 void usage() {
-    std::cout << "usage: esim <netlist.json> [-o <output directory>]\n"
+    std::cout << "usage: esim <netlist.json> [-o <output directory>] [--summary <file.json>]\n"
                  "\n"
                  "Runs the analyses listed in the netlist. Sweep and transient results\n"
                  "are written to <output directory>/<netlist name>.<analysis>.csv\n"
-                 "(default output directory: current directory).\n";
+                 "(default output directory: current directory).\n"
+                 "--summary writes a machine-readable description of all results\n"
+                 "(files, operating point values, measurements) for use by other programs.\n";
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string input;
+    std::string input, summaryPath;
     esim::RunConfig cfg;
+    nlohmann::json summary = nlohmann::json::array();
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -34,6 +38,12 @@ int main(int argc, char** argv) {
                 return 2;
             }
             cfg.outDir = argv[++i];
+        } else if (arg == "--summary") {
+            if (i + 1 >= argc) {
+                std::cerr << "error: --summary needs a file name\n";
+                return 2;
+            }
+            summaryPath = argv[++i];
         } else if (input.empty() && !arg.empty() && arg[0] != '-') {
             input = arg;
         } else {
@@ -65,7 +75,13 @@ int main(int argc, char** argv) {
                   << " node voltages, " << currents << " branch currents, " << variables
                   << " equation variables)\n";
 
+        if (!summaryPath.empty()) cfg.summary = &summary;
         esim::runAnalyses(nl, cfg, std::cout);
+        if (!summaryPath.empty()) {
+            std::ofstream out(summaryPath);
+            if (!out) throw std::runtime_error("cannot write '" + summaryPath + "'");
+            out << nlohmann::json({{"title", nl.title}, {"analyses", summary}}).dump(2) << '\n';
+        }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << '\n';
         return 1;

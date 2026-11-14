@@ -41,7 +41,18 @@ struct Context {
     Sweep* sweep = nullptr;
 
     Circuit& ckt() { return *nl.circuit; }
+
+    // New entry of the summary for an analysis, or nullptr if none is wanted
+    // (also inside a parameter sweep, which reports as a whole).
+    json* entry(const json& a, const std::string& type) {
+        if (!cfg.summary || sweep) return nullptr;
+        cfg.summary->push_back({{"type", type}, {"name", a.value("name", type)}});
+        return &cfg.summary->back();
+    }
 };
+
+// NaN and infinity have no JSON representation: they become null.
+json number(double v) { return std::isfinite(v) ? json(v) : json(nullptr); }
 
 double num(Context& c, const json& a, const char* key, const std::string& where) {
     if (!a.contains(key)) throw std::runtime_error(where + ": missing \"" + key + "\"");
@@ -116,6 +127,8 @@ public:
 
     // " -> file" for the log, or nothing if the curves are not saved.
     std::string arrow() const { return path_.empty() ? std::string() : " -> " + path_; }
+    // For the summary: the file with the curves, or null.
+    json file() const { return path_.empty() ? json(nullptr) : json(path_); }
 
 private:
     CsvWriter* csv_ = nullptr;
@@ -142,11 +155,14 @@ public:
         for (size_t k = 0; k < probes_.size(); ++k) y_[k].push_back(valueOf(probes_[k]));
     }
 
-    void report(Context& c) {
+    void report(Context& c, json* entry = nullptr) {
         if (specs_.empty()) return;
         std::vector<double> results;
         for (size_t k = 0; k < specs_.size(); ++k)
             results.push_back(evaluateMeasure(specs_[k], x_, y_[k]));
+        if (entry)
+            for (size_t k = 0; k < specs_.size(); ++k)
+                (*entry)["measures"][specs_[k].name] = number(results[k]);
 
         if (c.sweep) {  // table: one row per parameter value
             if (!c.sweep->measureCsv) {
@@ -197,6 +213,11 @@ void runOp(Context& c, const json& a) {
     }
     c.log << "[op] converged after " << info.iterations << " iterations (" << info.strategy
           << ")\n";
+    if (json* e = c.entry(a, "op")) {
+        (*e)["iterations"] = info.iterations;
+        (*e)["strategy"] = info.strategy;
+        for (const Probe& p : probes) (*e)["values"][p.label] = number(p.value(x));
+    }
     size_t width = 0;
     for (const Probe& p : probes) width = std::max(width, p.label.size());
     for (const Probe& p : probes)
@@ -250,7 +271,12 @@ void runDcSweep(Context& c, const json& a) {
     src->setDcState(saved);
     c.log << "[dc] " << srcName << " = " << start << " .. " << stop << ": " << points
           << " points, " << iterations << " Newton iterations" << table.arrow() << '\n';
-    measures.report(c);
+    json* e = c.entry(a, "dc");
+    if (e) {
+        (*e)["file"] = table.file();
+        (*e)["source"] = srcName;
+    }
+    measures.report(c, e);
 }
 
 IntegrationMethod parseMethod(const std::string& m) {
@@ -325,7 +351,17 @@ void runTran(Context& c, const json& a) {
           << stats.newtonIterations << " Newton iterations";
     if (stats.events > 0) c.log << ", " << stats.events << " events";
     c.log << table.arrow() << '\n';
-    measures.report(c);
+    json* e = c.entry(a, "tran");
+    if (e) {
+        (*e)["file"] = table.file();
+        (*e)["stats"] = {{"steps", stats.accepted},
+                         {"rejected", stats.rejected},
+                         {"newton_failures", stats.newtonFailures},
+                         {"newton_iterations", stats.newtonIterations},
+                         {"events", stats.events},
+                         {"max_order", stats.maxOrder}};
+    }
+    measures.report(c, e);
 }
 
 void runAcSweep(Context& c, const json& a) {
@@ -360,7 +396,9 @@ void runAcSweep(Context& c, const json& a) {
     });
     c.log << "[ac] " << freqs.front() << " .. " << freqs.back() << " Hz: " << freqs.size()
           << " points" << table.arrow() << '\n';
-    measures.report(c);
+    json* e = c.entry(a, "ac");
+    if (e) (*e)["file"] = table.file();
+    measures.report(c, e);
 }
 
 void runOne(Context& c, const json& a, const std::string& type) {
@@ -425,7 +463,7 @@ void runParamSweep(Context& c, const json& a, const std::string& type) {
             json root = c.nl.source;
             root["parameters"][sweep.param] = value;
             Netlist sub = parseNetlist(root, /*warnings=*/false, c.nl.baseDir);
-            Context sc{sub, c.cfg, quiet, {}, &sweep};
+            Context sc{sub, c.cfg, quiet, {}, &sweep};  // sc.entry() stays silent in a sweep
             runOne(sc, inner, type);
         } catch (const std::exception& e) {
             std::ostringstream os;
@@ -438,6 +476,11 @@ void runParamSweep(Context& c, const json& a, const std::string& type) {
     if (sweep.csv) c.log << " -> " << sweep.path;
     if (sweep.measureCsv) c.log << " -> " << sweep.measurePath;
     c.log << '\n';
+    if (json* e = c.entry(a, type)) {
+        (*e)["sweep"] = {{"param", sweep.param}, {"values", values}};
+        (*e)["file"] = sweep.csv ? json(sweep.path) : json(nullptr);
+        (*e)["measure_file"] = sweep.measureCsv ? json(sweep.measurePath) : json(nullptr);
+    }
 }
 
 }  // namespace

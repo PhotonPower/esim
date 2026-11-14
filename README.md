@@ -77,6 +77,40 @@ Spalten per regulärem Ausdruck, `--separate` gibt jeder Größe ein eigenes Fel
 `-o` schreibt ein Bild statt ein Fenster zu öffnen. Mehrere Dateien werden
 übereinandergelegt.
 
+### Aus Python
+
+`python/esim.py` startet den Simulator und liefert die Ergebnisse als
+Datenstrukturen (numpy-Arrays, falls numpy installiert ist, sonst Listen). Es
+braucht nur die Standardbibliothek:
+
+```python
+import sys; sys.path.insert(0, "python")
+import esim
+
+res = esim.run("examples/opamp_filter.json")
+res.ac.measures["f3db"]                       # 999.97
+f, mag = res.ac["freq"], res.ac["mag(v(out))"]
+
+# Netzliste als dict, Parameter überschreiben, Analysen ersetzen:
+res = esim.run(netlist, parameters={"C": 220e-9},
+               analyses=[{"type": "tran", "tstop": "5m"}])
+t, v = res.tran["time"], res.tran["v(out)"]
+```
+
+- `res.op`, `res.dc`, `res.ac`, `res.tran` sind die erste Analyse des Typs,
+  `res["name"]` eine benannte, `res.analyses` alle.
+- Jede Analyse hat `data` (Spalten, auch per `analyse["spalte"]`), `measures`,
+  `values` (Arbeitspunkt) und `stats`. Bei einem Parameter-Sweep enthält
+  `measures` je Messung eine Liste, und `runs()` liefert die Kurven je
+  Parameterwert.
+- Fehler des Simulators kommen als `esim.EsimError` mit dessen Meldung an.
+- Das Programm wird über das Argument `esim=`, die Umgebungsvariable
+  `ESIM_BIN`, `build/esim` neben dem Modul oder den Suchpfad gefunden.
+
+Für eigene Programme schreibt `esim netz.json --summary ergebnis.json` eine
+maschinenlesbare Übersicht aller Analysen (Dateien, Arbeitspunktwerte,
+Messgrößen, Statistik).
+
 ## Eingabeformat
 
 Kommentare (`//`, `/* */`) sind erlaubt. Unbekannte Schlüssel erzeugen eine
@@ -634,6 +668,7 @@ src/io/        JSON-Eingabe, SI-Zahlen, Ausgänge, CSV
 src/app/       Ablauf der Analysen aus der Eingabedatei, Messgrößen
 examples/      Eingabedateien und ein DAE in C++ (examples/dae)
 tools/         plot.py zum Zeichnen der Ergebnisse
+python/        esim.py: Aufruf aus Python
 tests/         Testsuite gegen analytische Lösungen
 ```
 

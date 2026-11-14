@@ -93,4 +93,12 @@ if(ESIM_BUILD_TESTS)
   target_link_libraries(esim_tests PRIVATE esimcircuit)
   target_include_directories(esim_tests PRIVATE examples)
   add_test(NAME esim_tests COMMAND esim_tests)
+
+  # The Python interface (python/esim.py) only needs an interpreter.
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME python_interface
+      COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
+              ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/python/test_esim.py)
+  endif()
 endif()
