@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -953,6 +955,371 @@ DaeEquation compileEquation(const AstPtr& residual, const Symbols& symbols) {
             throw std::runtime_error("the argument of der() must not depend on time explicitly");
     }
     return eq;
+}
+
+namespace {
+
+// Name under which an (indexed) symbol is known: "x" or "x[3]".
+std::string resolvedName(const Ast& n, const Symbols& symbols) {
+    if (n.args.empty()) return n.name;
+    double k;
+    if (!constantValue(n.args[0], symbols, k) || k != std::floor(k))
+        throw std::runtime_error("the index of " + n.name + "[...] must be a constant whole number");
+    return n.name + "[" + std::to_string(static_cast<long>(k)) + "]";
+}
+
+bool isNumber(const AstPtr& a, double v) { return a->kind == Ast::Kind::Number && a->number == v; }
+
+// Constructors that drop the zeros and ones a derivative is full of.
+AstPtr add(AstPtr a, AstPtr b) {
+    if (isNumber(a, 0.0)) return b;
+    if (isNumber(b, 0.0)) return a;
+    return makeBinary("+", std::move(a), std::move(b));
+}
+AstPtr sub(AstPtr a, AstPtr b) {
+    if (isNumber(b, 0.0)) return a;
+    if (isNumber(a, 0.0)) return makeUnary("-", std::move(b));
+    return makeBinary("-", std::move(a), std::move(b));
+}
+AstPtr mul(AstPtr a, AstPtr b) {
+    if (isNumber(a, 0.0) || isNumber(b, 0.0)) return makeNumber(0.0);
+    if (isNumber(a, 1.0)) return b;
+    if (isNumber(b, 1.0)) return a;
+    return makeBinary("*", std::move(a), std::move(b));
+}
+AstPtr div(AstPtr a, AstPtr b) {
+    if (isNumber(a, 0.0)) return a;
+    if (isNumber(b, 1.0)) return a;
+    return makeBinary("/", std::move(a), std::move(b));
+}
+AstPtr call(const std::string& name, std::vector<AstPtr> args) {
+    auto n = std::make_shared<Ast>();
+    n->kind = Ast::Kind::Call;
+    n->name = name;
+    n->args = std::move(args);
+    return n;
+}
+
+// Derivative of an expression along given rates of the unknowns and of time.
+class Differentiator {
+public:
+    // total = true: d/dt, every unknown needs an entry and the time counts.
+    // total = false: partial derivative, unknowns without entry are constant.
+    Differentiator(const Symbols& symbols, const std::map<std::string, AstPtr>& derivativeOf, bool total)
+        : symbols_(symbols), derivativeOf_(derivativeOf), total_(total) {}
+
+    AstPtr d(const AstPtr& e) {
+        switch (e->kind) {
+            case Ast::Kind::Number: return makeNumber(0.0);
+            case Ast::Kind::Symbol: return symbol(*e);
+            case Ast::Kind::Probe:
+                if (!total_) return makeNumber(0.0);
+                throw std::runtime_error("the time derivative of " + e->name + "(" + e->names[0] +
+                                         ") is not available as an expression");
+            case Ast::Kind::Unary:
+                if (e->name == "-") {
+                    const AstPtr da = d(e->args[0]);
+                    return isNumber(da, 0.0) ? da : makeUnary("-", da);
+                }
+                return makeNumber(0.0);  // logical not: piecewise constant
+            case Ast::Kind::Binary: return binary(*e);
+            case Ast::Kind::Call: return function(*e);
+        }
+        return makeNumber(0.0);
+    }
+
+private:
+    AstPtr symbol(const Ast& n) {
+        const std::string name = resolvedName(n, symbols_);
+        if (symbols_.variable(name) >= 0) {
+            auto it = derivativeOf_.find(name);
+            if (it != derivativeOf_.end()) return it->second;
+            if (!total_) return makeNumber(0.0);
+            throw std::runtime_error("the derivative of '" + name +
+                                     "' is not given by an equation of the form der(" + name + ") = ...");
+        }
+        double value;
+        if (symbols_.constant(name, value)) return makeNumber(0.0);
+        if (name == "t" || name == "time") return makeNumber(total_ ? 1.0 : 0.0);
+        if (name == "pi") return makeNumber(0.0);
+        throw std::runtime_error("unknown symbol '" + name + "'");
+    }
+
+    AstPtr power(const AstPtr& a, const AstPtr& b) {
+        const AstPtr da = d(a), db = d(b);
+        AstPtr result = makeNumber(0.0);
+        if (!isNumber(da, 0.0)) {  // b a^(b-1) a'
+            const AstPtr lower = b->kind == Ast::Kind::Number ? makeNumber(b->number - 1.0)
+                                                             : makeBinary("-", b, makeNumber(1.0));
+            result = mul(mul(b, isNumber(lower, 1.0) ? a : makeBinary("^", a, lower)), da);
+        }
+        if (!isNumber(db, 0.0))  // a^b log(a) b'
+            result = add(result, mul(mul(makeBinary("^", a, b), call("log", {a})), db));
+        return result;
+    }
+
+    AstPtr binary(const Ast& n) {
+        const AstPtr& a = n.args[0];
+        const AstPtr& b = n.args[1];
+        if (n.name == "+") return add(d(a), d(b));
+        if (n.name == "-") return sub(d(a), d(b));
+        if (n.name == "*") return add(mul(d(a), b), mul(a, d(b)));
+        if (n.name == "/")  // a'/b - a b'/b^2
+            return sub(div(d(a), b), div(mul(a, d(b)), makeBinary("*", b, b)));
+        if (n.name == "^") return power(a, b);
+        return makeNumber(0.0);  // comparisons and logic: piecewise constant
+    }
+
+    AstPtr function(const Ast& n) {
+        const std::string& f = n.name;
+        if (const FunctionDef* def = symbols_.function(f)) {  // own function: differentiate its body
+            if (n.args.size() != def->params.size())
+                throw std::runtime_error("function '" + f + "' takes " +
+                                         std::to_string(def->params.size()) + " argument(s)");
+            if (++depth_ > 50) throw std::runtime_error("function '" + f + "' calls itself without end");
+            const AstPtr body = mapLeaves(def->body, [&](const Ast& leaf) -> AstPtr {
+                if (leaf.kind != Ast::Kind::Symbol || !leaf.args.empty()) return nullptr;
+                for (size_t k = 0; k < def->params.size(); ++k)
+                    if (def->params[k] == leaf.name) return n.args[k];
+                return nullptr;
+            });
+            const AstPtr result = d(body);
+            --depth_;
+            return result;
+        }
+        const auto arg = [&](size_t k) -> const AstPtr& {
+            if (k >= n.args.size()) throw std::runtime_error("function '" + f + "': too few arguments");
+            return n.args[k];
+        };
+        if (f == "if") return call("if", {arg(0), d(arg(1)), d(arg(2))});
+        if (f == "min") return call("if", {makeBinary("<", arg(0), arg(1)), d(arg(0)), d(arg(1))});
+        if (f == "max") return call("if", {makeBinary(">", arg(0), arg(1)), d(arg(0)), d(arg(1))});
+        if (f == "pow") return power(arg(0), arg(1));
+        if (f == "sign") return makeNumber(0.0);
+        if (f == "atan2") {  // atan2(y, x): (x y' - y x') / (x^2 + y^2)
+            const AstPtr &y = arg(0), &x = arg(1);
+            return div(sub(mul(x, d(y)), mul(y, d(x))), makeBinary("+", makeBinary("*", x, x), makeBinary("*", y, y)));
+        }
+        const AstPtr& a = arg(0);
+        const AstPtr da = d(a);
+        if (isNumber(da, 0.0)) {
+            if (f == "delay" || f == "der" || f == "sum" || symbols_.table(f))
+                throw std::runtime_error(f + "() cannot be differentiated symbolically");
+            return da;
+        }
+        AstPtr outer;  // derivative of the function with respect to its argument
+        if (f == "sin") outer = call("cos", {a});
+        else if (f == "cos") outer = makeUnary("-", call("sin", {a}));
+        else if (f == "tan") outer = div(makeNumber(1.0), makeBinary("^", call("cos", {a}), makeNumber(2.0)));
+        else if (f == "exp") outer = call("exp", {a});
+        else if (f == "log") outer = div(makeNumber(1.0), a);
+        else if (f == "log10") outer = div(makeNumber(1.0 / std::log(10.0)), a);
+        else if (f == "sqrt") outer = div(makeNumber(0.5), call("sqrt", {a}));
+        else if (f == "sinh") outer = call("cosh", {a});
+        else if (f == "cosh") outer = call("sinh", {a});
+        else if (f == "tanh") outer = makeBinary("-", makeNumber(1.0), makeBinary("^", call("tanh", {a}), makeNumber(2.0)));
+        else if (f == "asin") outer = div(makeNumber(1.0), call("sqrt", {makeBinary("-", makeNumber(1.0), makeBinary("*", a, a))}));
+        else if (f == "acos") outer = makeUnary("-", div(makeNumber(1.0), call("sqrt", {makeBinary("-", makeNumber(1.0), makeBinary("*", a, a))})));
+        else if (f == "atan") outer = div(makeNumber(1.0), makeBinary("+", makeNumber(1.0), makeBinary("*", a, a)));
+        else if (f == "abs") outer = call("sign", {a});
+        else throw std::runtime_error(f + "() cannot be differentiated symbolically");
+        return mul(outer, da);
+    }
+
+    const Symbols& symbols_;
+    const std::map<std::string, AstPtr>& derivativeOf_;
+    bool total_;
+    int depth_ = 0;
+};
+
+bool isNegation(const AstPtr& e) { return e->kind == Ast::Kind::Unary && e->name == "-"; }
+
+AstPtr negate(const AstPtr& e) {
+    if (e->kind == Ast::Kind::Number) return makeNumber(-e->number);
+    if (isNegation(e)) return e->args[0];
+    return makeUnary("-", e);
+}
+
+// Tidy up an expression built by the differentiator: fold numbers, pull signs
+// out of products and quotients, turn "a + -b" into "a - b". The value is unchanged.
+AstPtr simplify(const AstPtr& e) {
+    if (e->args.empty() || e->kind == Ast::Kind::Symbol) return e;
+    auto copy = std::make_shared<Ast>(*e);
+    for (AstPtr& a : copy->args) a = simplify(a);
+    const AstPtr& a = copy->args[0];
+    if (copy->kind == Ast::Kind::Unary && copy->name == "-") return negate(a);
+    if (copy->kind != Ast::Kind::Binary) return copy;
+    const AstPtr& b = copy->args[1];
+    const std::string& op = copy->name;
+    const bool numbers = a->kind == Ast::Kind::Number && b->kind == Ast::Kind::Number;
+    if (op == "*") {
+        if (numbers) return makeNumber(a->number * b->number);
+        if (isNumber(a, 0.0) || isNumber(b, 0.0)) return makeNumber(0.0);
+        if (isNumber(a, 1.0)) return b;
+        if (isNumber(b, 1.0)) return a;
+        if (isNumber(a, -1.0)) return negate(b);
+        if (isNumber(b, -1.0)) return negate(a);
+        if (isNegation(a) && isNegation(b)) return makeBinary("*", a->args[0], b->args[0]);
+        if (isNegation(a)) return makeUnary("-", makeBinary("*", a->args[0], b));
+        if (isNegation(b)) return makeUnary("-", makeBinary("*", a, b->args[0]));
+    } else if (op == "/") {
+        if (isNumber(a, 0.0)) return a;
+        if (isNumber(b, 1.0)) return a;
+        if (isNumber(b, -1.0)) return negate(a);
+        if (isNegation(a) && isNegation(b)) return makeBinary("/", a->args[0], b->args[0]);
+        if (isNegation(a)) return makeUnary("-", makeBinary("/", a->args[0], b));
+        if (isNegation(b)) return makeUnary("-", makeBinary("/", a, b->args[0]));
+    } else if (op == "+") {
+        if (numbers) return makeNumber(a->number + b->number);
+        if (isNumber(a, 0.0)) return b;
+        if (isNumber(b, 0.0)) return a;
+        if (isNegation(a) && isNegation(b)) return makeUnary("-", makeBinary("+", a->args[0], b->args[0]));
+        if (isNegation(b)) return makeBinary("-", a, b->args[0]);
+        if (isNegation(a)) return makeBinary("-", b, a->args[0]);
+    } else if (op == "-") {
+        if (numbers) return makeNumber(a->number - b->number);
+        if (isNumber(b, 0.0)) return a;
+        if (isNumber(a, 0.0)) return negate(b);
+        if (isNegation(a) && isNegation(b)) return makeBinary("-", b->args[0], a->args[0]);
+        if (isNegation(b)) return makeBinary("+", a, b->args[0]);
+        if (isNegation(a)) return makeUnary("-", makeBinary("+", a->args[0], b));
+    } else if (op == "^") {
+        if (isNumber(b, 1.0)) return a;
+    }
+    return copy;
+}
+
+void collectUnknowns(const AstPtr& e, const Symbols& symbols, std::set<std::string>& out, int depth) {
+    if (e->kind == Ast::Kind::Symbol) {
+        const std::string name = resolvedName(*e, symbols);
+        if (symbols.variable(name) >= 0) out.insert(name);
+        return;
+    }
+    if (e->kind == Ast::Kind::Probe) {
+        std::string label = e->name + "(";
+        for (size_t k = 0; k < e->names.size(); ++k) label += (k ? "," : "") + e->names[k];
+        out.insert(label + ")");
+        return;
+    }
+    if (e->kind == Ast::Kind::Call) {
+        if (const FunctionDef* def = symbols.function(e->name)) {
+            if (depth > 50 || e->args.size() != def->params.size()) return;
+            const AstPtr body = mapLeaves(def->body, [&](const Ast& leaf) -> AstPtr {
+                if (leaf.kind != Ast::Kind::Symbol || !leaf.args.empty()) return nullptr;
+                for (size_t k = 0; k < def->params.size(); ++k)
+                    if (def->params[k] == leaf.name) return e->args[k];
+                return nullptr;
+            });
+            collectUnknowns(body, symbols, out, depth + 1);
+            return;
+        }
+    }
+    for (const AstPtr& a : e->args) collectUnknowns(a, symbols, out, depth);
+}
+
+// Binding strength of the operation at the root of e, for the printer.
+int precedence(const Ast& e) {
+    if (e.kind == Ast::Kind::Unary) return 6;
+    if (e.kind == Ast::Kind::Number) return e.number < 0.0 ? 6 : 9;
+    if (e.kind != Ast::Kind::Binary) return 9;
+    const std::string& op = e.name;
+    if (op == "||") return 1;
+    if (op == "&&") return 2;
+    if (op == "+" || op == "-") return 4;
+    if (op == "*" || op == "/") return 5;
+    if (op == "^") return 7;
+    return 3;  // comparisons
+}
+
+void print(const AstPtr& e, int parent, bool rightOperand, std::ostream& os) {
+    const int mine = precedence(*e);
+    // "a - (b - c)" and "a / (b * c)" need their parentheses; so does "(a^b)^c"
+    // and a negative operand.
+    const bool paren = mine < parent || (mine == parent && rightOperand && mine != 9);
+    if (paren) os << '(';
+    switch (e->kind) {
+        case Ast::Kind::Number: {
+            std::ostringstream num;
+            num << std::setprecision(15) << e->number;
+            os << num.str();
+            break;
+        }
+        case Ast::Kind::Symbol:
+            os << e->name;
+            if (!e->args.empty()) {
+                os << '[';
+                print(e->args[0], 0, false, os);
+                os << ']';
+            }
+            break;
+        case Ast::Kind::Probe:
+            os << e->name << '(';
+            for (size_t k = 0; k < e->names.size(); ++k) os << (k ? "," : "") << e->names[k];
+            os << ')';
+            break;
+        case Ast::Kind::Unary:
+            os << e->name;
+            print(e->args[0], 7, false, os);
+            break;
+        case Ast::Kind::Binary: {
+            const bool spaced = mine <= 4;
+            print(e->args[0], mine, e->name == "^", os);
+            os << (spaced ? " " : "") << e->name << (spaced ? " " : "");
+            print(e->args[1], mine, e->name != "^", os);
+            break;
+        }
+        case Ast::Kind::Call:
+            os << e->name << '(';
+            for (size_t k = 0; k < e->args.size(); ++k) {
+                if (k) os << ", ";
+                print(e->args[k], 0, false, os);
+            }
+            os << ')';
+            break;
+    }
+    if (paren) os << ')';
+}
+
+}  // namespace
+
+std::set<std::string> unknownsIn(const AstPtr& e, const Symbols& symbols) {
+    std::set<std::string> out;
+    collectUnknowns(e, symbols, out, 0);
+    return out;
+}
+
+std::string toString(const AstPtr& e) {
+    std::ostringstream os;
+    print(e, 0, false, os);
+    return os.str();
+}
+
+AstPtr partialDerivative(const AstPtr& e, const Symbols& symbols, const std::string& variable) {
+    const std::map<std::string, AstPtr> seed{{variable, makeNumber(1.0)}};
+    return simplify(Differentiator(symbols, seed, /*total=*/false).d(e));
+}
+
+bool explicitDerivative(const AstPtr& residual, const Symbols& symbols, std::string& name,
+                        double& factor, AstPtr& rhs) {
+    std::vector<Term> q, f;
+    try {
+        splitTerms(residual, 1.0, symbols, q, f);
+    } catch (const std::runtime_error&) {
+        return false;
+    }
+    if (q.size() != 1 || q[0].expr->kind != Ast::Kind::Symbol || q[0].coeff == 0.0) return false;
+    name = resolvedName(*q[0].expr, symbols);
+    if (symbols.variable(name) < 0) return false;
+    factor = q[0].coeff;
+    // -rest / c
+    for (Term& t : f) t.coeff = -t.coeff / factor;
+    rhs = simplify(sumOfTerms(f));
+    return true;
+}
+
+AstPtr timeDerivative(const AstPtr& e, const Symbols& symbols,
+                      const std::map<std::string, AstPtr>& derivativeOf) {
+    return simplify(Differentiator(symbols, derivativeOf, /*total=*/true).d(e));
 }
 
 DaeEquation compileEquation(const std::string& text, const Symbols& symbols) {

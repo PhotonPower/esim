@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -198,5 +199,28 @@ struct DaeEquation {
 DaeEquation compileEquation(const std::string& text, const Symbols& symbols);
 // The same for an already parsed equation "lhs - rhs"; errors do not quote a text.
 DaeEquation compileEquation(const AstPtr& residual, const Symbols& symbols);
+
+// For an equation of the form  c * der(x) + rest = 0  with a constant factor c
+// and one unknown x under der(): the name of x, the factor c and the expression
+// for the derivative, -rest / c. Returns false for every other equation.
+bool explicitDerivative(const AstPtr& residual, const Symbols& symbols, std::string& name,
+                        double& factor, AstPtr& rhs);
+
+// Total time derivative of e along a solution, as an expression. Every
+// unknown x in e contributes de/dx * derivativeOf[x]; parameters are constant,
+// the time counts as itself. Throws if e contains an unknown without entry, a
+// voltage or current of the circuit, a table, or a delay.
+AstPtr timeDerivative(const AstPtr& e, const Symbols& symbols,
+                      const std::map<std::string, AstPtr>& derivativeOf);
+
+// Partial derivative of e with respect to the unknown `variable`.
+AstPtr partialDerivative(const AstPtr& e, const Symbols& symbols, const std::string& variable);
+
+// Names of the unknowns e depends on (elements of vectors as "x[3]"; voltages
+// and currents of the circuit as "v(a)", "i(R1)").
+std::set<std::string> unknownsIn(const AstPtr& e, const Symbols& symbols);
+
+// The expression as text that parseExpression() reads back.
+std::string toString(const AstPtr& e);
 
 }  // namespace esim::expr

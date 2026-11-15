@@ -1,0 +1,45 @@
+{
+  // The pendulum written down the natural way: Newton's law for the mass and
+  // the rod as a constraint on the position, x^2 + y^2 = L^2. This is a DAE of
+  // index 3, which the integration methods cannot solve as it stands.
+  //
+  // The program notices this (structural analysis), differentiates the
+  // constraint and adds the result, 2*x*u + 2*y*v = 0, with a multiplier that
+  // keeps both conditions in force. It reports what it added. The outcome is
+  // the system that examples/pendulum.json writes out by hand.
+  //
+  // Exact period for an amplitude of 0.5 rad: 2.03787 s.
+  "title": "Pendulum with a position constraint (index 3, reduced automatically)",
+
+  "parameters": { "g": 9.81, "L": 1, "theta0": 0.5 },
+
+  "variables": {
+    "x": "L*sin(theta0)",       // position: has to satisfy the constraint at the start
+    "y": "-L*cos(theta0)",
+    "u": 0,                     // velocity: has to be tangential at the start
+    "v": 0,
+    "lam": { "guess": 0 }       // rod force per unit length and mass
+  },
+
+  "equations": [
+    "der(x) = u",
+    "der(y) = v",
+    "der(u) = -2*x*lam",
+    "der(v) = -g - 2*y*lam",
+    "0 = x^2 + y^2 - L^2"
+  ],
+
+  "options": { "reltol": 1e-6 },
+
+  "analyses": [
+    { "type": "tran", "tstop": 10, "uic": true,
+      "measure": {
+        "period":       { "period": "x", "level": 0 },
+        "length_error": { "max": "abs(x^2 + y^2 - L^2)" },
+        "energy_drift": { "pp": "0.5*(u^2 + v^2) + g*y" }
+      } }
+  ],
+
+  // index_mu1 is the multiplier the reduction added; it stays at zero.
+  "outputs": ["x", "y", "atan2(x, -y)", "lam", "index_mu1"]
+}

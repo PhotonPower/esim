@@ -2330,7 +2330,8 @@ void testStructuralIndex() {
     checkTrue(a.index == 1, "index: algebraic equation for its own unknown");
     // Pendulum with the position constraint only: index 3, the constraint twice.
     Circuit* ckt = nullptr;
-    a = analyze(R"json({"variables": {"x": 0.5, "y": -0.8, "u": 0, "v": 0, "lam": {"guess": 0}},
+    a = analyze(R"json({"options": {"index_reduction": false},
+                        "variables": {"x": 0.5, "y": -0.8, "u": 0, "v": 0, "lam": {"guess": 0}},
                         "equations": ["der(x) = u", "der(y) = v", "der(u) = -x*lam",
                                       "der(v) = -9.81 - y*lam", "0 = x^2 + y^2 - 1"]})json", &ckt);
     checkTrue(a.index == 3, "index: pendulum with position constraint has index 3");
@@ -2361,6 +2362,7 @@ void testStructuralIndex() {
 
     // The transient analysis warns about the index 3 formulation.
     Netlist nl = parseNetlistText(R"json({
+        "options": {"index_reduction": false},
         "variables": {"x": 0.5, "y": -0.8, "u": 0, "v": 0, "lam": {"guess": 0}},
         "equations": ["der(x) = u", "der(y) = v", "der(u) = -x*lam", "der(v) = -9.81 - y*lam",
                       "0 = x^2 + y^2 - 1"],
@@ -2466,6 +2468,100 @@ void testSpeedFeatures() {
         message = e.what();
     }
     checkTrue(message.find("param_sweep, R = 0") != std::string::npos, "parallel runs: the failing run is named");
+}
+
+void testIndexReduction() {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "esim_tests";
+    const auto runAll = [&](const std::string& text, const std::string& stem, std::string* logText = nullptr) {
+        Netlist nl = parseNetlistText(text);
+        RunConfig cfg;
+        cfg.outDir = dir.string();
+        cfg.stem = stem;
+        nlohmann::json summary = nlohmann::json::array();
+        cfg.summary = &summary;
+        std::ostringstream log;
+        runAnalyses(nl, cfg, log);
+        if (logText) *logText = log.str();
+        return summary;
+    };
+
+    // Pendulum written with the position constraint only (index 3). The
+    // constraint is imposed on its derivative; the length stays what it was.
+    // Exact period for an amplitude of 0.5 rad: 2.03787 s.
+    const std::string pendulum = R"json({
+        "parameters": {"g": 9.81, "L": 1, "theta0": 0.5},
+        "options": {"reltol": 1e-7},
+        "variables": {"x": "L*sin(theta0)", "y": "-L*cos(theta0)", "u": 0, "v": 0, "lam": {"guess": 0}},
+        "equations": ["der(x) = u", "der(y) = v", "der(u) = -2*x*lam", "der(v) = -g - 2*y*lam",
+                      "0 = x^2 + y^2 - L^2"],
+        "analyses": [{"type": "tran", "tstop": 10, "uic": true, "save": false,
+                      "measure": {"period": {"period": "x", "level": 0},
+                                  "length_error": {"max": "abs(x^2 + y^2 - L^2)"},
+                                  "energy_drift": {"pp": "0.5*(u^2 + v^2) + g*y"}}}]})json";
+    std::string log;
+    nlohmann::json s = runAll(pendulum, "reduce_pendulum", &log);
+    checkTrue(log.find("index 3 reduced to 2") != std::string::npos &&
+                  log.find("added  0 = 2*x*u + 2*y*v") != std::string::npos,
+              "index reduction: reported with the added equation");
+    std::cout << log.substr(0, log.find("[tran]"));
+    checkTrue(log.find("warning") == std::string::npos, "index reduction: no warning for consistent start values");
+    checkNear(s[0]["measures"]["period"].get<double>(), 2.03787, 2e-5, "index reduction: period of the pendulum");
+    checkNear(s[0]["measures"]["length_error"].get<double>(), 0.0, 1e-9, "index reduction: the constraint does not drift");
+    checkNear(s[0]["measures"]["energy_drift"].get<double>(), 0.0, 2e-4, "index reduction: energy of the pendulum");
+    std::cout << "    reduced pendulum: period " << s[0]["measures"]["period"].get<double>() << ", length error "
+              << s[0]["measures"]["length_error"].get<double>() << ", energy drift "
+              << s[0]["measures"]["energy_drift"].get<double>() << std::endl;
+
+    // A constraint that depends on time: the pivot of the pendulum is driven.
+    // Checked against the same model written in the angle, an ordinary differential equation.
+    s = runAll(R"json({
+        "parameters": {"g": 9.81, "L": 1, "A": 0.1, "w": 3},
+        "options": {"reltol": 1e-7},
+        "variables": {"x": 0, "y": -1, "u": "A*w", "v": 0, "lam": {"guess": 0},
+                      "th": 0, "om": 0},
+        "equations": ["der(x) = u", "der(y) = v", "der(u) = -2*(x - A*sin(w*time))*lam",
+                      "der(v) = -g - 2*y*lam", "0 = (x - A*sin(w*time))^2 + y^2 - L^2",
+                      "der(th) = om", "der(om) = -g/L*sin(th) + A*w^2/L*sin(w*time)*cos(th)"],
+        "analyses": [{"type": "tran", "tstop": 5, "uic": true, "save": false,
+                      "measure": {"difference": {"max": "abs(atan2(x - A*sin(w*time), -y) - th)"},
+                                  "swing": {"max": "abs(th)"}}}]})json", "reduce_driven");
+    checkTrue(s[0]["measures"]["swing"].get<double>() > 0.05, "index reduction: the driven pendulum swings");
+    checkNear(s[0]["measures"]["difference"].get<double>(), 0.0, 2e-5, "index reduction: time-dependent constraint");
+
+    // Index 4: three integrators whose first state is prescribed, the input u is
+    // the unknown. x1 = sin(t) requires u = x1''' = -cos(t). The constraint is
+    // differentiated twice symbolically and imposed on that derivative.
+    s = runAll(R"json({
+        "options": {"reltol": 1e-7},
+        "variables": {"x1": 0, "x2": 1, "x3": 0, "u": {"guess": -1}},
+        "equations": ["der(x1) = x2", "der(x2) = x3", "der(x3) = u", "x1 = sin(time)"],
+        "analyses": [{"type": "tran", "tstop": 6, "uic": true, "save": false,
+                      "measure": {"path": {"max": "abs(x1 - sin(time))"},
+                                  "input": {"max": "abs(u + cos(time))", "from": 0.01}}}]})json",
+               "reduce_index4", &log);
+    checkTrue(log.find("index 4 reduced to 2") != std::string::npos, "index reduction: index 4 is reduced");
+    checkNear(s[0]["measures"]["path"].get<double>(), 0.0, 1e-5, "index reduction: index 4, the state follows its path");
+    checkNear(s[0]["measures"]["input"].get<double>(), 0.0, 1e-3, "index reduction: index 4, the input is found");
+
+    // Not reducible: the derivative of a node voltage is not available as an expression.
+    Netlist no = parseNetlistText(R"json({
+        "components": [{"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 1},
+                       {"type": "R", "name": "R1", "nodes": ["a", "b"], "value": 1},
+                       {"type": "C", "name": "C1", "nodes": ["b", "0"], "value": 1}],
+        "variables": {"x1": 0, "x2": 0, "x3": 0, "u": {"guess": 0}},
+        "equations": ["der(x1) = x2", "der(x2) = x3", "der(x3) = u", "x1 = v(b)"]})json");
+    checkTrue(no.circuit->notes.size() == 1 &&
+                  no.circuit->notes[0].find("automatic reduction not possible") != std::string::npos,
+              "index reduction: a constraint that cannot be differentiated is reported");
+
+    // The operating point still uses the original equations.
+    Netlist op = parseNetlistText(R"json({
+        "variables": {"x": {"guess": 0.6}, "y": {"guess": -0.8}, "u": 0, "v": 0, "lam": {"guess": 5}},
+        "equations": ["der(x) = u", "der(y) = v", "der(u) = -2*x*lam", "der(v) = -9.81 - 2*y*lam",
+                      "0 = x^2 + y^2 - 1"]})json");
+    const Vector xo = solveOperatingPoint(*op.circuit, op.options);
+    checkNear(probe(*op.circuit, xo, "y"), -1.0, 1e-9, "index reduction: the operating point is the hanging pendulum");
+    checkNear(probe(*op.circuit, xo, "lam"), 9.81 / 2.0, 1e-9, "index reduction: rod force at rest");
 }
 
 void testUniformOutput() {
@@ -2708,6 +2804,7 @@ int main() {
         {"vectors", testVectors},
         {"structural index", testStructuralIndex},
         {"jacobian reuse and parallel runs", testSpeedFeatures},
+        {"index reduction", testIndexReduction},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},

@@ -104,7 +104,8 @@ public:
     // node, branch equation of a component).
     void setEquationText(int row, const std::string& text) { equationText_[row] = text; }
     std::string equationText(int row) const;
-    bool hasUserEquations() const { return !equationText_.empty(); }  // delays or transmission lines: the future depends on more than the state
+    bool hasUserEquations() const { return !equationText_.empty(); }
+    std::vector<std::string> notes;  // remarks for the user about how the system was set up  // delays or transmission lines: the future depends on more than the state
     bool setSourceScale(double scale) override {
         srcScale_ = scale;
         return true;

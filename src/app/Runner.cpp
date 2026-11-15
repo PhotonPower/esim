@@ -477,8 +477,9 @@ void checkIndex(Context& c) {
                       << " times\n";
                 ++shown;
             }
-    c.log << "  Replace such a constraint by its time derivative (once less than stated), so that "
-             "it holds for the rates instead of the values.\n";
+    c.log << "  The automatic index reduction was not applied (see the note above, or it is "
+             "switched off). Replace such a constraint by its time derivative (once less than "
+             "stated), so that it holds for the rates instead of the values.\n";
 }
 
 // State at t = 0: the operating point with prescribed states held, or the
@@ -1493,6 +1494,7 @@ void runSensitivity(Context& c, const json& a) {
 
 void runAnalyses(Netlist& nl, const RunConfig& cfg, std::ostream& log) {
     Context c{nl, cfg, log, {}, nullptr};
+    for (const std::string& note : nl.circuit->notes) log << "note: " << note << '\n';
     if (nl.analyses.empty()) log << "no analyses requested (add an \"analyses\" array)\n";
 
     for (const json& a : nl.analyses) {

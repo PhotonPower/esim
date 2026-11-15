@@ -71,6 +71,7 @@ Beispiele in [`examples/`](examples):
 | `transmission_line.json` | Reflexionen auf einer fehlangepassten Leitung |
 | `dead_time_control.json` | Regelkreis mit Totzeit (`delay`) |
 | `heat_rod.json` | Wärmeleitung als Vektor von Gleichungen (Linienmethode) |
+| `pendulum_index3.json` | Pendel mit Lagebedingung (Index 3), automatisch reduziert |
 | `saturating_inductor.json` | nichtlineare Induktivität über ihren Fluss, eigene Funktion |
 
 ### Ergebnisse plotten
@@ -357,6 +358,53 @@ Die Schleifen werden beim Einlesen ausgerollt; für den Löser sind es einzelne
 Gleichungen. Matrix- und Vektoroperationen (Skalarprodukt, Matrix mal Vektor)
 gibt es nicht; sie lassen sich mit `sum` schreiben. Beispiel:
 `examples/heat_rod.json`.
+
+### Indexreduktion
+
+Zwangsbedingungen der Mechanik und vorgegebene Bahnen führen auf Systeme, die
+ein Integrationsverfahren nicht direkt lösen kann. Das Pendel in kartesischen
+Koordinaten ist das Standardbeispiel:
+
+```jsonc
+"equations": [
+  "der(x) = u", "der(y) = v",
+  "der(u) = -2*x*lam", "der(v) = -g - 2*y*lam",
+  "0 = x^2 + y^2 - L^2"          // Index 3
+]
+```
+
+Beim Einlesen bestimmt eine Strukturanalyse (Algorithmus von Pantelides), wie
+oft jede Gleichung abgeleitet werden müsste. Ist der Index größer als 2, wird
+das System selbsttätig umgeformt:
+
+- Jede algebraische Bedingung `g = 0`, die k-mal abzuleiten wäre, erhält ihre
+  Zeitableitungen bis zur Ordnung k−1 als zusätzliche Gleichungen. Sie werden
+  symbolisch gebildet, wobei für `der(x)` die rechten Seiten der Gleichungen
+  `c*der(x) = ...` eingesetzt werden.
+- Damit Bedingung und Ableitungen zugleich gelten können, kommt je zusätzlicher
+  Gleichung ein Multiplikator `index_mu1`, `index_mu2`, … als neue Unbekannte
+  hinzu. Er wirkt in den Gleichungen der Unbekannten der Bedingung als
+  `der(x) = ... − ∂g/∂x · mu` (Stabilisierung nach Gear, Gupta und Leimkuhler)
+  und ist für die exakte Lösung null.
+- Das Ergebnis hat Index 2. Bedingung und Ableitungen gelten mit der
+  Genauigkeit der Newton-Iteration, es gibt keine Drift.
+
+Das Programm meldet, was es hinzugefügt hat:
+
+    note: index 3 reduced to 2 by adding time derivatives of constraints:
+      "0 = x^2 + y^2 - L^2":
+        added  0 = 2*x*u + 2*y*v   (multiplier index_mu1 in the equations of x, y)
+
+Das ist genau das System, das `examples/pendulum.json` von Hand ausschreibt;
+`examples/pendulum_index3.json` rechnet die obige Form und kommt auf dieselben
+614 Schritte und dieselbe Periode. Bedingungen dürfen explizit von der Zeit
+abhängen (bewegter Aufhängepunkt, vorgegebene Bahn). Ein Test mit Index 4
+(drei Integratoren, deren erster Zustand vorgegeben ist) findet die gesuchte
+Eingangsgröße auf 1e-6 genau.
+
+Voraussetzungen und Grenzen: siehe „Grenzen“ unter Index.
+`"options": {"index_reduction": false}` schaltet die Umformung ab; dann warnt
+die Transientenanalyse nur.
 
 ### Ereignisse
 
@@ -924,7 +972,8 @@ Zweigströme und Variablen ausgegeben.
   "tnom": 27,           // Temperatur, für die die Modellparameter gelten [°C]
   "maxiter_dc": 100,    // Newton-Iterationen im Arbeitspunkt
   "maxiter_tran": 20,   // Newton-Iterationen pro Zeitschritt
-  "reuse_jacobian": true  // faktorisierte Matrix innerhalb eines Zeitschritts weiterverwenden
+  "reuse_jacobian": true,   // faktorisierte Matrix innerhalb eines Zeitschritts weiterverwenden
+  "index_reduction": true   // Systeme mit Index über 2 automatisch umformen
 },
 "nodeset": { "out": 2.5 },   // Startwerte für den Arbeitspunkt (z. B. bistabile Schaltungen)
 "ic": { "c1": 5 }            // Knotenspannungen bei t = 0 für "uic"
@@ -962,6 +1011,7 @@ src/circuit/   das simulierte System als DaeSystem               -> Bibliothek e
   Circuit          Knoten, Unbekannte, Stempeln aller Bauteile
   Device.hpp       Basisklasse und StampContext
   Symbols.hpp      Namen in Ausdrücken -> Unbekannte der Schaltung
+  IndexReduction   Ableiten von Zwangsbedingungen bei Index über 2
   devices/         R, C, L, Kopplung, Quellen, Diode, BJT, MOSFET, JFET,
                    TransmissionLine, Equations (Gleichungsblock),
                    Behavioral (B-Quelle), Switching (Schalter, ideale Diode)
@@ -1056,20 +1106,19 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
 
 ## Grenzen und nächste Schritte
 
-- **Index**: Die Verfahren lösen Systeme vom Index 1 und 2. Index 2 haben
-  Schaltungen mit einem Kondensator direkt an einer Spannungsquelle oder einer
-  Spule in Reihe zu einer Stromquelle, und mechanische Systeme, wenn man zur
-  Lagebedingung die Geschwindigkeitsbedingung hinzunimmt
-  (`examples/pendulum.json` zeigt das Schema). Eine Lagebedingung allein ergibt
-  Index 3 und muss von Hand umformuliert werden. Vor jeder Zeitsimulation mit
-  eigenen Gleichungen bestimmt eine Strukturanalyse (Algorithmus von
-  Pantelides) den Index; ist er größer als 2, nennt eine Warnung die
-  Gleichungen, die abgeleitet werden müssten, und wie oft. Das Ableiten und
-  Ersetzen selbst (automatische Indexreduktion) nimmt das Programm nicht vor.
-  Die Analyse betrachtet nur, welche Unbekannte in welcher Gleichung vorkommt;
-  heben sich Terme exakt auf, kann der wahre Index höher liegen. Systeme vom
-  Index 2 mit `"uic": true` starten, weil sich ihre Multiplikatoren nicht aus
-  den algebraischen Gleichungen allein bestimmen lassen.
+- **Index**: Die Verfahren lösen Systeme vom Index 1 und 2; höhere Indizes
+  in eigenen Gleichungen werden automatisch reduziert (siehe
+  „Indexreduktion“). Nicht reduzierbar sind Bedingungen, deren Ableitung sich
+  nicht als Ausdruck bilden lässt: wenn sie Knotenspannungen oder Ströme der
+  Schaltung, Tabellen oder Totzeiten enthalten, oder wenn für eine ihrer
+  Unbekannten keine Gleichung der Form `c*der(x) = ...` existiert. Dann bleibt
+  das System, wie es ist, und eine Warnung nennt die Ursache. Die
+  Strukturanalyse betrachtet nur, welche Unbekannte in welcher Gleichung
+  vorkommt; heben sich Terme exakt auf, kann der wahre Index höher liegen.
+  Systeme vom Index 2 mit `"uic": true` und Startwerten starten, die die
+  Bedingungen erfüllen: Ihre Multiplikatoren lassen sich nicht aus den
+  algebraischen Gleichungen allein bestimmen, und grob unverträgliche
+  Startwerte lassen den ersten Schritt scheitern.
 - **Ereignisse**: Gleiten entlang einer Schaltfläche (z. B.
   Reibung als `if`, ein Schalter ohne Hysterese in einer Rückkopplung) führt
   zu endlosem Umschalten und wird abgebrochen; solche Modelle brauchen eine

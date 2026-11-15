@@ -17,6 +17,7 @@ struct SimOptions {
     int maxIterDc = 100;
     int maxIterTran = 20;
     bool reuseJacobian = true;  // see TransientOptions::reuseJacobian
+    bool indexReduction = true; // see reduceIndex()
 };
 
 // DC operating point. Starts from guess (or from the circuit's nodeset) and

@@ -62,6 +62,7 @@ add_library(esimcircuit
   src/circuit/Circuit.cpp
   src/circuit/Waveform.cpp
   src/circuit/Analysis.cpp
+  src/circuit/IndexReduction.cpp
   src/circuit/devices/Passive.cpp
   src/circuit/devices/Sources.cpp
   src/circuit/devices/Diode.cpp

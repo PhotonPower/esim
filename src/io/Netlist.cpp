@@ -19,6 +19,8 @@
 #include "circuit/devices/Bjt.hpp"
 #include "circuit/devices/Diode.hpp"
 #include "circuit/devices/Equations.hpp"
+#include "circuit/IndexReduction.hpp"
+#include "core/StructuralIndex.hpp"
 #include "circuit/devices/Jfet.hpp"
 #include "circuit/devices/TransmissionLine.hpp"
 #include "circuit/devices/Mosfet.hpp"
@@ -688,6 +690,7 @@ void parseOptions(const json& j, Netlist& nl) {
     s.trtol = p.num("trtol", s.trtol);
     s.lteFloor = p.num("lte_floor", s.lteFloor);
     s.reuseJacobian = p.flag("reuse_jacobian", s.reuseJacobian);
+    s.indexReduction = p.flag("index_reduction", s.indexReduction);
     s.maxIterDc = static_cast<int>(p.num("maxiter_dc", s.maxIterDc));
     s.maxIterTran = static_cast<int>(p.num("maxiter_tran", s.maxIterTran));
     p.warnUnused();
@@ -1235,7 +1238,10 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
 
 }  // namespace
 
-Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir) {
+// One pass over the input. `capture` receives the user equations as they were
+// read; with `replace` given, these take their place (index reduction).
+Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
+                  EquationSystem* capture, const EquationSystem* replace) {
     if (!root.is_object()) throw std::runtime_error("netlist: top level must be a JSON object");
     struct WarningScope {
         bool saved;
@@ -1331,6 +1337,11 @@ Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir
         throw std::runtime_error("netlist: needs \"components\" and/or \"equations\"");
     }
     addEquations(b, top, root, "netlist");
+    if (capture) *capture = {b.variables, b.equations};
+    if (replace) {
+        b.variables = replace->variables;
+        b.equations = replace->equations;
+    }
     if (!b.variables.empty() || !b.whens.empty())
         ckt.add(std::make_unique<EquationBlock>("#equations", std::move(b.variables),
                                                 std::move(b.equations), std::move(b.whens)));
@@ -1360,6 +1371,36 @@ Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir
             nl.outputs.push_back(o.get<std::string>());
         }
     }
+    return nl;
+}
+
+Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir) {
+    EquationSystem equations;
+    Netlist nl = parseOnce(root, warnings, baseDir, &equations, nullptr);
+    if (!nl.options.indexReduction || !nl.circuit->hasUserEquations()) return nl;
+
+    // Index above 2: add differentiated constraints and read the input again
+    // with the enlarged set of equations.
+    EquationSystem reduced;
+    std::vector<std::string> notes;
+    if (reduceIndex(*nl.circuit, equations, reduced, notes)) {
+        try {
+            Netlist second = parseOnce(root, /*warnings=*/false, baseDir, nullptr, &reduced);
+            Circuit& ckt = *second.circuit;
+            ckt.setTransientMode(true);
+            const IndexAnalysis check = structuralIndex(ckt, Vector::Zero(ckt.size()));
+            ckt.setTransientMode(false);
+            if (check.analyzed && !check.singular && check.index <= 2) {
+                ckt.notes = notes;
+                return second;
+            }
+            notes.assign(1, "automatic index reduction not possible: the differentiated system is "
+                            "still not of index 1 or 2");
+        } catch (const std::runtime_error& e) {
+            notes.assign(1, std::string("automatic index reduction not possible: ") + e.what());
+        }
+    }
+    nl.circuit->notes = notes;
     return nl;
 }
 
