@@ -1,0 +1,47 @@
+{
+  // The same transistor with two models. Level 1 switches the channel off
+  // completely below the threshold voltage; the EKV model follows the real
+  // device, whose current falls exponentially there (82 mV per decade with
+  // this body effect). Far above the threshold both follow the square law; the
+  // EKV current is lower by the slope factor n = 1.28 of the body effect, and
+  // with mobility reduction and velocity saturation (M3) lower still.
+  //
+  // Plot with a logarithmic axis to see the subthreshold region:
+  //   python3 tools/plot.py results/mosfet_subthreshold.dc.csv --logy
+  "title": "MOSFET transfer characteristic: level 1 and EKV",
+
+  "models": {
+    "n1":   { "type": "nmos", "vto": 0.5, "kp": 2e-4, "gamma": 0.5, "phi": 0.7 },
+    "nekv": { "type": "nmos", "level": "ekv", "vto": 0.5, "kp": 2e-4, "gamma": 0.5, "phi": 0.7 },
+    "nshort": { "type": "nmos", "level": "ekv", "vto": 0.5, "kp": 2e-4, "gamma": 0.5, "phi": 0.7,
+                "theta": 0.3, "ucrit": 4e6 }
+  },
+
+  "components": [
+    { "type": "V", "name": "VG", "nodes": ["g", "0"], "dc": 0 },
+    { "type": "V", "name": "VD", "nodes": ["d", "0"], "dc": 1.8 },
+    // One ammeter (0 V source) per transistor.
+    { "type": "V", "name": "A1", "nodes": ["d", "d1"], "dc": 0 },
+    { "type": "V", "name": "A2", "nodes": ["d", "d2"], "dc": 0 },
+    { "type": "V", "name": "A3", "nodes": ["d", "d3"], "dc": 0 },
+    { "type": "M", "name": "M1", "nodes": ["d1", "g", "0", "0"], "model": "n1", "w": "10u", "l": "1u" },
+    { "type": "M", "name": "M2", "nodes": ["d2", "g", "0", "0"], "model": "nekv", "w": "10u", "l": "1u" },
+    { "type": "M", "name": "M3", "nodes": ["d3", "g", "0", "0"], "model": "nshort", "w": "10u", "l": "1u" }
+  ],
+
+  "analyses": [
+    { "type": "dc", "source": "VG", "start": 0, "stop": 1.8, "step": 0.01,
+      "measure": {
+        "ioff_level1": { "at": "i(A1)", "x": 0 },
+        "ioff_ekv":    { "at": "i(A2)", "x": 0 },
+        "ion_level1":  { "final": "i(A1)" },
+        "ion_ekv":     { "final": "i(A2)" },
+        "ion_short":   { "final": "i(A3)" },
+        // gate voltage for 1 nA and 10 nA: their distance is the subthreshold swing
+        "vg_1n":       { "cross": "i(A2)", "level": 1e-9 },
+        "vg_10n":      { "cross": "i(A2)", "level": 1e-8 }
+      } }
+  ],
+
+  "outputs": ["i(A1)", "i(A2)", "i(A3)"]
+}

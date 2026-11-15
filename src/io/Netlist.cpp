@@ -19,6 +19,7 @@
 #include "circuit/devices/Diode.hpp"
 #include "circuit/devices/Equations.hpp"
 #include "circuit/devices/Jfet.hpp"
+#include "circuit/devices/TransmissionLine.hpp"
 #include "circuit/devices/Mosfet.hpp"
 #include "circuit/devices/Passive.hpp"
 #include "circuit/devices/Sources.hpp"
@@ -194,6 +195,7 @@ char componentKind(const std::string& type) {
         {"ideal_diode", 'y'},
         {"j", 'j'}, {"jfet", 'j'}, {"njf", 'j'}, {"pjf", 'j'},
         {"k", 'k'}, {"coupling", 'k'},
+        {"t", 't'}, {"tline", 't'},
         {"x", 'x'}, {"subcircuit", 'x'},
     };
     auto it = kinds.find(type);
@@ -493,6 +495,17 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
                                                        p.num("k")));
             break;
         }
+        case 't': {
+            needNodes(4, 4, "[port1+, port1-, port2+, port2-]");
+            double td;
+            if (p.has("td")) td = p.num("td");
+            else {  // electrical length at a frequency: "f" and "nl" (wavelengths), as in SPICE
+                if (!p.has("f")) throw std::runtime_error(p.where() + ": needs \"td\", or \"f\" and \"nl\"");
+                td = p.num("nl", 0.25) / p.num("f");
+            }
+            ckt.add(std::make_unique<TransmissionLine>(name, n[0], n[1], n[2], n[3], p.num("z0"), td));
+            break;
+        }
         case 'x':
             instantiate(b, scope, name, p, nodeNames);
             break;
@@ -576,6 +589,16 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             m.tcv = p.num("tcv", m.tcv);
             m.kf = p.num("kf", m.kf);
             m.af = p.num("af", m.af);
+            m.theta = p.num("theta", m.theta);
+            m.ucrit = p.num("ucrit", m.ucrit);
+            if (p.has("level")) {  // 1 (Shichman-Hodges) or "ekv"
+                const json& level = p.raw("level");
+                if (level.is_string() && lower(level.get<std::string>()) == "ekv") m.ekv = true;
+                else if (!(level.is_number() && level.get<double>() == 1.0))
+                    throw std::runtime_error(p.where() + ": \"level\" must be 1 or \"ekv\"");
+            }
+            if (!m.ekv && (m.theta != 0.0 || m.ucrit != 0.0))
+                warn() << p.where() << ": theta and ucrit only act with \"level\": \"ekv\"\n";
             const int pol = polarity(type, modelType, "nmos", "pmos", p.where());
             const int bulk = n.size() == 4 ? n[3] : n[2];
             ckt.add(std::make_unique<Mosfet>(name, n[0], n[1], n[2], bulk, pol, m));
@@ -1023,7 +1046,7 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
         "xti", "xtb", "kf", "af"};
     static const std::set<std::string> mosKeys = {
         "vto", "kp", "gamma", "phi", "lambda", "cgso", "cgdo", "cgbo", "cbd", "cbs", "pb",
-        "mj", "fc", "is", "tox", "tcv", "w", "l", "kf", "af"};
+        "mj", "fc", "is", "tox", "tcv", "w", "l", "kf", "af", "theta", "ucrit"};
     const std::string type = lower(tok[2]);
     auto it = types.find(type);
     if (it == types.end())

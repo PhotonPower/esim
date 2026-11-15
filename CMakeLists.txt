@@ -67,6 +67,7 @@ add_library(esimcircuit
   src/circuit/devices/Bjt.cpp
   src/circuit/devices/Mosfet.cpp
   src/circuit/devices/Jfet.cpp
+  src/circuit/devices/TransmissionLine.cpp
   src/circuit/devices/Equations.cpp
   src/circuit/devices/Behavioral.cpp
   src/circuit/devices/Switching.cpp

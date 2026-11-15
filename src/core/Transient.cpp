@@ -79,6 +79,7 @@ TransientStats runTransient(DaeSystem& sys, const Vector& x0, const Vector* q0,
         Vector xe = x0;
         sys.eventUpdate(0.0, xe, true);
     }
+    sys.acceptStep(0.0, x0, true);
 
     // Evaluations at accepted points use LimitMode::Init: the limiters then
     // refer to the last accepted solution when the next step starts.
@@ -314,6 +315,7 @@ TransientStats runTransient(DaeSystem& sys, const Vector& x0, const Vector* q0,
         t = tn;
         ++stats.accepted;
         stats.maxOrder = std::max(stats.maxOrder, order);
+        sys.acceptStep(tn, xnew, false);
         output();
     };
 
@@ -337,8 +339,10 @@ TransientStats runTransient(DaeSystem& sys, const Vector& x0, const Vector* q0,
             qh[0] = ev.q;
             fn = ev.f;
             xpeak = xpeak.cwiseMax(xnew.cwiseAbs());
+            sys.acceptStep(t, xnew, false);  // the state after the jump
         }
         if (nev > 0) sys.eventFunctions(t, xh[0], gn);
+        sys.noteDiscontinuity(t);
         restart();
         return reset;
     };

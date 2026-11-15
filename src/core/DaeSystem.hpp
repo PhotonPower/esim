@@ -92,6 +92,13 @@ public:
     // them again.
     virtual void setLiveModes(bool /*on*/) {}
 
+    // Called by a time integration at its start point (start = true) and after
+    // every accepted step, for systems that refer to their past (delays).
+    virtual void acceptStep(double /*t*/, const Vector& /*x*/, bool /*start*/) {}
+    // The integration restarted at t (a breakpoint or an event): the solution
+    // may have a kink or jump there.
+    virtual void noteDiscontinuity(double /*t*/) {}
+
     // Optional homotopy hooks used by the DC solver when plain Newton fails.
     // Return false if the system does not support the respective continuation.
     virtual bool setSourceScale(double /*scale*/) { return false; }  // excitations * scale

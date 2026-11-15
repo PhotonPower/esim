@@ -88,8 +88,10 @@ check("v(out)" in res.analyses[3].fourier["thd"], ".four runs")
 
 # --- unsupported things are reported, not silently dropped ---
 spice2json.warnings.clear()
-spice2json.convert("title\nT1 a 0 b 0 Z0=50 TD=1n\n.tf v(a) v1\n.end\n")
+line = spice2json.convert("title\nT1 a 0 b 0 Z0=50 TD=1n\nO1 a 0 b 0 lossy\n.tf v(a) v1\n.end\n")
 check(len(spice2json.warnings) == 2, "warnings for unsupported lines")
+check(line["components"] == [{"type": "T", "name": "t1", "nodes": ["a", "0", "b", "0"],
+                              "z0": 50.0, "td": 1e-9}], "transmission line")
 
 print("spice import:", "ok" if failures == 0 else f"{failures} failures")
 sys.exit(1 if failures else 0)

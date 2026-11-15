@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "core/History.hpp"
 #include "core/Types.hpp"
 
 // Arithmetic expressions given as text: parsing, evaluation and exact
@@ -18,6 +19,8 @@
 //                sqrt abs sign min max pow if(condition, a, b)
 //   tables       name(x) for a table registered under that name
 //   own          name(a, b, ...) for a function defined by the user
+//   delay        delay(e, td): the value e had the constant time td ago. Outside
+//                of a time integration (operating point, AC) it is e itself.
 //   symbols      names of unknowns and constants, t (or time), pi
 //   circuit      v(node)  v(a,b)  i(component)
 //   equations    der(expression) for a time derivative
@@ -72,12 +75,17 @@ struct FunctionDef {
 
 bool isBuiltinFunction(const std::string& name);
 
+struct DelayLine;
+
 // Meaning of the names in an expression. Unknowns are identified by their
 // index in the solution vector.
 class Symbols {
 public:
     virtual ~Symbols() = default;
     virtual const FunctionDef* function(const std::string& /*name*/) const { return nullptr; }
+    // Takes charge of the history of a delay() in an expression: whoever
+    // integrates over time has to record it. false: delays are not possible here.
+    virtual bool addDelay(const std::shared_ptr<DelayLine>& /*line*/) const { return false; }
     // A table that can be called like a function, or nullptr.
     virtual std::shared_ptr<const Table> table(const std::string& /*name*/) const {
         return nullptr;
@@ -129,6 +137,7 @@ public:
     const std::vector<int>& vars() const { return vars_; }  // unknowns e depends on
     bool dependsOnTime() const { return usesTime_; }
     bool isConstant() const { return vars_.empty() && !usesTime_; }
+    bool hasDelay() const { return !delays_.empty(); }
 
     enum class Op : unsigned char;
     struct Instr {
@@ -136,7 +145,7 @@ public:
         int a = -1, b = -1, c = -1;  // operand slots (Var: position in vars_)
         double k = 0.0;              // Const: value
         int e = -1;                  // index of the event function deciding this operation
-        int table = -1;              // index of the table that is looked up
+        int table = -1;              // index of the table that is looked up, or of the delay
     };
 
 private:
@@ -147,12 +156,32 @@ private:
     std::vector<int> events_;  // slots holding the event functions
     std::vector<unsigned char> modes_;  // per event function: was it positive?
     std::vector<std::shared_ptr<const Table>> tables_;
+    std::vector<std::shared_ptr<DelayLine>> delays_;
     bool usesTime_ = false;
     mutable std::vector<double> val_, adj_;  // scratch (not thread safe)
 };
 
 // Evaluate text as a constant expression. Throws if it depends on unknowns or time.
 double evalConstant(const std::string& text, const std::map<std::string, double>& constants);
+
+// The past of the argument of one delay(e, td).
+struct DelayLine {
+    Program inner;  // e
+    double td = 0.0;
+    History history;
+
+    bool active() const { return !history.empty(); }
+    double value(double t) const { return history.delayed(t); }
+    // Start point (start = true: forget the past) or accepted step of an integration.
+    void record(double t, const Vector& x, bool start) {
+        if (start) {
+            history.clear();
+            history.setDelay(td);
+        }
+        history.add(t, inner.eval(x, t));
+        if (start) history.mark(t);
+    }
+};
 
 // An equation brought into the form  d/dt q(x) + f(x, t) = 0.
 struct DaeEquation {

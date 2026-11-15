@@ -1304,9 +1304,11 @@ void checkJacobian(Circuit& ckt, const Vector& x, const std::string& what) {
         ckt.evaluate(0.0, xm, LimitMode::Off, em);
         const Vector df = (ep.f - em.f) / (2.0 * h), dq = (ep.q - em.q) / (2.0 * h);
         const double scaleG = G.col(j).cwiseAbs().maxCoeff(), scaleC = C.col(j).cwiseAbs().maxCoeff();
+        // Rounding of the difference quotient itself.
+        const double roundF = 1e-13 * ep.f.cwiseAbs().maxCoeff() / h, roundQ = 1e-13 * ep.q.cwiseAbs().maxCoeff() / h;
         for (int i = 0; i < n; ++i) {
-            const double eg = std::abs(df[i] - G(i, j)) / (1e-5 * std::abs(G(i, j)) + 1e-6 * scaleG + 1e-30);
-            const double ec = std::abs(dq[i] - C(i, j)) / (1e-5 * std::abs(C(i, j)) + 1e-6 * scaleC + 1e-30);
+            const double eg = std::abs(df[i] - G(i, j)) / (1e-5 * std::abs(G(i, j)) + 1e-6 * scaleG + roundF + 1e-30);
+            const double ec = std::abs(dq[i] - C(i, j)) / (1e-5 * std::abs(C(i, j)) + 1e-6 * scaleC + roundQ + 1e-30);
             if (eg > 1.0 && eg > worstG)
                 std::cout << "    df(" << ckt.unknownName(i) << ")/d" << ckt.unknownName(j) << ": analytic "
                           << G(i, j) << ", finite difference " << df[i] << '\n';
@@ -1341,6 +1343,12 @@ void testDeviceModels() {
                 "cgdo": "0.2n", "cbd": "10f", "cbs": "10f"})json",
         R"json({"type": "pmos", "name": "X", "nodes": ["a", "b", "c", "d"], "vto": -0.8, "kp": 4e-5,
                 "gamma": 0.4, "lambda": 0.05, "w": "40u", "l": "1u", "tox": "10n", "cbd": "10f"})json",
+        R"json({"type": "nmos", "name": "X", "nodes": ["a", "b", "c", "d"], "level": "ekv", "vto": 0.6,
+                "kp": 2e-4, "gamma": 0.6, "lambda": 0.04, "theta": 0.2, "ucrit": 4e6, "w": "10u",
+                "l": "0.5u", "tox": "8n", "cgso": "0.2n", "cbd": "10f"})json",
+        R"json({"type": "pmos", "name": "X", "nodes": ["a", "b", "c", "d"], "level": "ekv", "vto": -0.7,
+                "kp": 8e-5, "gamma": 0.5, "lambda": 0.05, "theta": 0.1, "ucrit": 8e6, "w": "20u",
+                "l": "0.5u", "tox": "8n"})json",
         R"json({"type": "njf", "name": "X", "nodes": ["a", "b", "c"], "vto": -0.4, "beta": 1e-3,
                 "lambda": 0.02, "cgs": "3p", "cgd": "2p"})json",
         R"json({"type": "pjf", "name": "X", "nodes": ["a", "b", "c"], "vto": -0.3, "beta": 5e-4,
@@ -1791,6 +1799,69 @@ void testMoreDevices() {
     checkTrue(std::abs(drain(-3.0, 5.0, "njf")) < 1e-10, "jfet: pinched off below vto");
     checkNear(drain(1.0, -5.0, "pjf"), -drain(-1.0, 5.0, "njf"), 1e-12, "p-channel jfet mirrors the n-channel");
 
+    // --- MOSFET, EKV model ---
+    // Drain current for terminal voltages against ground (bulk at ground).
+    const auto mos = [](const std::string& params, double vg, double vd, double vs, Circuit** keep = nullptr,
+                        Vector* xk = nullptr) {
+        static std::unique_ptr<Netlist> held;
+        held = std::make_unique<Netlist>(parseNetlistText(R"json({"options": {"gmin": 1e-30}, "components": [
+            {"type": "V", "name": "VG", "nodes": ["g", "0"], "dc": )json" + std::to_string(vg) + R"json(},
+            {"type": "V", "name": "VD", "nodes": ["d", "0"], "dc": )json" + std::to_string(vd) + R"json(},
+            {"type": "V", "name": "VS", "nodes": ["s", "0"], "dc": )json" + std::to_string(vs) + R"json(},
+            {"type": "nmos", "name": "M1", "nodes": ["d", "g", "s", "0"], "is": 1e-30, )json" + params + "}]}"));
+        const Vector x = solveOperatingPoint(*held->circuit, held->options);
+        if (keep) *keep = held->circuit.get();
+        if (xk) *xk = x;
+        return -probe(*held->circuit, x, "i(VD)");
+    };
+    const double vt = 8.617333262e-5 * 300.15;
+    const std::string ekv = R"json("level": "ekv", "vto": 0.7, "kp": 1e-4, "w": "10u", "l": "1u")json";
+    const std::string lvl1 = R"json("vto": 0.7, "kp": 1e-4, "w": "10u", "l": "1u")json";
+    // Far above threshold the square law of level 1, exactly.
+    checkNear(mos(ekv, 2.7, 5.0, 0.0) / mos(lvl1, 2.7, 5.0, 0.0), 1.0, 1e-4, "ekv: square law in strong inversion");
+    checkNear(mos(ekv, 2.7, 0.5, 0.0) / mos(lvl1, 2.7, 0.5, 0.0), 1.0, 1e-4, "ekv: linear region");
+    // Below threshold an exponential with vt ln(10) per decade (n = 1 without body effect).
+    checkNear(mos(ekv, 0.4, 2.0, 0.0) / mos(ekv, 0.3, 2.0, 0.0), std::exp(0.1 / vt), 1e-2 * std::exp(0.1 / vt),
+              "ekv: subthreshold slope");
+    checkTrue(mos(lvl1, 0.4, 2.0, 0.0) < 1e-20 && mos(ekv, 0.4, 2.0, 0.0) > 1e-11, "ekv: current below threshold");
+    // With body effect the slope factor n = 1 + gamma / (2 sqrt(vp + phi + 4 vt)), vp ~ -phi/... near 0.
+    const std::string body = ekv + R"json(, "gamma": 0.6, "phi": 0.7)json";
+    const double slope = std::log(mos(body, 0.35, 2.0, 0.0) / mos(body, 0.25, 2.0, 0.0)) / 0.1;  // 1/(n vt)
+    checkTrue(1.0 / (slope * vt) > 1.2 && 1.0 / (slope * vt) < 1.5, "ekv: body effect flattens the subthreshold slope");
+    // Symmetric in drain and source, also for a lifted source.
+    checkNear(mos(ekv + R"json(, "lambda": 0.05, "theta": 0.1, "ucrit": 3e6)json", 2.0, 0.3, 1.1),
+              -mos(ekv + R"json(, "lambda": 0.05, "theta": 0.1, "ucrit": 3e6)json", 2.0, 1.1, 0.3), 1e-12,
+              "ekv: drain and source are interchangeable");
+    // Velocity saturation and mobility reduction in strong-inversion saturation.
+    const double id0 = mos(ekv, 2.7, 5.0, 0.0);
+    checkNear(mos(ekv + R"json(, "ucrit": 4e6)json", 2.7, 5.0, 0.0) / id0, 1.0 / (1.0 + 2.0 / 4.0), 1e-3,
+              "ekv: velocity saturation");
+    checkNear(mos(ekv + R"json(, "theta": 0.2)json", 2.7, 5.0, 0.0) / id0, 1.0 / (1.0 + 0.2 * 1.0), 1e-4,
+              "ekv: mobility reduction");
+    // Charges: they add up to zero, and the gate sees the whole oxide in strong inversion.
+    Circuit* mc = nullptr;
+    Vector xm;
+    mos(ekv + R"json(, "gamma": 0.5, "tox": "10n")json", 3.0, 0.0, 0.0, &mc, &xm);
+    Evaluation em;
+    mc->evaluate(0.0, xm, LimitMode::Off, em);
+    double qsum = 0.0, qabs = 0.0, cgg = 0.0;
+    for (const char* node : {"g", "d", "s"}) {
+        qsum += em.q[mc->findNode(node)];
+        qabs += std::abs(em.q[mc->findNode(node)]);
+    }
+    for (const Triplet& t : em.C)
+        if (t.row() == mc->findNode("g") && t.col() == mc->findNode("g")) cgg += t.value();
+    const double cox = 3.9 * 8.8541878128e-12 / 10e-9 * 10e-6 * 1e-6;
+    // The bulk is the ground node here: its charge is what is missing from the sum.
+    checkTrue(qabs > 1e-14 && std::abs(qsum) < qabs, "ekv: charges of gate, drain and source nearly cancel");
+    checkNear(cgg / cox, 1.0, 0.03, "ekv: gate capacitance in strong inversion is the oxide capacitance");
+    mos(ekv + R"json(, "gamma": 0.5, "tox": "10n")json", 0.2, 0.0, 0.0, &mc, &xm);
+    mc->evaluate(0.0, xm, LimitMode::Off, em);
+    cgg = 0.0;
+    for (const Triplet& t : em.C)
+        if (t.row() == mc->findNode("g") && t.col() == mc->findNode("g")) cgg += t.value();
+    checkTrue(cgg / cox > 0.2 && cgg / cox < 0.6, "ekv: gate capacitance dips in depletion");
+
     // --- nonlinear inductor from a flux expression ---
     // Linear flux: identical to an inductor. RL step response i = (1 - exp(-t R/L)) V/R.
     Netlist lin = parseNetlistText(R"json({
@@ -1980,6 +2051,143 @@ void testSteadyStateAndSensitivity() {
                       "analyses": [{"type": "sens", "analysis": {"type": "tran", "tstop": 1}}]})json", "sens_bad");
               }),
               "sens: an analysis without measurements is rejected");
+}
+
+void testDelaysAndLines() {
+    // --- transmission line ---
+    // Step into a matched line: half the source voltage enters at once and
+    // arrives at the end after the delay. Nothing is reflected.
+    const auto line = [](const std::string& load) {
+        return parseNetlistText(R"json({
+            "options": {"reltol": 1e-5},
+            "components": [
+                {"type": "V", "name": "V1", "nodes": ["src", "0"],
+                 "wave": {"type": "pulse", "v1": 0, "v2": 1, "delay": "1n", "rise": "0.1n"}},
+                {"type": "R", "name": "RS", "nodes": ["src", "in"], "value": 50},
+                {"type": "T", "name": "T1", "nodes": ["in", "0", "out", "0"], "z0": 50, "td": "5n"},
+                {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": )json" + load + "}]}");
+    };
+    const auto at = [](Netlist& nl, const Trace& tr, const std::string& what, double time) {
+        for (size_t k = 1; k < tr.t.size(); ++k)
+            if (tr.t[k] >= time) {
+                const double a = probe(*nl.circuit, tr.x[k - 1], what), b = probe(*nl.circuit, tr.x[k], what);
+                return a + (b - a) * (time - tr.t[k - 1]) / (tr.t[k] - tr.t[k - 1]);
+            }
+        return probe(*nl.circuit, tr.x.back(), what);
+    };
+    Netlist matched = line("50");
+    const Trace tm = transient(matched, 30e-9, IntegrationMethod::Bdf, false);
+    checkNear(at(matched, tm, "v(in)", 3e-9), 0.5, 1e-6, "line: half the voltage enters a matched line");
+    checkNear(at(matched, tm, "v(out)", 5e-9), 0.0, 1e-9, "line: nothing arrives before the delay");
+    checkNear(at(matched, tm, "v(out)", 8e-9), 0.5, 1e-6, "line: the step arrives after the delay");
+    checkNear(at(matched, tm, "v(in)", 25e-9), 0.5, 1e-6, "line: no reflection from a matched load");
+    checkNear(at(matched, tm, "i(T1)", 25e-9), 0.01, 1e-8, "line: current into the line");
+
+    // Open end: the wave is reflected with the same sign and doubles the
+    // voltage at the end; back at the (matched) source it completes the step.
+    Netlist open = line("1e12");
+    const Trace to = transient(open, 30e-9, IntegrationMethod::Bdf, false);
+    checkNear(at(open, to, "v(out)", 8e-9), 1.0, 1e-6, "line: voltage doubles at an open end");
+    checkNear(at(open, to, "v(in)", 8e-9), 0.5, 1e-6, "line: the reflection has not come back yet");
+    checkNear(at(open, to, "v(in)", 14e-9), 1.0, 1e-6, "line: reflection back at the source after 2 td");
+
+    // Mismatched at both ends: the end voltage goes through the bounce diagram.
+    // Source 10 ohm, load 200 ohm on 50 ohm: v = a (1 + gl) sum (gs gl)^k.
+    Netlist bounce = parseNetlistText(R"json({
+        "options": {"reltol": 1e-5},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["src", "0"],
+             "wave": {"type": "pulse", "v1": 0, "v2": 1, "delay": "1n", "rise": "0.1n"}},
+            {"type": "R", "name": "RS", "nodes": ["src", "in"], "value": 10},
+            {"type": "T", "name": "T1", "nodes": ["in", "0", "out", "0"], "z0": 50, "td": "5n"},
+            {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 200}]})json");
+    const Trace tb = transient(bounce, 40e-9, IntegrationMethod::Bdf, false);
+    const double a0 = 50.0 / 60.0, gl = 150.0 / 250.0, gs = -40.0 / 60.0;
+    checkNear(at(bounce, tb, "v(out)", 9e-9), a0 * (1 + gl), 1e-6, "line: first arrival at a mismatched end");
+    checkNear(at(bounce, tb, "v(out)", 19e-9), a0 * (1 + gl) * (1 + gs * gl), 1e-6, "line: second arrival");
+    checkNear(at(bounce, tb, "v(out)", 29e-9), a0 * (1 + gl) * (1 + gs * gl + gs * gs * gl * gl), 1e-6,
+              "line: third arrival");
+    // At DC the line is a wire.
+    Netlist dc = parseNetlistText(R"json({"components": [
+        {"type": "V", "name": "V1", "nodes": ["src", "0"], "dc": 2.1},
+        {"type": "R", "name": "RS", "nodes": ["src", "in"], "value": 10},
+        {"type": "T", "name": "T1", "nodes": ["in", "0", "out", "0"], "z0": 50, "td": "5n"},
+        {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 200}]})json");
+    const Vector xdc = solveOperatingPoint(*dc.circuit, dc.options);
+    checkNear(probe(*dc.circuit, xdc, "v(out)"), 2.0, 1e-9, "line: a wire at DC");
+    checkNear(probe(*dc.circuit, xdc, "v(in)"), 2.0, 1e-9, "line: a wire at DC, input");
+
+    // AC: a quarter-wave line transforms the load to z0^2 / RL.
+    Netlist qw = parseNetlistText(R"json({"components": [
+        {"type": "V", "name": "V1", "nodes": ["src", "0"], "ac": 1},
+        {"type": "R", "name": "RS", "nodes": ["src", "in"], "value": 25},
+        {"type": "T", "name": "T1", "nodes": ["in", "0", "out", "0"], "z0": 50, "f": "100meg", "nl": 0.25},
+        {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 100}]})json");
+    const Vector xq = solveOperatingPoint(*qw.circuit, qw.options);
+    const Probe pin = parseProbe(*qw.circuit, "v(in)"), pout = parseProbe(*qw.circuit, "v(out)");
+    runAc(*qw.circuit, xq, {100e6, 200e6, 50e6}, [&](double f, const Eigen::VectorXcd& x) {
+        const std::complex<double> vin = pin.phasor(x), vout = pout.phasor(x);
+        if (f == 100e6) {
+            checkNear(std::abs(vin), 0.5, 1e-9, "line: quarter-wave transformer, 100 ohm appear as 25 ohm");
+            // The power is passed on: |vout|^2 / 100 = |vin|^2 / 25.
+            checkNear(std::abs(vout), 1.0, 1e-9, "line: quarter-wave transformer, output voltage");
+            checkNear(std::arg(vout), -kPi / 2.0, 1e-9, "line: quarter-wave transformer, phase");
+        } else if (f == 200e6) {
+            checkNear(std::abs(vin), 0.8, 1e-9, "line: a half-wave line repeats its load");
+        } else {
+            // 1/8 wave: zin = z0 (zl + j z0) / (z0 + j zl)
+            const std::complex<double> j(0, 1), zin = 50.0 * (100.0 + j * 50.0) / (50.0 + j * 100.0);
+            checkNear(std::abs(vin - zin / (25.0 + zin)), 0.0, 1e-9, "line: input impedance of a 1/8-wave line");
+        }
+    });
+
+    // --- delay() in expressions ---
+    // A delayed copy of a signal.
+    Netlist copy = parseNetlistText(R"json({
+        "options": {"reltol": 1e-6},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "wave": {"type": "sin", "amplitude": 1, "freq": "1k"}},
+            {"type": "B", "name": "B1", "nodes": ["out", "0"], "v": "2 * delay(v(in), 0.3m)"},
+            {"type": "R", "name": "R1", "nodes": ["out", "0"], "value": "1k"}]})json");
+    const Trace tc = transient(copy, 3e-3, IntegrationMethod::Bdf, false);
+    double worst = 0.0;
+    for (size_t k = 0; k < tc.t.size(); ++k) {
+        const double expected = tc.t[k] < 0.3e-3 ? 0.0 : 2.0 * std::sin(2.0 * kPi * 1e3 * (tc.t[k] - 0.3e-3));
+        worst = std::max(worst, std::abs(probe(*copy.circuit, tc.x[k], "v(out)") - expected));
+    }
+    checkNear(worst, 0.0, 2e-3, "delay: a source follows its input after the delay");
+
+    // Delay differential equation x' = -x(t - 1) with x = 1 up to t = 0:
+    // x = 1 - t on [0, 1], then 1 - t + (t - 1)^2 / 2 on [1, 2], ...
+    Netlist dde = parseNetlistText(R"json({
+        "options": {"reltol": 1e-6},
+        "variables": {"x": {"init": 1}},
+        "equations": ["der(x) = -delay(x, 1)"]})json");
+    const Trace td = transient(dde, 3.0, IntegrationMethod::Bdf, true);
+    worst = 0.0;
+    for (size_t k = 0; k < td.t.size(); ++k) {
+        const double t = td.t[k];
+        const double expected = t <= 1.0 ? 1.0 - t
+                                : t <= 2.0 ? 1.0 - t + (t - 1.0) * (t - 1.0) / 2.0
+                                           : 1.0 - t + (t - 1.0) * (t - 1.0) / 2.0 - std::pow(t - 2.0, 3) / 6.0;
+        worst = std::max(worst, std::abs(probe(*dde.circuit, td.x[k], "x") - expected));
+    }
+    checkNear(worst, 0.0, 1e-3, "delay: delay differential equation");
+    checkTrue(td.t.size() > 10, "delay: the step size is limited by the delay");
+
+    // Outside of a time integration the delay is transparent.
+    Netlist op = parseNetlistText(R"json({
+        "variables": {"y": {"guess": 0}},
+        "components": [{"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 3},
+                       {"type": "R", "name": "R1", "nodes": ["a", "0"], "value": 1}],
+        "equations": ["y = 2 * delay(v(a), 1m)"]})json");
+    const Vector xo = solveOperatingPoint(*op.circuit, op.options);
+    checkNear(probe(*op.circuit, xo, "y"), 6.0, 1e-9, "delay: no effect at the operating point");
+    checkTrue(throws([] {
+                  parseNetlistText(R"json({"variables": {"y": {"guess": 0}},
+                                           "equations": ["y = delay(time, y)"]})json");
+              }),
+              "delay: a variable delay time is rejected");
 }
 
 void testUniformOutput() {
@@ -2218,6 +2426,7 @@ int main() {
         {"parameter studies", testParameterStudies},
         {"steady state and sensitivity", testSteadyStateAndSensitivity},
         {"jfet, flux element, functions", testMoreDevices},
+        {"delays and transmission lines", testDelaysAndLines},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},

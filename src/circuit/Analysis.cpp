@@ -70,6 +70,7 @@ void runAc(Circuit& ckt, const Vector& xop, const std::vector<double>& freqs,
         trip.clear();
         for (const Triplet& g : ev.G) trip.emplace_back(g.row(), g.col(), cd(g.value(), 0.0));
         for (const Triplet& c : ev.C) trip.emplace_back(c.row(), c.col(), cd(0.0, w * c.value()));
+        for (const auto& d : ckt.devices()) d->stampAcMatrix(w, trip);
         A.setFromTriplets(trip.begin(), trip.end());
         if (!analyzed) {
             lu.analyzePattern(A);
@@ -98,6 +99,7 @@ void runNoise(Circuit& ckt, const Vector& xop, const std::vector<double>& freqs,
     for (const auto& d : ckt.devices()) d->noiseSources(sources);
 
     Eigen::VectorXcd eout = Eigen::VectorXcd::Zero(n), bin = Eigen::VectorXcd::Zero(n);
+    std::vector<Eigen::Triplet<cd>> extra;
     if (outPos >= 0) eout[outPos] += 1.0;
     if (outNeg >= 0) eout[outNeg] -= 1.0;
     if (input) input->stampUnit(bin);
@@ -112,6 +114,9 @@ void runNoise(Circuit& ckt, const Vector& xop, const std::vector<double>& freqs,
         trip.clear();  // transposed system
         for (const Triplet& g : ev.G) trip.emplace_back(g.col(), g.row(), cd(g.value(), 0.0));
         for (const Triplet& c : ev.C) trip.emplace_back(c.col(), c.row(), cd(0.0, w * c.value()));
+        extra.clear();
+        for (const auto& d : ckt.devices()) d->stampAcMatrix(w, extra);
+        for (const auto& e : extra) trip.emplace_back(e.col(), e.row(), e.value());
         At.setFromTriplets(trip.begin(), trip.end());
         if (!analyzed) {
             lu.analyzePattern(At);

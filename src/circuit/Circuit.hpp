@@ -93,6 +93,11 @@ public:
     void eventFunctions(double t, const Vector& x, Vector& g) override;
     bool eventUpdate(double t, Vector& x, bool initial) override;
     void setLiveModes(bool on) override { liveModes_ = on; }
+    void acceptStep(double t, const Vector& x, bool start) override;
+    void noteDiscontinuity(double t) override;
+    // History of a delay() in an expression compiled against this circuit.
+    void addDelay(const std::shared_ptr<expr::DelayLine>& line) const { delays_.push_back(line); }
+    bool hasHistory() const;  // delays or transmission lines: the future depends on more than the state
     bool setSourceScale(double scale) override {
         srcScale_ = scale;
         return true;
@@ -120,6 +125,8 @@ private:
     std::unordered_map<std::string, int> nodes_;
     std::unordered_map<std::string, int> variables_;
     std::vector<std::unique_ptr<Device>> devices_;
+    // Delays of all expressions (also of outputs, which come and go).
+    mutable std::vector<std::weak_ptr<expr::DelayLine>> delays_;
     std::unordered_map<std::string, Device*> deviceByName_;
     bool finalized_ = false;
     int eventCount_ = 0;

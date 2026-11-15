@@ -4,7 +4,7 @@
     python3 tools/spice2json.py amplifier.cir -o amplifier.json
     ./build/esim amplifier.json
 
-Understood: R C L K V I E G F H D Q M J X S, .model, .subckt/.ends, .param,
+Understood: R C L K V I E G F H D Q M J X S T, .model, .subckt/.ends, .param,
 .op .dc .ac .tran .noise .four, .ic .nodeset .temp .options .print/.plot.
 Sources: DC, AC, SIN, PULSE, PWL. Everything else is reported on stderr and
 left out. Names and nodes are converted to lower case (SPICE ignores case).
@@ -174,6 +174,12 @@ def element(line, models, switch_models):
         comp.update(switch_models.get(node(4), {}))
         if node(4) not in switch_models:
             warn(f"{name}: switch model {node(4)} not found, defaults are used")
+        return comp
+    if kind == "T":  # lossless line: Z0 and TD, or F and NL
+        comp = {"type": "T", "name": name, "nodes": [node(0), node(1), node(2), node(3)]}
+        for key in ("z0", "td", "f", "nl"):
+            if key in named:
+                comp[key] = named[key]
         return comp
     if kind == "X":
         comp = {"type": "X", "name": name, "subcircuit": pos[-1].lower(),

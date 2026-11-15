@@ -1,0 +1,37 @@
+{
+  // A fast edge on a 50 ohm line that is terminated wrongly at both ends: a
+  // driver with 10 ohm output resistance and a high-impedance receiver. The
+  // edge is reflected back and forth; the receiver sees 5.8 V instead of
+  // 3.3 V, followed by ringing with a period of four delays. With the series
+  // resistor "RT" raised to 40 ohm (source matching) the ringing disappears.
+  "title": "Reflections on a mismatched transmission line",
+
+  "parameters": { "Z0": 50, "TD": "2n", "RT": 0 },
+
+  "components": [
+    { "type": "V", "name": "VDRV", "nodes": ["drv", "0"],
+      "wave": { "type": "pulse", "v1": 0, "v2": 3.3, "delay": "1n", "rise": "0.2n", "fall": "0.2n",
+                "width": "30n", "period": "60n" } },
+    { "type": "R", "name": "ROUT", "nodes": ["drv", "a"], "value": 10 },
+    { "type": "R", "name": "RT", "nodes": ["a", "near"], "value": "RT + 1m" },
+
+    // nodes: port 1 (+, -), port 2 (+, -)
+    { "type": "T", "name": "T1", "nodes": ["near", "0", "far", "0"], "z0": "Z0", "td": "TD" },
+
+    { "type": "R", "name": "RIN", "nodes": ["far", "0"], "value": "100k" },
+    { "type": "C", "name": "CIN", "nodes": ["far", "0"], "value": "2p" }
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": "60n",
+      "measure": {
+        "overshoot": { "max": "v(far)" },
+        "undershoot": { "min": "v(far)", "from": "5n", "to": "30n" }
+      } },
+    { "type": "tran", "name": "matched", "tstop": "60n",
+      "param_sweep": { "param": "RT", "values": [0, 40] },
+      "measure": { "overshoot": { "max": "v(far)" } } }
+  ],
+
+  "outputs": ["v(near)", "v(far)"]
+}

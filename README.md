@@ -63,6 +63,9 @@ Beispiele in [`examples/`](examples):
 | `monte_carlo_filter.json` | Toleranzanalyse (Monte Carlo) und verschachtelter Sweep |
 | `fit_diode.json` | Modellparameter an eine gemessene Kennlinie anpassen |
 | `sensitivity.json` | Empfindlichkeiten von Arbeitspunkt und Verstärkung einer Transistorstufe |
+| `mosfet_subthreshold.json` | EKV-Modell und Level 1 im Vergleich, Kennlinie über acht Dekaden |
+| `transmission_line.json` | Reflexionen auf einer fehlangepassten Leitung |
+| `dead_time_control.json` | Regelkreis mit Totzeit (`delay`) |
 | `saturating_inductor.json` | nichtlineare Induktivität über ihren Fluss, eigene Funktion |
 
 ### Ergebnisse plotten
@@ -124,8 +127,8 @@ Messgrößen, Statistik).
     python3 tools/spice2json.py examples/spice/amplifier.cir -o amplifier.json
     ./build/esim amplifier.json
 
-Übersetzt werden die Bauteile R, C, L, K, V, I, E, G, F, H, D, Q, M, J, X und
-S, die Quellenformen DC, AC, SIN, PULSE und PWL sowie `.model`, `.subckt`,
+Übersetzt werden die Bauteile R, C, L, K, V, I, E, G, F, H, D, Q, M, J, X, S
+und T, die Quellenformen DC, AC, SIN, PULSE und PWL sowie `.model`, `.subckt`,
 `.param`, `.op`, `.dc`, `.ac`, `.tran`, `.noise`, `.four`, `.ic`, `.nodeset`,
 `.temp`, `.options` und `.print`. Namen und Knoten werden kleingeschrieben
 (SPICE unterscheidet keine Groß- und Kleinschreibung). Was nicht übersetzt
@@ -196,6 +199,7 @@ eine Zahl erwartet wird (dort nur mit Parametern).
 | Fallunterscheidung | `if(bedingung, dann, sonst)` |
 | Tabellen | `name(x)` für eine unter `tables` definierte Kennlinie |
 | eigene Funktionen | `name(a, b)` für eine unter `functions` definierte Funktion |
+| Totzeit | `delay(x, td)`: der Wert, den `x` vor der Zeit `td` hatte |
 | Namen | Variablen, Parameter, `t` (oder `time`), `pi` |
 | Schaltungsgrößen | `v(knoten)`, `v(a,b)`, `i(bauteil)` |
 | Zeitableitung | `der(ausdruck)`, nur in Gleichungen |
@@ -222,6 +226,26 @@ der Parameter. Funktionen dürfen Parameter der Eingabedatei und andere
 Funktionen verwenden; sie dürfen sich nicht selbst aufrufen und keine
 eingebaute Funktion überschreiben. In Zahlenwerten (Bauteilwerte, `parameters`)
 stehen sie nicht zur Verfügung.
+
+### Totzeiten
+
+`delay(x, td)` liefert den Wert, den der Ausdruck `x` vor der konstanten Zeit
+`td` hatte. Damit lassen sich Transportvorgänge, Rechenzeiten eines Reglers
+oder Differentialgleichungen mit Gedächtnis schreiben:
+
+```jsonc
+"equations": [ "T * der(y) = K * delay(u, Td) - y" ]
+```
+
+- Vor dem Start gilt der Wert bei t = 0 (das System war in Ruhe).
+- Im Arbeitspunkt und in der AC-Analyse ist `delay(x, td)` gleich `x`.
+- Kein Zeitschritt ist länger als die kleinste Totzeit. Zwischen den
+  gespeicherten Zeitpunkten wird kubisch interpoliert, an Knicken linear;
+  Knicke und Sprünge setzen eine Totzeit später einen Haltepunkt.
+- `td` muss eine positive Konstante sein (Zahl oder Parameter).
+
+`examples/dead_time_control.json` zeigt einen Regelkreis mit Totzeit. Die
+Analyse `pss` unterstützt keine Totzeiten und Leitungen.
 
 ### Tabellen
 
@@ -406,12 +430,13 @@ Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibun
 | `B`, `behavioral` | Verhaltensquelle | +, − | genau eines von `i`, `v`, `q`, `phi` (Ausdruck) |
 | `J`, `njf`, `pjf` | Sperrschicht-FET | D, G, S | `vto` `beta` `lambda` `is` `cgs` `cgd` `pb` `fc` `kf` `af` |
 | `K`, `coupling` | magnetische Kopplung | – | `inductors`: zwei Spulennamen, `k` (−1 < k < 1) |
+| `T`, `tline` | verlustlose Leitung | Tor 1 (+, −), Tor 2 (+, −) | `z0`, `td` (oder `f` und `nl` wie in SPICE) |
 | `X`, `subcircuit` | Instanz eines Subcircuits | Anschlüsse in der Reihenfolge von `ports` | `subcircuit`, `parameters` |
 | `S`, `switch` | idealer Schalter | a, b [, Steuer+, Steuer−] | `control` (Ausdruck, bei zwei Knoten), `vt`, `vh`, `ron`, `roff`, `initial` |
 | `ideal_diode` | ideale Diode | Anode, Kathode | `vf`, `ron`, `roff` |
 | `D`, `diode` | Diode | Anode, Kathode | `is` `n` `rs` `cj0` `vj` `m` `fc` `tt` `bv` `ibv` `eg` `xti` `kf` `af` |
 | `Q`, `npn`, `pnp` | Bipolartransistor | C, B, E | `is` `bf` `br` `nf` `nr` `vaf` `var` `ikf` `ikr` `ise` `ne` `isc` `nc` `rb` `rc` `re` `cje` `vje` `mje` `cjc` `vjc` `mjc` `tf` `tr` `fc` `eg` `xti` `xtb` `kf` `af` |
-| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` `kf` `af` |
+| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` `kf` `af`; mit `"level": "ekv"` zusätzlich `theta` `ucrit` |
 
 Verhaltensquelle `B`:
 
@@ -485,8 +510,28 @@ Modellumfang:
   Kanallängenmodulation, Bulk-Dioden, Überlapp- und Sperrschichtkapazitäten.
   Mit `tox` (Oxiddicke) kommt die Ladung des Kanals hinzu: ladungserhaltend,
   in Sättigung 40 : 60 auf Drain und Source verteilt, Gate-Kapazität 2/3·Cox in
-  Sättigung und Cox im Widerstandsbereich und unterhalb der Schwelle. Für
-  Kurzkanal-Transistoren (BSIM) ist das Modell nicht gedacht.
+  Sättigung und Cox im Widerstandsbereich und unterhalb der Schwelle.
+- **MOSFET mit `"level": "ekv"`**: ladungsbasiertes Modell nach
+  Enz, Krummenacher und Vittoz. Ein einziger glatter Ausdruck beschreibt den
+  Strom von schwacher bis starker Inversion: unterhalb der Schwelle fällt er
+  exponentiell (n·Vt·ln 10 je Dekade, n aus `gamma`), weit darüber gilt das
+  Quadratgesetz von Level 1. Dazu Beweglichkeitsreduktion durch das Gate-Feld
+  (`theta` in 1/V), Geschwindigkeitssättigung (`ucrit` in V/m, wirkt mit der
+  Kanallänge) und Kanallängenmodulation (`lambda`). Das Modell ist symmetrisch
+  in Drain und Source, alle Ableitungen sind stetig, und die Ladungen (mit
+  `tox`) stammen aus demselben Ansatz. Es ersetzt kein BSIM: Kurzkanaleffekte
+  wie DIBL, Gate-Ströme oder die Parametersätze der Halbleiterhersteller gibt
+  es nicht. Wo Level 1 unterhalb der Schwelle exakt 0 liefert (Leckströme,
+  Schaltungen im Unterschwellbetrieb, Analogschalter nahe 0 V), ist es die
+  bessere Wahl; `examples/mosfet_subthreshold.json` vergleicht beide.
+- **Leitung** (`T`): ideale, verlustlose Leitung mit Wellenwiderstand `z0` und
+  Laufzeit `td`. In der Zeitsimulation wird die Vorgeschichte der Wellen an
+  beiden Toren gespeichert; kein Schritt ist länger als `td`, und Flanken
+  setzen an ihrer Ankunftszeit einen Haltepunkt. Im Arbeitspunkt ist die
+  Leitung eine Verbindung, in der AC-Analyse wirkt die Laufzeit exakt als
+  Phasendrehung. `i(T1)` ist der Strom in Tor 1. Verluste lassen sich durch
+  Widerstände vor und hinter der Leitung oder durch eine Kette aus RLC-Gliedern
+  (als Subcircuit) annähern.
 - **Temperatur**: `options.temp` ist die Temperatur der Schaltung, `tnom`
   (Standard 27 °C) die, für die die Modellparameter gelten. Skaliert werden die
   Sättigungsströme aller pn-Übergänge (`eg`, `xti`), die Stromverstärkung
@@ -973,8 +1018,9 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   Ordnungen aus, die numerisch dämpfen. Für Schwingkreise hoher Güte `trap`
   verwenden.
 - **Schaltungen**: Die Halbleitermodelle entsprechen den
-  klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET); moderne
-  Kurzkanal-Modelle und Leitungen fehlen.
+  klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET), dazu ein
+  EKV-artiges MOSFET-Modell. Industrielle Kurzkanal-Modelle (BSIM) und
+  verlustbehaftete Leitungen fehlen.
 - **Große Schaltungen**: Getestet mit einigen tausend Knoten. Es gibt keine
   Parallelisierung und kein Überspringen ruhender Schaltungsteile; die
   Rechenzeit wächst mit der Zahl der Bauteile mal der Zahl der Zeitschritte.

@@ -20,6 +20,7 @@ enum class Program::Op : unsigned char {
     Exp, Log, Log10, Sqrt, Abs, Sign,
     Min, Max, Atan2,
     Lookup,
+    Delay,
 };
 
 AstPtr makeNumber(double value);
@@ -315,7 +316,8 @@ double applyOp(Op op, double a, double b, double c) {
         case Op::Const:
         case Op::Var:
         case Op::Time:
-        case Op::Lookup: break;
+        case Op::Lookup:
+        case Op::Delay: break;
     }
     return 0.0;
 }
@@ -354,9 +356,9 @@ class Compiler {
 public:
     Compiler(const Symbols& symbols, std::vector<Instr>& code, std::vector<int>& vars,
              std::vector<int>& events, std::vector<std::shared_ptr<const Table>>& tables,
-             bool& usesTime)
+             std::vector<std::shared_ptr<DelayLine>>& delays, bool& usesTime)
         : symbols_(symbols), code_(code), vars_(vars), events_(events), tables_(tables),
-          usesTime_(usesTime) {}
+          delays_(delays), usesTime_(usesTime) {}
 
     int emit(const AstPtr& n) {
         switch (n->kind) {
@@ -379,6 +381,7 @@ public:
             case Ast::Kind::Call: {
                 if (n->name == "der")
                     throw std::runtime_error("der() is only allowed in equations");
+                if (n->name == "delay") return delay(*n);
                 const Function* fn = findFunction(n->name);
                 if (!fn) {
                     if (const FunctionDef* def = symbols_.function(n->name)) return call(*def, *n);
@@ -431,6 +434,29 @@ private:
         const int slot = emit(body);
         --depth_;
         return slot;
+    }
+
+    // delay(e, td): the argument is compiled twice, into this program (its
+    // present value, used outside of a time integration) and into a program
+    // of its own from which the history is recorded.
+    int delay(const Ast& n) {
+        if (n.args.size() != 2) throw std::runtime_error("delay() takes two arguments: delay(x, td)");
+        const int tdSlot = emit(n.args[1]);
+        if (code_[tdSlot].op != Op::Const || !(code_[tdSlot].k > 0.0))
+            throw std::runtime_error("delay(x, td): td must be a positive constant");
+        const int arg = emit(n.args[0]);
+        if (code_[arg].op == Op::Const) return arg;
+        auto line = std::make_shared<DelayLine>();
+        line->inner = Program::compile(n.args[0], symbols_);
+        line->td = code_[tdSlot].k;
+        if (!symbols_.addDelay(line)) throw std::runtime_error("delay() is not available here");
+        Instr in{Op::Delay};
+        in.a = arg;
+        in.table = static_cast<int>(delays_.size());
+        delays_.push_back(line);
+        usesTime_ = true;
+        code_.push_back(in);
+        return static_cast<int>(code_.size()) - 1;
     }
 
     int constant(double v) {
@@ -505,6 +531,7 @@ private:
     std::vector<int>& vars_;
     std::vector<int>& events_;
     std::vector<std::shared_ptr<const Table>>& tables_;
+    std::vector<std::shared_ptr<DelayLine>>& delays_;
     bool& usesTime_;
     int depth_ = 0;  // nesting of user-defined function calls
 };
@@ -683,7 +710,9 @@ AstPtr mapLeaves(const AstPtr& ast, const std::function<AstPtr(const Ast&)>& rep
     return copy;
 }
 
-bool isBuiltinFunction(const std::string& name) { return findFunction(name) != nullptr || name == "der"; }
+bool isBuiltinFunction(const std::string& name) {
+    return findFunction(name) != nullptr || name == "der" || name == "delay";
+}
 
 AstPtr parseExpression(const std::string& text) { return Parser(text).expression(); }
 
@@ -706,7 +735,7 @@ int ConstantSymbols::branchCurrent(const std::string& component) const {
 
 Program Program::compile(const AstPtr& ast, const Symbols& symbols) {
     Program p;
-    Compiler compiler(symbols, p.code_, p.vars_, p.events_, p.tables_, p.usesTime_);
+    Compiler compiler(symbols, p.code_, p.vars_, p.events_, p.tables_, p.delays_, p.usesTime_);
     const int result = compiler.emit(ast);
     // The result has to be the last slot (a folded constant may sit earlier).
     if (result != static_cast<int>(p.code_.size()) - 1) p.code_.push_back(p.code_[result]);
@@ -729,6 +758,11 @@ void Program::run(const Vector& x, double t, bool frozen) const {
         if (in.op == Op::Lookup) {
             double slope;
             val_[i] = tables_[in.table]->eval(a, slope);
+            continue;
+        }
+        if (in.op == Op::Delay) {
+            const DelayLine& line = *delays_[in.table];
+            val_[i] = line.active() ? line.value(t) : a;
             continue;
         }
         const double b = in.b >= 0 ? val_[in.b] : 0.0;
@@ -809,6 +843,9 @@ double Program::evalGrad(const Vector& x, double t, std::vector<double>& grad,
                 adj_[in.a] += w * slope;
                 break;
             }
+            case Op::Delay:  // a value from the past does not depend on the present
+                if (!delays_[in.table]->active()) adj_[in.a] += w;
+                break;
             case Op::Sin: adj_[in.a] += w * std::cos(a); break;
             case Op::Cos: adj_[in.a] -= w * std::sin(a); break;
             case Op::Tan: adj_[in.a] += w * (1.0 + v * v); break;

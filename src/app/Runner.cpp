@@ -535,6 +535,11 @@ void runPss(Context& c, const json& a) {
 
     Circuit& ckt = c.ckt();
     const int n = ckt.size();
+    // With delays the future depends on a whole stretch of the past, not on
+    // the state at one instant, which is what the search works with.
+    if (ckt.hasHistory())
+        throw std::runtime_error("pss: circuits with delays or transmission lines are not supported; "
+                                 "use \"tran\" over enough periods");
     ckt.setTransientMode(true);
     int simulated = 0, iterations = 0;
     long steps = 0;

@@ -1,0 +1,36 @@
+{
+  // A control loop with dead time, written as equations: a first-order plant
+  // whose input acts only after the transport delay Td (a conveyor belt, a
+  // long pipe), and a PI controller. delay(u, Td) is the value u had Td ago.
+  //
+  // Dead time limits the usable gain: the sweep shows a sluggish, a well
+  // damped and an almost unstable loop.
+  "title": "PI control of a plant with dead time",
+
+  "parameters": { "K": 1, "T": 10, "Td": 2, "Kp": 2, "Ti": 10 },
+
+  "variables": {
+    "y":  { "init": 0 },     // plant output
+    "xi": { "init": 0 },     // integrator of the controller
+    "u":  { "guess": 0 }     // controller output
+  },
+
+  "equations": [
+    "T * der(y) = K * delay(u, Td) - y",
+    "der(xi) = (setpoint(time) - y) / Ti",
+    "u = Kp * ((setpoint(time) - y) + xi)"
+  ],
+
+  // Setpoint: a step at t = 5.
+  "functions": { "setpoint(t)": "if(t >= 5, 1, 0)" },
+
+  "analyses": [
+    { "type": "tran", "tstop": 100, "uic": true,
+      "param_sweep": { "param": "Kp", "values": [1, 3, 7] },
+      "outputs": ["y", "u"],
+      "measure": {
+        "overshoot": { "max": "y" },
+        "settled":   { "final": "y" }
+      } }
+  ]
+}

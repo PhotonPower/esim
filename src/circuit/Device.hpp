@@ -132,6 +132,17 @@ public:
 
     virtual double maxStep() const { return std::numeric_limits<double>::infinity(); }
 
+    // Start point (start = true) and accepted steps of a time integration, for
+    // devices that refer to their past.
+    virtual void acceptStep(double /*t*/, const Vector& /*x*/, bool /*start*/) {}
+    virtual bool usesHistory() const { return false; }
+    virtual void noteDiscontinuity(double /*t*/) {}
+
+    // Entries of the AC matrix beyond G + jwC of the operating point
+    // (frequency-dependent elements).
+    virtual void stampAcMatrix(double /*omega*/,
+                               std::vector<Eigen::Triplet<std::complex<double>>>& /*out*/) const {}
+
     // Events, see DaeSystem. eventFunctions() writes eventCount() values to g.
     virtual int eventCount() const { return 0; }
     virtual void eventFunctions(double /*t*/, const Vector& /*x*/, double* /*g*/) const {}

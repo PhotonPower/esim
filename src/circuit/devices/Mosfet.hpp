@@ -26,6 +26,9 @@ struct MosfetParams {
     double tcv = 0.0;     // temperature coefficient of the threshold voltage [V/K]
     double kf = 0.0;      // flicker noise coefficient
     double af = 1.0;      // flicker noise exponent
+    bool ekv = false;     // charge-based model valid from weak to strong inversion
+    double theta = 0.0;   // ekv: mobility reduction by the gate field [1/V]
+    double ucrit = 0.0;   // ekv: critical field of velocity saturation [V/m]; 0: none
 };
 
 // MOSFET, SPICE level 1 (Shichman-Hodges) with body effect, channel length
@@ -41,6 +44,22 @@ struct MosfetParams {
 // to zero in every region (charge conservation); the charge of the depletion
 // layer under the channel is neglected.
 // The mobility falls with temperature: kp ~ T^-1.5.
+//
+// With "level": "ekv" the channel follows the charge-based EKV model instead.
+// All voltages refer to the bulk, the device is symmetric in drain and source,
+// and one smooth expression covers weak, moderate and strong inversion:
+//     vp  = vg' - phi - gamma (sqrt(vg' + (gamma/2)^2) - gamma/2)    pinch-off voltage
+//     n   = 1 + gamma / (2 sqrt(vp + phi + 4 vt))                    slope factor
+//     if  = ln^2(1 + exp((vp - vs) / (2 vt))),  ir likewise with vd  forward, reverse current
+//     id  = 2 n beta vt^2 (if - ir)
+// with vg' = vg - vto + phi + gamma sqrt(phi). Below threshold the current
+// falls exponentially (n vt ln 10 per decade), far above it follows the square
+// law beta/(2 n) (vg - vto - n vs)^2. On top of this:
+//     theta   beta / (1 + theta * mean overdrive of the channel)     mobility reduction
+//     ucrit   id / (1 + vds_eff / (ucrit L))                         velocity saturation
+//     lambda  id (1 + lambda |vds|)                                  channel length modulation
+// The charges are those of the same model (they add up to zero), so the
+// capacitances are continuous through all regions as well.
 class Mosfet final : public Device {
 public:
     // polarity: +1 nmos, -1 pmos
@@ -61,12 +80,15 @@ private:
     void addBulkJunction(StampContext& ctx, Local& m, PnJunction& j, int to, double cj0);
     void addLinearCap(StampContext& ctx, Local& m, int a, int b, double c) const;
     void addChannelCharge(Local& m, int D, int S, double a, double vds, double daDvbs) const;
+    void stampLevel1(StampContext& ctx, Local& m);
+    void stampEkv(StampContext& ctx, Local& m);
 
     int d_, g_, s_, b_;
     double pol_;
     MosfetParams p_;
     double beta_, vto_;  // vto_ normalized to the n-channel equations
     double cox_ = 0.0;   // gate oxide capacitance cox * W * L [F]
+    double vt_ = 0.0;    // thermal voltage
     bool hasCharge_ = false;  // any capacitance at all
     PnJunction jbd_, jbs_;
 };

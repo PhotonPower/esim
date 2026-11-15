@@ -8,6 +8,64 @@
 
 namespace esim {
 
+namespace {
+
+// Value with its derivatives with respect to three variables (forward-mode
+// differentiation), so that a model can be written down as a formula.
+struct Dual {
+    double v = 0.0;
+    double d[3] = {0.0, 0.0, 0.0};
+    Dual() = default;
+    Dual(double value) : v(value) {}  // NOLINT: constants convert implicitly
+    static Dual variable(double value, int k) {
+        Dual r(value);
+        r.d[k] = 1.0;
+        return r;
+    }
+    // f(v) with derivative df.
+    Dual chain(double f, double df) const {
+        Dual r(f);
+        for (int k = 0; k < 3; ++k) r.d[k] = df * d[k];
+        return r;
+    }
+};
+Dual operator+(const Dual& a, const Dual& b) {
+    Dual r(a.v + b.v);
+    for (int k = 0; k < 3; ++k) r.d[k] = a.d[k] + b.d[k];
+    return r;
+}
+Dual operator-(const Dual& a, const Dual& b) {
+    Dual r(a.v - b.v);
+    for (int k = 0; k < 3; ++k) r.d[k] = a.d[k] - b.d[k];
+    return r;
+}
+Dual operator-(const Dual& a) { return a.chain(-a.v, -1.0); }
+Dual operator*(const Dual& a, const Dual& b) {
+    Dual r(a.v * b.v);
+    for (int k = 0; k < 3; ++k) r.d[k] = a.d[k] * b.v + a.v * b.d[k];
+    return r;
+}
+Dual operator/(const Dual& a, const Dual& b) {
+    Dual r(a.v / b.v);
+    for (int k = 0; k < 3; ++k) r.d[k] = (a.d[k] - r.v * b.d[k]) / b.v;
+    return r;
+}
+Dual sqrt(const Dual& a) {
+    const double s = std::sqrt(a.v);
+    return a.chain(s, 0.5 / s);
+}
+// ln(1 + exp(u)), without overflow.
+Dual softplus(const Dual& a) {
+    const double e = std::exp(-std::abs(a.v));
+    const double sig = a.v >= 0.0 ? 1.0 / (1.0 + e) : e / (1.0 + e);
+    return a.chain(std::max(a.v, 0.0) + std::log1p(e), sig);
+}
+// Smooth |u| and max(u, 0); eps sets the width of the rounded corner.
+Dual smoothAbs(const Dual& a, double eps) { return sqrt(a * a + eps * eps) - eps; }
+Dual smoothPositive(const Dual& a, double eps) { return 0.5 * (a + sqrt(a * a + 4.0 * eps * eps)); }
+
+}  // namespace
+
 Mosfet::Mosfet(std::string name, int d, int g, int s, int b, int polarity, const MosfetParams& p)
     : Device(std::move(name)), d_(d), g_(g), s_(s), b_(b), pol_(polarity >= 0 ? 1.0 : -1.0),
       p_(p) {
@@ -17,6 +75,8 @@ Mosfet::Mosfet(std::string name, int d, int g, int s, int b, int polarity, const
     if (!(p_.phi > 0.0)) throw std::runtime_error(this->name() + ": phi must be > 0");
     if (!(p_.is > 0.0)) throw std::runtime_error(this->name() + ": is must be > 0");
     if (p_.tox < 0.0) throw std::runtime_error(this->name() + ": tox must be >= 0");
+    if (p_.theta < 0.0 || p_.ucrit < 0.0 || p_.gamma < 0.0)
+        throw std::runtime_error(this->name() + ": gamma, theta and ucrit must be >= 0");
     beta_ = p_.kp * p_.w / p_.l;
     vto_ = pol_ * p_.vto;
     if (p_.tox > 0.0) cox_ = 3.9 * 8.8541878128e-12 / p_.tox * p_.w * p_.l;
@@ -27,6 +87,7 @@ Mosfet::Mosfet(std::string name, int d, int g, int s, int b, int polarity, const
 void Mosfet::setup(Circuit& ckt) {
     const CircuitOptions& o = ckt.options;
     const double vt = o.vt();
+    vt_ = vt;
     kT_ = kBoltzmann * (o.temp + 273.15);
     const double is = o.saturationCurrent(p_.is, 1.0, 1.11, 3.0);
     jbd_.configure(is, vt);
@@ -143,6 +204,64 @@ void Mosfet::addLinearCap(StampContext& ctx, Local& m, int a, int b, double c) c
     m.c[b][b] += c;
 }
 
+// Channel current and charges of the EKV model.
+void Mosfet::stampEkv(StampContext& ctx, Local& m) {
+    // Terminal voltages against the bulk in the n-channel frame; the
+    // derivatives are taken with respect to (gate, drain, source).
+    const int pos[3] = {kG, kD, kS};
+    const Dual vg = Dual::variable(pol_ * (ctx.v(g_) - ctx.v(b_)), 0);
+    const Dual vd = Dual::variable(pol_ * (ctx.v(d_) - ctx.v(b_)), 1);
+    const Dual vs = Dual::variable(pol_ * (ctx.v(s_) - ctx.v(b_)), 2);
+    const double vt = vt_, gamma = p_.gamma;
+
+    const Dual vgp = vg - vto_ + p_.phi + gamma * std::sqrt(p_.phi);
+    // Depletion and inversion; 0 in accumulation. The corner at flat band is
+    // rounded narrowly, so that it does not reach into the subthreshold region.
+    const Dual vgpPos = smoothPositive(vgp, 0.25 * vt);
+    const Dual vp = vgpPos - p_.phi - gamma * (sqrt(vgpPos + 0.25 * gamma * gamma) - 0.5 * gamma);
+    const Dual n = 1.0 + gamma / (2.0 * sqrt(vp + p_.phi + 4.0 * vt));
+    const Dual sf = softplus((vp - vs) / (2.0 * vt));  // sqrt of the forward current
+    const Dual sr = softplus((vp - vd) / (2.0 * vt));  // sqrt of the reverse current
+
+    Dual id = 2.0 * n * beta_ * vt * vt * (sf * sf - sr * sr);
+    if (p_.theta > 0.0) id = id / (1.0 + p_.theta * vt * (sf + sr));
+    if (p_.ucrit > 0.0) id = id / (1.0 + 2.0 * vt * smoothAbs(sf - sr, 1e-3) / (p_.ucrit * p_.l));
+    if (p_.lambda > 0.0) id = id * (1.0 + p_.lambda * smoothAbs(vd - vs, 1e-3));
+
+    opId_ = id.v;
+    opGm_ = id.d[0];
+    opGds_ = id.d[1];
+    id = id + ctx.gmin * (vd - vs);
+
+    // A derivative with respect to a terminal voltage against the bulk is the
+    // matrix entry of that terminal; the bulk gets minus their sum.
+    const auto add = [&](int row, const Dual& value, double f[4], double g[4][4], double sign) {
+        f[row] += sign * pol_ * value.v;
+        for (int k = 0; k < 3; ++k) {
+            g[row][pos[k]] += sign * value.d[k];
+            g[row][kB] -= sign * value.d[k];
+        }
+    };
+    add(kD, id, m.f, m.g, 1.0);
+    add(kS, id, m.f, m.g, -1.0);
+
+    if (cox_ > 0.0) {
+        const Dual xf = sqrt(sf * sf + 0.25), xr = sqrt(sr * sr + 0.25);
+        const Dual sum = xf + xr, nq = n * vt * cox_;
+        const Dual qi = -nq * (4.0 / 3.0 * (xf * xf + xf * xr + xr * xr) / sum - 1.0);
+        const Dual qd = -nq * (4.0 / 15.0 * (3.0 * xr * xr * xr + 6.0 * xr * xr * xf + 4.0 * xr * xf * xf +
+                                             2.0 * xf * xf * xf) / (sum * sum) - 0.5);
+        const Dual qs = qi - qd;
+        // Bulk: depletion charge under the channel, and the accumulation layer.
+        const Dual qb = -cox_ * gamma * sqrt(vp + p_.phi + 1e-6) - (n - 1.0) / n * qi - cox_ * (vgp - vgpPos);
+        const Dual qg = -qi - qb;
+        add(kG, qg, m.q, m.c, 1.0);
+        add(kD, qd, m.q, m.c, 1.0);
+        add(kS, qs, m.q, m.c, 1.0);
+        add(kB, qb, m.q, m.c, 1.0);
+    }
+}
+
 void Mosfet::stamp(StampContext& ctx) {
     // All contributions are collected in a local 4 x 4 block (terminal order
     // d, g, s, b) and handed over in one fixed sequence at the end. The
@@ -150,7 +269,31 @@ void Mosfet::stamp(StampContext& ctx) {
     // when drain and source swap their roles, so the solver can keep its map
     // from entries to matrix positions.
     Local m;
+    if (p_.ekv) stampEkv(ctx, m);
+    else stampLevel1(ctx, m);
 
+    addBulkJunction(ctx, m, jbd_, kD, p_.cbd);
+    addBulkJunction(ctx, m, jbs_, kS, p_.cbs);
+
+    addLinearCap(ctx, m, kG, kS, p_.cgso * p_.w);
+    addLinearCap(ctx, m, kG, kD, p_.cgdo * p_.w);
+    addLinearCap(ctx, m, kG, kB, p_.cgbo * p_.l);
+
+    const int node[4] = {d_, g_, s_, b_};
+    for (int i = 0; i < 4; ++i) {
+        ctx.addF(node[i], m.f[i]);
+        for (int j = 0; j < 4; ++j) ctx.addG(node[i], node[j], m.g[i][j]);
+    }
+    if (hasCharge_) {
+        for (int i = 0; i < 4; ++i) {
+            ctx.addQ(node[i], m.q[i]);
+            for (int j = 0; j < 4; ++j) ctx.addC(node[i], node[j], m.c[i][j]);
+        }
+    }
+}
+
+// Channel current and charges of the level 1 model.
+void Mosfet::stampLevel1(StampContext& ctx, Local& m) {
     // Channel current in n-channel form. The device is symmetric: for vds < 0
     // drain and source swap their roles.
     int D = kD, S = kS;
@@ -214,25 +357,6 @@ void Mosfet::stamp(StampContext& ctx) {
     m.g[S][S] -= gss;
 
     if (cox_ > 0.0) addChannelCharge(m, D, S, vov, vds, -p_.gamma * dsarg);
-
-    addBulkJunction(ctx, m, jbd_, kD, p_.cbd);
-    addBulkJunction(ctx, m, jbs_, kS, p_.cbs);
-
-    addLinearCap(ctx, m, kG, kS, p_.cgso * p_.w);
-    addLinearCap(ctx, m, kG, kD, p_.cgdo * p_.w);
-    addLinearCap(ctx, m, kG, kB, p_.cgbo * p_.l);
-
-    const int node[4] = {d_, g_, s_, b_};
-    for (int i = 0; i < 4; ++i) {
-        ctx.addF(node[i], m.f[i]);
-        for (int j = 0; j < 4; ++j) ctx.addG(node[i], node[j], m.g[i][j]);
-    }
-    if (hasCharge_) {
-        for (int i = 0; i < 4; ++i) {
-            ctx.addQ(node[i], m.q[i]);
-            for (int j = 0; j < 4; ++j) ctx.addC(node[i], node[j], m.c[i][j]);
-        }
-    }
 }
 
 }  // namespace esim

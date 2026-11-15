@@ -29,6 +29,11 @@ public:
         return it == ckt_.functions.end() ? nullptr : &it->second;
     }
 
+    bool addDelay(const std::shared_ptr<expr::DelayLine>& line) const override {
+        ckt_.addDelay(line);
+        return true;
+    }
+
     std::shared_ptr<const expr::Table> table(const std::string& name) const override {
         auto it = ckt_.tables.find(name);
         return it == ckt_.tables.end() ? nullptr : it->second;

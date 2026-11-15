@@ -131,13 +131,41 @@ double Circuit::absTol(int i) const {
 
 double Circuit::maxStep(double /*t*/) const {
     double best = std::numeric_limits<double>::infinity();
-    if (transient_)
+    if (transient_) {
         for (const auto& d : devices_) best = std::min(best, d->maxStep());
+        // A delayed value has to lie in the past of the step that uses it.
+        for (const auto& w : delays_)
+            if (const auto line = w.lock()) best = std::min(best, line->td);
+    }
     return best;
 }
 
 void Circuit::resetDevices() {
     for (auto& d : devices_) d->reset();
+    for (const auto& w : delays_)
+        if (const auto line = w.lock()) line->history.clear();
+}
+
+void Circuit::acceptStep(double t, const Vector& x, bool start) {
+    for (auto& d : devices_) d->acceptStep(t, x, start);
+    delays_.erase(std::remove_if(delays_.begin(), delays_.end(), [](const auto& w) { return w.expired(); }),
+                  delays_.end());
+    for (const auto& w : delays_)
+        if (const auto line = w.lock()) line->record(t, x, start);
+}
+
+void Circuit::noteDiscontinuity(double t) {
+    for (auto& d : devices_) d->noteDiscontinuity(t);
+    for (const auto& w : delays_)
+        if (const auto line = w.lock()) line->history.mark(t);
+}
+
+bool Circuit::hasHistory() const {
+    for (const auto& d : devices_)
+        if (d->usesHistory()) return true;
+    for (const auto& w : delays_)
+        if (!w.expired()) return true;
+    return false;
 }
 
 void Circuit::eventFunctions(double t, const Vector& x, Vector& g) {
@@ -159,6 +187,8 @@ bool Circuit::eventUpdate(double t, Vector& x, bool initial) {
 double Circuit::nextBreakpoint(double t) const {
     double best = std::numeric_limits<double>::infinity();
     for (const auto& d : devices_) best = std::min(best, d->nextBreakpoint(t));
+    for (const auto& w : delays_)
+        if (const auto line = w.lock()) best = std::min(best, line->history.nextBreakpoint(t));
     return best;
 }
 
