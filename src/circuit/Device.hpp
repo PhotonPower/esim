@@ -30,6 +30,16 @@ struct StampContext {
     double gmin;      // conductance in parallel to every pn junction
     double vt;        // thermal voltage kT/q
 
+    // Parallel evaluation: the matrix entries go straight to their place in
+    // the shared arrays instead of being appended (see Circuit::evaluate).
+    // A block that produces more entries than last time sets `overflow`.
+    Triplet* gNext = nullptr;
+    Triplet* gEnd = nullptr;
+    Triplet* cNext = nullptr;
+    Triplet* cEnd = nullptr;
+    bool overflow = false;
+    int rowLo = 1 << 30, rowHi = -1;  // range of the rows of f and q written to
+
     double v(int node) const { return node < 0 ? 0.0 : x[node]; }
 
     // While the integrator steps, switching elements and expressions keep
@@ -38,16 +48,28 @@ struct StampContext {
     bool frozenModes() const { return transient && !initPoint && !useIc && !liveModes; }
 
     void addF(int row, double val) {
-        if (row >= 0) out.f[row] += val;
+        if (row < 0) return;
+        out.f[row] += val;
+        if (row < rowLo) rowLo = row;
+        if (row > rowHi) rowHi = row;
     }
     void addQ(int row, double val) {
-        if (row >= 0) out.q[row] += val;
+        if (row < 0) return;
+        out.q[row] += val;
+        if (row < rowLo) rowLo = row;
+        if (row > rowHi) rowHi = row;
     }
     void addG(int row, int col, double val) {
-        if (row >= 0 && col >= 0) out.G.emplace_back(row, col, val);
+        if (row < 0 || col < 0) return;
+        if (!gEnd) out.G.emplace_back(row, col, val);
+        else if (gNext != gEnd) *gNext++ = Triplet(row, col, val);
+        else overflow = true;
     }
     void addC(int row, int col, double val) {
-        if (row >= 0 && col >= 0) out.C.emplace_back(row, col, val);
+        if (row < 0 || col < 0) return;
+        if (!cEnd) out.C.emplace_back(row, col, val);
+        else if (cNext != cEnd) *cNext++ = Triplet(row, col, val);
+        else overflow = true;
     }
 
     // Current i flowing from node a through the device to node b.

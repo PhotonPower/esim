@@ -1,6 +1,7 @@
 #include "circuit/Circuit.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <stdexcept>
 
 #include "circuit/Device.hpp"
@@ -101,11 +102,109 @@ void Circuit::initialState(Vector& x0, Vector& q0) {
     q0 = ev.q;
 }
 
-void Circuit::evaluate(double t, const Vector& x, LimitMode limiting, Evaluation& out) {
+void Circuit::setThreads(int threads) {
+    threads_ = threads < 1 ? 1 : threads;
+    if (devices_.size() < kParallelDevices) {
+        pool_.reset();
+        blocks_.clear();
+        return;
+    }
+    // The blocks are the same for every number of threads (also for one).
+    if (blocks_.empty()) {
+        blocks_.assign(kBlocks, Block());
+        for (size_t k = 0; k < kBlocks; ++k) {
+            blocks_[k].first = devices_.size() * k / kBlocks;
+            blocks_[k].last = devices_.size() * (k + 1) / kBlocks;
+        }
+        measured_ = false;
+    }
+    if (!pool_ || pool_->parts() != threads_) pool_ = std::make_unique<WorkerPool>(threads_);
+}
+
+// Sequential pass, block by block, that notes which section of the matrix
+// entries every block produces.
+void Circuit::stampMeasured(double t, const Vector& x, LimitMode limiting, Evaluation& out) {
     out.reset(size());
-    StampContext ctx{t, x, out, limiting, transient_, useIc_, initPoint_, liveModes_,
-                     srcScale_, options.gmin, options.vt()};
-    for (auto& d : devices_) d->stamp(ctx);
+    for (Block& b : blocks_) {
+        StampContext ctx{t, x, out, limiting, transient_, useIc_, initPoint_, liveModes_,
+                         srcScale_, options.gmin, options.vt()};
+        b.gFirst = out.G.size();
+        b.cFirst = out.C.size();
+        for (size_t i = b.first; i < b.last; ++i) devices_[i]->stamp(ctx);
+        b.gLast = out.G.size();
+        b.cLast = out.C.size();
+        b.rowLo = std::min(b.rowLo, ctx.rowLo);
+        b.rowHi = std::max(b.rowHi, ctx.rowHi);
+        // The buffer of the block has to be clean over the rows it will use.
+        b.part.f.setZero(size());
+        b.part.q.setZero(size());
+    }
+    measured_ = true;
+}
+
+void Circuit::stampAll(double t, const Vector& x, LimitMode limiting, Evaluation& out) {
+    if (blocks_.empty()) {
+        out.reset(size());
+        StampContext ctx{t, x, out, limiting, transient_, useIc_, initPoint_, liveModes_,
+                         srcScale_, options.gmin, options.vt()};
+        for (auto& d : devices_) d->stamp(ctx);
+        return;
+    }
+    if (!measured_) {
+        stampMeasured(t, x, limiting, out);
+        return;
+    }
+    const double vt = options.vt();
+    out.G.resize(blocks_.back().gLast);
+    out.C.resize(blocks_.back().cLast);
+    std::atomic<size_t> next{0};
+    pool_->run([&](int) {
+        for (size_t k; (k = next.fetch_add(1, std::memory_order_relaxed)) < blocks_.size();) {
+            Block& b = blocks_[k];
+            if (b.rowHi >= b.rowLo) {
+                b.part.f.segment(b.rowLo, b.rowHi - b.rowLo + 1).setZero();
+                b.part.q.segment(b.rowLo, b.rowHi - b.rowLo + 1).setZero();
+            }
+            b.part.limited = false;
+            StampContext ctx{t, x, b.part, limiting, transient_, useIc_, initPoint_, liveModes_,
+                             srcScale_, options.gmin, vt};
+            ctx.gNext = out.G.data() + b.gFirst;
+            ctx.gEnd = out.G.data() + b.gLast;
+            ctx.cNext = out.C.data() + b.cFirst;
+            ctx.cEnd = out.C.data() + b.cLast;
+            for (size_t i = b.first; i < b.last; ++i) devices_[i]->stamp(ctx);
+            // Entries outside of the rows known so far, or another number of
+            // matrix entries: the block has to be measured again.
+            b.mismatch = ctx.overflow || ctx.gNext != ctx.gEnd || ctx.cNext != ctx.cEnd ||
+                         ctx.rowLo < b.rowLo || ctx.rowHi > b.rowHi;
+            if (ctx.rowLo < b.rowLo) b.rowLo = ctx.rowLo;
+            if (ctx.rowHi > b.rowHi) b.rowHi = ctx.rowHi;
+        }
+    });
+    for (const Block& b : blocks_) {
+        if (!b.mismatch) continue;
+        // The components stamp differently than when the sections were
+        // measured (another analysis mode): do this evaluation again in
+        // sequence, which measures them anew. Limiters have seen the same
+        // point twice, which does not change them.
+        stampMeasured(t, x, limiting, out);
+        return;
+    }
+    out.f.setZero(size());
+    out.q.setZero(size());
+    out.limited = false;
+    for (const Block& b : blocks_) {
+        if (b.rowHi >= b.rowLo) {
+            const int count = b.rowHi - b.rowLo + 1;
+            out.f.segment(b.rowLo, count) += b.part.f.segment(b.rowLo, count);
+            out.q.segment(b.rowLo, count) += b.part.q.segment(b.rowLo, count);
+        }
+        out.limited = out.limited || b.part.limited;
+    }
+}
+
+void Circuit::evaluate(double t, const Vector& x, LimitMode limiting, Evaluation& out) {
+    stampAll(t, x, limiting, out);
 
     // Shunt from every node to ground (gmin stepping) and damping towards a
     // previous solution (pseudo-transient). The entry is always stamped, also

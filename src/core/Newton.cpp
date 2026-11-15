@@ -1,6 +1,7 @@
 #include "core/Newton.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace esim {
@@ -16,28 +17,58 @@ void NewtonSolver::assemble(double a, int n) {
 
     if (!known) {
         // Build the pattern once (sorting and merging duplicates), then note
-        // where every triplet ends up.
+        // for every value of the matrix which triplets it is the sum of.
         jt_.assign(ev_.G.begin(), ev_.G.end());
         jt_.insert(jt_.end(), ev_.C.begin(), ev_.C.end());
         J_.resize(n, n);
         J_.setFromTriplets(jt_.begin(), jt_.end());
         key_.resize(total);
-        slot_.resize(total);
+        std::vector<int> slot(total);
         const int* outer = J_.outerIndexPtr();
         const int* inner = J_.innerIndexPtr();
+        const auto nnz = static_cast<size_t>(J_.nonZeros());
+        start_.assign(nnz + 1, 0);
         for (size_t k = 0; k < total; ++k) {
             const Triplet& e = entry(k);
             key_[k] = {e.row(), e.col()};
             const int* first = inner + outer[e.col()];
             const int* last = inner + outer[e.col() + 1];
-            slot_[k] = static_cast<int>(std::lower_bound(first, last, e.row()) - inner);
+            slot[k] = static_cast<int>(std::lower_bound(first, last, e.row()) - inner);
+            ++start_[static_cast<size_t>(slot[k]) + 1];
         }
+        for (size_t s = 0; s < nnz; ++s) start_[s + 1] += start_[s];
+        from_.resize(total);
+        std::vector<int> fill(start_.begin(), start_.end() - 1);
+        for (size_t k = 0; k < total; ++k) from_[static_cast<size_t>(fill[static_cast<size_t>(slot[k])]++)] = static_cast<int>(k);
     }
 
+    // Every value is the sum of its triplets, taken in the order of stamping.
+    // The values are independent of each other, so ranges of them can be
+    // filled on different threads with the same result.
     double* values = J_.valuePtr();
-    std::fill(values, values + J_.nonZeros(), 0.0);
-    for (size_t k = 0; k < ng; ++k) values[slot_[k]] += ev_.G[k].value();
-    for (size_t k = ng; k < total; ++k) values[slot_[k]] += a * ev_.C[k - ng].value();
+    const auto nnz = static_cast<size_t>(J_.nonZeros());
+    const Triplet* g = ev_.G.data();
+    const Triplet* c = ev_.C.data();
+    const auto fill = [&](size_t first, size_t last) {
+        for (size_t s = first; s < last; ++s) {
+            double sum = 0.0;
+            for (int p = start_[s]; p < start_[s + 1]; ++p) {
+                const auto k = static_cast<size_t>(from_[static_cast<size_t>(p)]);
+                sum += k < ng ? g[k].value() : a * c[k - ng].value();
+            }
+            values[s] = sum;
+        }
+    };
+    if (pool_ && pool_->parts() > 1 && nnz >= 20000) {
+        const size_t chunk = 4096;
+        std::atomic<size_t> next{0};
+        pool_->run([&](int) {
+            for (size_t first; (first = next.fetch_add(chunk, std::memory_order_relaxed)) < nnz;)
+                fill(first, std::min(nnz, first + chunk));
+        });
+    } else {
+        fill(0, nnz);
+    }
 }
 
 NewtonResult NewtonSolver::solve(DaeSystem& sys, double t, double a, const Vector* b, Vector& x,
@@ -47,6 +78,7 @@ NewtonResult NewtonSolver::solve(DaeSystem& sys, double t, double a, const Vecto
 
     abstol_.resize(n);
     for (int i = 0; i < n; ++i) abstol_[i] = sys.absTol(i);
+    pool_ = sys.workers();
 
     bool haveLu = false;   // lin_ holds a Jacobian of this solve
     bool refresh = false;  // it has become too inaccurate

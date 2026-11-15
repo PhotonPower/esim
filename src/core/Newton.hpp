@@ -50,11 +50,13 @@ private:
     LinearSolver lin_;
     Triplets jt_;
     SparseMatrix J_;
-    // slot_[k]: position in the value array of J_ of the k-th triplet (those of
-    // G first, then those of C). Valid while the systems stamps the same
-    // entries in the same order, which is checked through key_.
-    std::vector<int> slot_;
+    // Which triplets (those of G first, then those of C) add up to which value
+    // of J_: the triplets of value s are from_[start_[s]] .. from_[start_[s+1]-1],
+    // in the order in which the system stamps them. Valid while the system
+    // stamps the same entries in the same order, which is checked through key_.
+    std::vector<int> start_, from_;
     std::vector<std::pair<int, int>> key_;
+    WorkerPool* pool_ = nullptr;  // threads of the system that is being solved
     Vector r_, dx_, abstol_, scale_;
 };
 

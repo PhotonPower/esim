@@ -3,6 +3,7 @@
 #include <limits>
 #include <string>
 
+#include "core/WorkerPool.hpp"
 #include "core/Types.hpp"
 
 namespace esim {
@@ -91,6 +92,10 @@ public:
     // switch opens, so a diode has to conduct) before eventUpdate() freezes
     // them again.
     virtual void setLiveModes(bool /*on*/) {}
+
+    // Threads the system uses for its own evaluation, which the solvers may
+    // share for their work on the matrix; nullptr: everything runs in sequence.
+    virtual WorkerPool* workers() { return nullptr; }
 
     // Called by a time integration at its start point (start = true) and after
     // every accepted step, for systems that refer to their past (delays).

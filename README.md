@@ -39,8 +39,9 @@ in `<Ausgabeordner>/<Dateiname>.<Analyse>.csv`, z. B.
 `results/bjt_amplifier.tran.csv`.
 
 Parameterstudien (Sweeps, Monte Carlo, Empfindlichkeiten, Fit) rechnen ihre
-Läufe gleichzeitig auf allen Prozessorkernen; `-j <n>` begrenzt die Zahl. Die
-Ergebnisse hängen nicht von der Zahl der Threads ab.
+Läufe gleichzeitig auf allen Prozessorkernen, einzelne Simulationen großer
+Schaltungen (ab 1000 Bauteilen) werten ihre Bauteile parallel aus; `-j <n>`
+begrenzt die Zahl der Threads. Die Ergebnisse hängen nicht von dieser Zahl ab.
 
 Beispiele in [`examples/`](examples):
 
@@ -1043,6 +1044,12 @@ Numerik in Kürze:
   Zahl der Zerlegungen bei praktisch gleicher Zahl von Iterationen und spart
   in den Testschaltungen rund 20 % Rechenzeit; `"reuse_jacobian": false`
   schaltet es ab.
+- **Parallele Auswertung**: Große Schaltungen werden in 16 Blöcke
+  aufeinanderfolgender Bauteile geteilt, die sich die Threads der Reihe nach
+  holen. Jeder Block schreibt seine Matrixeinträge direkt in seinen festen
+  Abschnitt der gemeinsamen Liste und seine Ströme und Ladungen in einen
+  eigenen Puffer; die Puffer werden in fester Reihenfolge addiert. Die Blöcke
+  sind für jede Thread-Zahl dieselben, deshalb sind die Ergebnisse bitgleich.
 - **Anfangspunkt einer Transientenanalyse**: dasselbe Problem, wobei für jeden
   Zustand mit vorgegebenem Anfangswert eine Differentialgleichung durch
   "Zustand = Anfangswert" ersetzt wird. Algebraische Unbekannte ergeben sich
@@ -1136,14 +1143,14 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
 - **Schaltungen**: Die Halbleitermodelle entsprechen den
   klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET), dazu ein
   EKV-artiges MOSFET-Modell. Industrielle Kurzkanal-Modelle (BSIM) fehlen.
-- **Große Schaltungen**: Getestet mit bis zu 40 000 Knoten. Eine einzelne
-  Simulation rechnet auf einem Kern; parallel laufen nur die Läufe einer
-  Parameterstudie. Ein Versuch, die Bauteile einer Schaltung auf mehreren
-  Kernen auszuwerten, brachte bei 20 000 Dioden und bei 3000 Transistoren
-  höchstens 10 % und wurde verworfen: Das Zusammenführen der Teilergebnisse
-  kostet so viel, wie die Aufteilung spart, und die Matrixzerlegung bleibt
-  ohnehin seriell. Ruhende Schaltungsteile werden nicht übersprungen; die
-  Rechenzeit wächst mit der Zahl der Bauteile mal der Zahl der Zeitschritte.
+- **Große Schaltungen**: Getestet mit bis zu 40 000 Knoten. Ab 1000 Bauteilen
+  werden die Bauteile auf mehreren Kernen ausgewertet und die Matrix parallel
+  aufgebaut; die Matrixzerlegung bleibt seriell und bestimmt dann die
+  Rechenzeit. Der Gewinn ist entsprechend begrenzt: gemessen 26 % bei 20 000
+  Dioden (8,2 → 6,0 s) und 27 % bei 3000 Transistoren (15,5 → 11,4 s) auf einem
+  Rechner mit zwei schnellen und vier langsamen Kernen. Ruhende
+  Schaltungsteile werden nicht übersprungen; die Rechenzeit wächst mit der
+  Zahl der Bauteile mal der Zahl der Zeitschritte.
 - **Potentialfreie Schaltungsteile** (Sekundärseite eines Transformators,
   Brückengleichrichter) brauchen einen Gleichstrompfad nach Masse, z. B. einen
   großen Widerstand. Ihre Spannungen gegen Masse sind dann nur auf Millivolt

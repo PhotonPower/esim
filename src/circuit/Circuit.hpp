@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/DaeSystem.hpp"
+#include "core/WorkerPool.hpp"
 #include "expr/Expression.hpp"
 
 namespace esim {
@@ -69,6 +70,11 @@ public:
 
     // --- analysis support -------------------------------------------------
     void setTransientMode(bool on) { transient_ = on; }
+    // Evaluate the components on several threads (large circuits only, see
+    // kParallelWork). 1 switches it off.
+    void setThreads(int threads);
+    // Below this number of components the threads cost more than they save.
+    static constexpr size_t kParallelDevices = 1000;
     // Initial point of a transient analysis: like the DC problem, but states
     // with a prescribed initial value are held at that value.
     void setInitialPointMode(bool on) { initPoint_ = on; }
@@ -94,6 +100,7 @@ public:
     void eventFunctions(double t, const Vector& x, Vector& g) override;
     bool eventUpdate(double t, Vector& x, bool initial) override;
     void setLiveModes(bool on) override { liveModes_ = on; }
+    WorkerPool* workers() override { return pool_.get(); }
     void acceptStep(double t, const Vector& x, bool start) override;
     void noteDiscontinuity(double t) override;
     // History of a delay() in an expression compiled against this circuit.
@@ -136,6 +143,30 @@ private:
     // Delays of all expressions (also of outputs, which come and go).
     mutable std::vector<std::weak_ptr<expr::DelayLine>> delays_;
     std::map<int, std::string> equationText_;
+
+    // Parallel evaluation. The components are split into a fixed number of
+    // consecutive blocks, which the threads take one after the other. Every
+    // block stamps f and q into a buffer of its own and its matrix entries
+    // directly into its section of the shared arrays; the sections are known
+    // from a sequential pass and are measured again whenever a block does not
+    // fill its section exactly (the components stamp differently in another
+    // analysis mode). The buffers are added up in the order of the blocks, so
+    // the result does not depend on the number of threads.
+    struct Block {
+        size_t first = 0, last = 0;      // components
+        size_t gFirst = 0, gLast = 0;    // section of Evaluation::G
+        size_t cFirst = 0, cLast = 0;    // section of Evaluation::C
+        Evaluation part;                 // f, q, limited
+        int rowLo = 0, rowHi = -1;       // rows of f and q this block has ever written to
+        bool mismatch = false;
+    };
+    static constexpr size_t kBlocks = 16;
+    void stampAll(double t, const Vector& x, LimitMode limiting, Evaluation& out);
+    void stampMeasured(double t, const Vector& x, LimitMode limiting, Evaluation& out);
+    std::unique_ptr<WorkerPool> pool_;
+    std::vector<Block> blocks_;
+    bool measured_ = false;
+    int threads_ = 1;
     std::unordered_map<std::string, Device*> deviceByName_;
     bool finalized_ = false;
     int eventCount_ = 0;

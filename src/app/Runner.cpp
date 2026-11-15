@@ -865,6 +865,11 @@ void runNoiseAnalysis(Context& c, const json& a) {
 
 void runOne(Context& c, const json& a, const std::string& type) {
     c.ckt().resetDevices();
+    // A single simulation spreads the evaluation of a large circuit over the
+    // threads; the runs of a series are already distributed over them.
+    c.ckt().setThreads(c.sweep ? 1
+                       : c.cfg.threads > 0 ? c.cfg.threads
+                                           : static_cast<int>(std::max(1u, std::thread::hardware_concurrency())));
     if (type == "op") runOp(c, a);
     else if (type == "dc") runDcSweep(c, a);
     else if (type == "tran") runTran(c, a);

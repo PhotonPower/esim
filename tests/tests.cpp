@@ -2564,6 +2564,46 @@ void testIndexReduction() {
     checkNear(probe(*op.circuit, xo, "lam"), 9.81 / 2.0, 1e-9, "index reduction: rod force at rest");
 }
 
+void testParallelEvaluation() {
+    // A rectifier ladder with 1600 components: large enough for the evaluation
+    // in blocks. The result must not depend on the number of threads at all,
+    // and agree with the plain sequential evaluation up to rounding.
+    std::string comps = R"json({"type": "V", "name": "V1", "nodes": ["n0", "0"],
+                                "wave": {"type": "sin", "amplitude": 5, "freq": 1000}})json";
+    const int stages = 400;
+    for (int k = 0; k < stages; ++k) {
+        const std::string a = "n" + std::to_string(k), b = "n" + std::to_string(k + 1), m = "m" + std::to_string(k);
+        comps += R"json(, {"type": "R", "nodes": [")json" + a + "\", \"" + b + R"json("], "value": 100})json";
+        comps += R"json(, {"type": "D", "nodes": [")json" + b + "\", \"" + m + R"json("], "is": 1e-14, "cj0": "2p"})json";
+        comps += R"json(, {"type": "R", "nodes": [")json" + m + R"json(", "0"], "value": "10k"})json";
+        comps += R"json(, {"type": "C", "nodes": [")json" + m + R"json(", "0"], "value": "100n"})json";
+    }
+    const std::string text = "{\"components\": [" + comps + "]}";
+    const auto simulate = [&](int threads, TransientStats& st) {
+        Netlist nl = parseNetlistText(text);
+        Circuit& ckt = *nl.circuit;
+        if (threads > 0) ckt.setThreads(threads);
+        TransientOptions to;
+        to.tstop = 1e-3;
+        ckt.setTransientMode(true);
+        ckt.setInitialPointMode(true);
+        const Vector x0 = solveOperatingPoint(ckt, nl.options);  // another mode than the integration
+        ckt.setInitialPointMode(false);
+        Vector last = x0;
+        st = runTransient(ckt, x0, nullptr, to, [&](double, const Vector& x) { last = x; });
+        return last;
+    };
+    TransientStats s0, s1, s2, s5;
+    const Vector plain = simulate(0, s0), one = simulate(1, s1), two = simulate(2, s2), five = simulate(5, s5);
+    checkTrue(Circuit::kParallelDevices <= 1601, "parallel evaluation: the test circuit is large enough");
+    checkTrue((one - two).cwiseAbs().maxCoeff() == 0.0 && (one - five).cwiseAbs().maxCoeff() == 0.0,
+              "parallel evaluation: identical results for 1, 2 and 5 threads");
+    checkTrue(s1.accepted == s2.accepted && s1.newtonIterations == s5.newtonIterations,
+              "parallel evaluation: identical step sequence");
+    checkNear((plain - one).cwiseAbs().maxCoeff(), 0.0, 1e-6, "parallel evaluation: agrees with the sequential evaluation");
+    checkTrue(s0.accepted > 20, "parallel evaluation: the comparison covers a real simulation");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -2805,6 +2845,7 @@ int main() {
         {"structural index", testStructuralIndex},
         {"jacobian reuse and parallel runs", testSpeedFeatures},
         {"index reduction", testIndexReduction},
+        {"parallel evaluation", testParallelEvaluation},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},
