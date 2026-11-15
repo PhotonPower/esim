@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <sstream>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -676,12 +677,23 @@ ParamMap resolveParameters(const json& j, ParamMap known, const std::string& wha
 
 // "variables": {"x": 1, "y": {"init": 0, "abstol": 1e-10}, "z": {"guess": 2}}
 // The names are registered in the scope and get its prefix.
-std::vector<VariableSpec> parseVariables(const json& j, Scope& scope, const std::string& what) {
+std::vector<VariableSpec> parseVariables(const json& j, Scope& scope, const std::string& what, Circuit& ckt) {
     if (!j.is_object())
         throw std::runtime_error(what + ": expected an object {\"name\": initial value, ...}");
     std::vector<VariableSpec> out;
-    for (const auto& [name, v] : j.items()) {
-        const std::string where = "variable \"" + scope.prefix + name + "\"";
+    for (const auto& [key, v] : j.items()) {
+        const std::string where = "variable \"" + scope.prefix + key + "\"";
+        // "T[10]" or "T[n]": a vector with the elements T[1] .. T[n]
+        std::string name = key;
+        int count = 0;
+        if (const size_t open = key.find('['); open != std::string::npos) {
+            if (key.back() != ']') throw std::runtime_error(where + ": expected \"name[size]\"");
+            name = key.substr(0, open);
+            const double size = expr::evalConstant(key.substr(open + 1, key.size() - open - 2), scope.params);
+            if (!(size >= 1.0) || size != std::floor(size) || size > 1e6)
+                throw std::runtime_error(where + ": the size must be a whole number >= 1");
+            count = static_cast<int>(size);
+        }
         if (!isIdentifier(name))
             throw std::runtime_error(where + ": names consist of letters, digits and _");
         if (name == "t" || name == "time" || name == "pi")
@@ -690,29 +702,51 @@ std::vector<VariableSpec> parseVariables(const json& j, Scope& scope, const std:
             throw std::runtime_error(where + ": there is a parameter with the same name");
         VariableSpec spec;
         spec.name = scope.prefix + name;
+        // A start value: one number, or for a vector one number per element.
+        std::vector<double> starts;
+        auto startValues = [&](const json& value) {
+            if (value.is_array()) {
+                if (count == 0 || static_cast<int>(value.size()) != count)
+                    throw std::runtime_error(where + ": a list of start values needs one entry per element");
+                for (const json& e : value) starts.push_back(jsonNumber(e, where, &scope.params));
+            } else {
+                starts.assign(1, jsonNumber(value, where, &scope.params));
+            }
+        };
         if (v.is_object()) {
             Params p(v, where, &scope.params);
             if (p.has("init") + p.has("guess") + p.has("discrete") > 1)
                 throw std::runtime_error(
                     where + ": give only one of \"init\", \"guess\" and \"discrete\"");
             if (p.has("discrete")) {
-                spec.start = p.num("discrete");
+                startValues(p.raw("discrete"));
                 spec.hold = true;
                 spec.discrete = true;
             } else if (p.has("init")) {
-                spec.start = p.num("init");
+                startValues(p.raw("init"));
                 spec.hold = true;
-            } else {
-                spec.start = p.num("guess", 0.0);
+            } else if (p.has("guess")) {
+                startValues(p.raw("guess"));
             }
             spec.abstol = p.num("abstol", -1.0);
             p.warnUnused();
         } else if (!v.is_null()) {
-            spec.start = jsonNumber(v, where, &scope.params);
+            startValues(v);
             spec.hold = true;
         }
         scope.localVars.insert(name);
-        out.push_back(spec);
+        if (count == 0) {
+            if (!starts.empty()) spec.start = starts[0];
+            out.push_back(spec);
+            continue;
+        }
+        ckt.vectors[scope.prefix + name] = count;
+        for (int k = 1; k <= count; ++k) {
+            VariableSpec element = spec;
+            element.name = scope.prefix + name + "[" + std::to_string(k) + "]";
+            if (!starts.empty()) element.start = starts[starts.size() == 1 ? 0 : static_cast<size_t>(k - 1)];
+            out.push_back(element);
+        }
     }
     return out;
 }
@@ -869,7 +903,7 @@ std::shared_ptr<const expr::Table> parseTable(const std::string& name, const jso
 // any expression of that scope is translated.
 void declareVariables(Scope& scope, const json& def) {
     if (!def.contains("variables") || !def["variables"].is_object()) return;
-    for (const auto& [name, v] : def["variables"].items()) scope.localVars.insert(name);
+    for (const auto& [name, v] : def["variables"].items()) scope.localVars.insert(name.substr(0, name.find('[')));
 }
 
 // "variables", "equations" and "events" of the top level or of a subcircuit.
@@ -885,29 +919,77 @@ void addEquations(Builder& b, Scope& scope, const json& def, const std::string& 
     if (!def["equations"].is_array())
         throw std::runtime_error(what + ": \"equations\" must be an array of strings");
 
-    const std::vector<VariableSpec> vars = parseVariables(def["variables"], scope, what);
-    std::vector<std::string> texts;
-    for (const json& e : def["equations"]) {
-        if (!e.is_string()) throw std::runtime_error(what + ": equations must be strings");
-        texts.push_back(e.get<std::string>());
-    }
+    const std::vector<VariableSpec> vars = parseVariables(def["variables"], scope, what, b.ckt);
+
+    // An entry is an equation, or a loop that stands for one equation per value
+    // of its index:  {"for": "i", "from": 2, "to": "n-1", "equation": "..."}
+    // (or "equations": [...] with several entries, which may be loops again).
+    std::vector<EquationSpec> eqs;
+    using Bindings = std::vector<std::pair<std::string, double>>;
+    std::function<void(const json&, const Bindings&)> expand = [&](const json& e, const Bindings& bound) {
+        if (e.is_string()) {
+            std::string text = e.get<std::string>();
+            expr::AstPtr ast;
+            try {
+                ast = expr::parseEquation(text);
+            } catch (const std::runtime_error& err) {
+                throw std::runtime_error(what + ": equation " + err.what());
+            }
+            if (!bound.empty()) {
+                ast = expr::mapLeaves(ast, [&](const expr::Ast& leaf) -> expr::AstPtr {
+                    if (leaf.kind != expr::Ast::Kind::Symbol || !leaf.args.empty()) return nullptr;
+                    for (const auto& [index, value] : bound)
+                        if (leaf.name == index) return expr::makeNumber(value);
+                    return nullptr;
+                });
+                text += "  [";
+                for (size_t k = 0; k < bound.size(); ++k)
+                    text += (k ? ", " : "") + bound[k].first + " = " +
+                            std::to_string(static_cast<long>(bound[k].second));
+                text += "]";
+            }
+            eqs.push_back({text, scopedAst(scope, ast)});
+            return;
+        }
+        if (!e.is_object() || !e.contains("for") || !e["for"].is_string())
+            throw std::runtime_error(what + ": an equation is a string or a loop {\"for\": \"i\", "
+                                            "\"from\": .., \"to\": .., \"equation\": \"...\"}");
+        const std::string index = e["for"].get<std::string>();
+        Params p(e, what + ", loop over " + index, &scope.params);
+        p.ignore("for");
+        if (!isIdentifier(index) || scope.params.count(index) || scope.localVars.count(index))
+            throw std::runtime_error(p.where() + ": the index needs a name of its own");
+        const double from = p.num("from"), to = p.num("to");
+        if (from != std::floor(from) || to != std::floor(to) || to - from > 1e6)
+            throw std::runtime_error(p.where() + ": \"from\" and \"to\" must be whole numbers");
+        if (p.has("equation") == p.has("equations"))
+            throw std::runtime_error(p.where() + ": give \"equation\" or \"equations\"");
+        const json& body = p.raw(p.has("equation") ? "equation" : "equations");
+        p.warnUnused();
+        for (double k = from; k <= to; k += 1.0) {
+            Bindings inner = bound;
+            inner.emplace_back(index, k);
+            if (body.is_array())
+                for (const json& item : body) expand(item, inner);
+            else
+                expand(body, inner);
+        }
+    };
+    for (const json& e : def["equations"]) expand(e, {});
+
     size_t discrete = 0;
     for (const VariableSpec& v : vars) discrete += v.discrete ? 1 : 0;
-    if (texts.size() + discrete != vars.size())
-        throw std::runtime_error(what + ": " + std::to_string(texts.size()) + " equation(s) for " +
+    if (eqs.size() + discrete != vars.size())
+        throw std::runtime_error(what + ": " + std::to_string(eqs.size()) + " equation(s) for " +
                                  std::to_string(vars.size() - discrete) +
                                  " variable(s) that need one; the numbers must match");
     // A discrete variable only changes at events: its equation is implied.
     for (const VariableSpec& v : vars)
-        if (v.discrete) texts.push_back("der(" + v.name.substr(scope.prefix.size()) + ") = 0");
-
-    for (const std::string& text : texts) {
-        try {
-            b.equations.push_back({text, scopedAst(scope, expr::parseEquation(text))});
-        } catch (const std::runtime_error& err) {
-            throw std::runtime_error(what + ": equation " + err.what());
+        if (v.discrete) {
+            const std::string text = "der(" + v.name.substr(scope.prefix.size()) + ") = 0";
+            eqs.push_back({text, scopedAst(scope, expr::parseEquation(text))});
         }
-    }
+    b.equations.insert(b.equations.end(), eqs.begin(), eqs.end());
     b.variables.insert(b.variables.end(), vars.begin(), vars.end());
 }
 

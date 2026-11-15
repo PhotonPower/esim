@@ -39,6 +39,7 @@ void EquationBlock::bind(Circuit& ckt) {
             throw std::runtime_error("equation \"" + spec.text + "\": " + e.what());
         }
     }
+    for (size_t k = 0; k < text_.size(); ++k) ckt.setEquationText(index_[k], text_[k].text);
     assignHeldStates();
     for (Row& r : rows_)
         if (r.held >= 0 && vars_[r.held].discrete) r.heldInDc = true;

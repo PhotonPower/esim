@@ -66,6 +66,7 @@ Beispiele in [`examples/`](examples):
 | `mosfet_subthreshold.json` | EKV-Modell und Level 1 im Vergleich, Kennlinie über acht Dekaden |
 | `transmission_line.json` | Reflexionen auf einer fehlangepassten Leitung |
 | `dead_time_control.json` | Regelkreis mit Totzeit (`delay`) |
+| `heat_rod.json` | Wärmeleitung als Vektor von Gleichungen (Linienmethode) |
 | `saturating_inductor.json` | nichtlineare Induktivität über ihren Fluss, eigene Funktion |
 
 ### Ergebnisse plotten
@@ -200,6 +201,7 @@ eine Zahl erwartet wird (dort nur mit Parametern).
 | Tabellen | `name(x)` für eine unter `tables` definierte Kennlinie |
 | eigene Funktionen | `name(a, b)` für eine unter `functions` definierte Funktion |
 | Totzeit | `delay(x, td)`: der Wert, den `x` vor der Zeit `td` hatte |
+| Vektoren | `T[i]`: Element eines Vektors; `sum(i, von, bis, ausdruck)`: Summe |
 | Namen | Variablen, Parameter, `t` (oder `time`), `pi` |
 | Schaltungsgrößen | `v(knoten)`, `v(a,b)`, `i(bauteil)` |
 | Zeitableitung | `der(ausdruck)`, nur in Gleichungen |
@@ -314,6 +316,40 @@ Gleichungen höherer Ordnung werden als System erster Ordnung geschrieben
 
 Die Analysen `op`, `dc` und `ac` rechnen immer mit dem Gleichgewicht aller
 Gleichungen; die vorgegebenen Anfangswerte gelten nur für `tran`.
+
+### Vektoren
+
+Viele gleichartige Unbekannte, etwa die Stützstellen einer örtlich
+diskretisierten partiellen Differentialgleichung, werden als Vektor
+vereinbart; eine Schleife schreibt ihre Gleichungen:
+
+```jsonc
+"parameters": { "n": 41, "a": 1.1e-4, "dx": "0.2/(n-1)" },
+"variables":  { "T[n]": 20 },
+"equations": [
+  "T[1] = 100",
+  { "for": "i", "from": 2, "to": "n-1",
+    "equation": "der(T[i]) = a * (T[i-1] - 2*T[i] + T[i+1]) / dx^2" },
+  "T[n] = T[n-1]"
+]
+```
+
+- `"T[n]"` legt die Unbekannten `T[1]` bis `T[n]` an. Der Startwert ist eine
+  Zahl für alle Elemente oder eine Liste mit einem Wert je Element
+  (`"init": [..]`, `"guess": [..]`).
+- Eine Schleife `{"for": "i", "from": .., "to": .., "equation": ".."}` steht
+  für eine Gleichung je Indexwert. Mit `"equations": [...]` enthält sie mehrere
+  Einträge, die wieder Schleifen sein dürfen.
+- Der Index ist ein konstanter ganzzahliger Ausdruck aus Zahlen, Parametern
+  und Schleifenindizes. Ein Index, der von einer Unbekannten abhängt, ist
+  nicht möglich.
+- `sum(i, von, bis, ausdruck)` summiert über einen Index.
+- In den Ausgängen steht `T[*]` für alle Elemente.
+
+Die Schleifen werden beim Einlesen ausgerollt; für den Löser sind es einzelne
+Gleichungen. Matrix- und Vektoroperationen (Skalarprodukt, Matrix mal Vektor)
+gibt es nicht; sie lassen sich mit `sum` schreiben. Beispiel:
+`examples/heat_rod.json`.
 
 ### Ereignisse
 
@@ -999,10 +1035,15 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   Spule in Reihe zu einer Stromquelle, und mechanische Systeme, wenn man zur
   Lagebedingung die Geschwindigkeitsbedingung hinzunimmt
   (`examples/pendulum.json` zeigt das Schema). Eine Lagebedingung allein ergibt
-  Index 3 und muss auf diese Weise von Hand umformuliert werden; eine
-  automatische Indexreduktion gibt es nicht. Solche Systeme mit `"uic": true`
-  starten, weil sich ihre Multiplikatoren nicht aus den algebraischen
-  Gleichungen allein bestimmen lassen.
+  Index 3 und muss von Hand umformuliert werden. Vor jeder Zeitsimulation mit
+  eigenen Gleichungen bestimmt eine Strukturanalyse (Algorithmus von
+  Pantelides) den Index; ist er größer als 2, nennt eine Warnung die
+  Gleichungen, die abgeleitet werden müssten, und wie oft. Das Ableiten und
+  Ersetzen selbst (automatische Indexreduktion) nimmt das Programm nicht vor.
+  Die Analyse betrachtet nur, welche Unbekannte in welcher Gleichung vorkommt;
+  heben sich Terme exakt auf, kann der wahre Index höher liegen. Systeme vom
+  Index 2 mit `"uic": true` starten, weil sich ihre Multiplikatoren nicht aus
+  den algebraischen Gleichungen allein bestimmen lassen.
 - **Ereignisse**: Gleiten entlang einer Schaltfläche (z. B.
   Reibung als `if`, ein Schalter ohne Hysterese in einer Rückkopplung) führt
   zu endlosem Umschalten und wird abgebrochen; solche Modelle brauchen eine

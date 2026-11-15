@@ -19,6 +19,8 @@
 //                sqrt abs sign min max pow if(condition, a, b)
 //   tables       name(x) for a table registered under that name
 //   own          name(a, b, ...) for a function defined by the user
+//   vectors      x[i]: element i of a vector; the index is a constant expression
+//   sum          sum(i, from, to, e): e summed over i = from .. to
 //   delay        delay(e, td): the value e had the constant time td ago. Outside
 //                of a time integration (operating point, AC) it is e itself.
 //   symbols      names of unknowns and constants, t (or time), pi
@@ -34,7 +36,7 @@ struct Ast {
     Kind kind = Kind::Number;
     double number = 0.0;
     std::string name;                // symbol, operator, function; Probe: "v" or "i"
-    std::vector<AstPtr> args;        // operands / function arguments
+    std::vector<AstPtr> args;        // operands / function arguments; Symbol: the index of x[i]
     std::vector<std::string> names;  // Probe: node or component names
 };
 

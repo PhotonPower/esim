@@ -79,7 +79,18 @@ std::vector<Probe> makeProbes(const Circuit& ckt, const std::vector<std::string>
         for (int i = 0; i < ckt.size(); ++i)
             if (!ckt.isInternal(i)) probes.push_back({ckt.unknownName(i), i, -1, nullptr});
     } else {
-        for (const std::string& e : exprs) probes.push_back(parseProbe(ckt, e));
+        for (const std::string& e : exprs) {
+            // "T[*]": all elements of a vector
+            const size_t star = e.rfind("[*]");
+            const std::string name = star == std::string::npos ? "" : e.substr(0, star);
+            auto it = ckt.vectors.find(name);
+            if (star != std::string::npos && star + 3 == e.size() && it != ckt.vectors.end()) {
+                for (int k = 1; k <= it->second; ++k)
+                    probes.push_back(parseProbe(ckt, name + "[" + std::to_string(k) + "]"));
+            } else {
+                probes.push_back(parseProbe(ckt, e));
+            }
+        }
     }
     return probes;
 }

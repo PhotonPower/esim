@@ -18,6 +18,7 @@
 #include "circuit/Analysis.hpp"
 #include "circuit/Device.hpp"
 #include "circuit/devices/Sources.hpp"
+#include "core/StructuralIndex.hpp"
 #include "core/Transient.hpp"
 #include "dae/Robertson.hpp"
 #include "expr/Expression.hpp"
@@ -2190,6 +2191,142 @@ void testDelaysAndLines() {
               "delay: a variable delay time is rejected");
 }
 
+void testVectors() {
+    // Heat conduction along a rod, discretized into n points (method of lines).
+    // Ends held at 1 and 0: the steady state is a straight line.
+    Netlist rod = parseNetlistText(R"json({
+        "parameters": {"n": 11, "a": 0.5},
+        "variables": {"T[n]": {"guess": 0}, "total": {"guess": 0}},
+        "equations": [
+            "T[1] = 1",
+            {"for": "i", "from": 2, "to": "n-1", "equation": "der(T[i]) = a * (T[i-1] - 2*T[i] + T[i+1])"},
+            "T[n] = 0",
+            "total = sum(k, 1, n, T[k])"
+        ]})json");
+    const Vector xr = solveOperatingPoint(*rod.circuit, rod.options);
+    checkNear(probe(*rod.circuit, xr, "T[4]"), 0.7, 1e-9, "vector: steady temperature profile");
+    checkNear(probe(*rod.circuit, xr, "T[10]"), 0.1, 1e-9, "vector: steady temperature profile, last inner point");
+    checkNear(probe(*rod.circuit, xr, "total"), 5.5, 1e-9, "vector: sum over the elements");
+    checkNear(probe(*rod.circuit, xr, "T[2*3] + T[n-1]"), 0.6, 1e-9, "vector: index expressions in an output");
+    checkTrue(makeProbes(*rod.circuit, {"T[*]", "total"}).size() == 12, "vector: T[*] stands for all elements");
+    checkTrue(rod.circuit->size() == 12, "vector: one unknown per element");
+
+    // Decay of the fundamental mode with both ends at 0: every point falls as
+    // exp(-lambda t) with lambda = 4 a sin^2(pi / (2 (n - 1))), exactly.
+    const int n = 21;
+    std::string init;
+    for (int i = 0; i < n; ++i) init += (i ? ", " : "") + std::to_string(std::sin(kPi * i / (n - 1)));
+    Netlist mode = parseNetlistText(R"json({
+        "options": {"reltol": 1e-7},
+        "parameters": {"n": )json" + std::to_string(n) + R"json(, "a": 30},
+        "variables": {"u[n]": {"init": [)json" + init + R"json(]}},
+        "equations": [
+            "u[1] = 0",
+            {"for": "i", "from": 2, "to": "n-1", "equation": "der(u[i]) = a * (u[i-1] - 2*u[i] + u[i+1])"},
+            "u[n] = 0"
+        ]})json");
+    const Trace tm = transient(mode, 1.0, IntegrationMethod::Bdf, true);
+    const double lambda = 4.0 * 30.0 * std::pow(std::sin(kPi / (2.0 * (n - 1))), 2);
+    checkNear(probe(*mode.circuit, tm.x.back(), "u[11]"), std::exp(-lambda), 1e-5, "vector: decay of a diffusion mode");
+    checkNear(probe(*mode.circuit, tm.x.back(), "u[6]"), std::exp(-lambda) * std::sin(kPi * 5 / 20), 1e-5,
+              "vector: the mode keeps its shape");
+
+    // Nested loops, several equations per index, vectors inside a subcircuit.
+    Netlist nested = parseNetlistText(R"json({
+        "subcircuits": {"cell": {"ports": [], "variables": {"w[2]": {"guess": 0}},
+                                 "equations": ["w[1] = 3", "w[2] = 2 * w[1]"]}},
+        "components": [{"type": "X", "name": "A", "subcircuit": "cell", "nodes": []},
+                       {"type": "X", "name": "B", "subcircuit": "cell", "nodes": []}],
+        "variables": {"p[6]": {"guess": 0}, "q[3]": {"guess": 0}},
+        "equations": [
+            {"for": "i", "from": 1, "to": 2, "equations": [
+                {"for": "j", "from": 1, "to": 3, "equation": "p[3*(i-1) + j] = 10*i + j"}
+            ]},
+            {"for": "i", "from": 1, "to": 3, "equation": "q[i] = p[i] + p[i+3]"}
+        ]})json");
+    const Vector xn = solveOperatingPoint(*nested.circuit, nested.options);
+    checkNear(probe(*nested.circuit, xn, "p[5]"), 22.0, 1e-12, "vector: nested loops");
+    checkNear(probe(*nested.circuit, xn, "q[3]"), 13.0 + 23.0, 1e-12, "vector: element-wise equation");
+    checkNear(probe(*nested.circuit, xn, "B.w[2]"), 6.0, 1e-12, "vector: inside a subcircuit");
+
+    const auto fails = [](const char* text) { return throws([&] { parseNetlistText(text); }); };
+    checkTrue(fails(R"json({"variables": {"x[3]": {"guess": 0}},
+                        "equations": [{"for": "i", "from": 1, "to": 3, "equation": "x[i+1] = 1"}]})json"),
+              "vector: an index outside the vector is rejected");
+    checkTrue(fails(R"json({"variables": {"x[2]": {"guess": 0}}, "equations": ["x[1] = 1", "x[x[1]] = 2"]})json"),
+              "vector: a variable index is rejected");
+    checkTrue(fails(R"json({"variables": {"x[3]": {"guess": 0}}, "equations": ["x[1] = 1", "x[2] = 2"]})json"),
+              "vector: the number of equations has to match the number of elements");
+    checkTrue(fails(R"json({"variables": {"x[2]": {"init": [1, 2, 3]}}, "equations": ["x[1] = 1", "x[2] = 2"]})json"),
+              "vector: a list of start values of the wrong length is rejected");
+}
+
+void testStructuralIndex() {
+    const auto analyze = [](const char* text, Circuit** keep = nullptr) {
+        static std::unique_ptr<Netlist> held;
+        held = std::make_unique<Netlist>(parseNetlistText(text));
+        held->circuit->setTransientMode(true);
+        if (keep) *keep = held->circuit.get();
+        return structuralIndex(*held->circuit, Vector::Zero(held->circuit->size()));
+    };
+    // An ordinary differential equation: index 0.
+    IndexAnalysis a = analyze(R"json({"variables": {"x": 1, "y": 0},
+                                      "equations": ["der(x) = y", "der(y) = -x"]})json");
+    checkTrue(a.index == 0 && !a.singular, "index: ordinary differential equation");
+    // With an algebraic equation that determines its unknown: index 1.
+    a = analyze(R"json({"variables": {"x": 1, "y": {"guess": 0}},
+                        "equations": ["der(x) = -y", "y = x^3"]})json");
+    checkTrue(a.index == 1, "index: algebraic equation for its own unknown");
+    // Pendulum with the position constraint only: index 3, the constraint twice.
+    Circuit* ckt = nullptr;
+    a = analyze(R"json({"variables": {"x": 0.5, "y": -0.8, "u": 0, "v": 0, "lam": {"guess": 0}},
+                        "equations": ["der(x) = u", "der(y) = v", "der(u) = -x*lam",
+                                      "der(v) = -9.81 - y*lam", "0 = x^2 + y^2 - 1"]})json", &ckt);
+    checkTrue(a.index == 3, "index: pendulum with position constraint has index 3");
+    int twice = -1;
+    for (int i = 0; i < ckt->size(); ++i)
+        if (a.differentiations[i] == 2) twice = twice < 0 ? i : -2;
+    checkTrue(twice >= 0 && ckt->equationText(twice) == "\"0 = x^2 + y^2 - 1\"",
+              "index: the constraint is named as the equation to differentiate twice");
+    // With the velocity constraint instead: index 2.
+    a = analyze(R"json({"variables": {"x": 0.5, "y": -0.8, "u": 0, "v": 0, "lam": {"guess": 0}},
+                        "equations": ["der(x) = u", "der(y) = v", "der(u) = -x*lam",
+                                      "der(v) = -9.81 - y*lam", "0 = x*u + y*v"]})json");
+    checkTrue(a.index == 2, "index: pendulum with velocity constraint has index 2");
+    // Circuits: RC is index 1, a capacitor across a voltage source index 2.
+    a = analyze(R"json({"components": [
+        {"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 1},
+        {"type": "R", "name": "R1", "nodes": ["a", "b"], "value": 1},
+        {"type": "C", "name": "C1", "nodes": ["b", "0"], "value": 1}]})json");
+    checkTrue(a.index == 1, "index: RC circuit");
+    a = analyze(R"json({"components": [
+        {"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 1},
+        {"type": "C", "name": "C1", "nodes": ["a", "0"], "value": 1}]})json");
+    checkTrue(a.index == 2, "index: capacitor across a voltage source");
+    // Two equations for one unknown, none for the other.
+    a = analyze(R"json({"variables": {"x": {"guess": 0}, "y": {"guess": 0}},
+                        "equations": ["x = 1", "2*x = 2"]})json");
+    checkTrue(a.singular, "index: structurally singular system is recognized");
+
+    // The transient analysis warns about the index 3 formulation.
+    Netlist nl = parseNetlistText(R"json({
+        "variables": {"x": 0.5, "y": -0.8, "u": 0, "v": 0, "lam": {"guess": 0}},
+        "equations": ["der(x) = u", "der(y) = v", "der(u) = -x*lam", "der(v) = -9.81 - y*lam",
+                      "0 = x^2 + y^2 - 1"],
+        "analyses": [{"type": "tran", "tstop": 1e-3, "uic": true, "save": false}]})json");
+    RunConfig cfg;
+    cfg.outDir = (std::filesystem::temp_directory_path() / "esim_tests").string();
+    cfg.stem = "index3";
+    std::ostringstream log;
+    try {
+        runAnalyses(nl, cfg, log);
+    } catch (const std::exception&) {  // the integration itself may fail; the warning is what counts
+    }
+    checkTrue(log.str().find("index 3") != std::string::npos &&
+                  log.str().find("\"0 = x^2 + y^2 - 1\" would have to be differentiated 2 times") != std::string::npos,
+              "index: warning names the constraint");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -2427,6 +2564,8 @@ int main() {
         {"steady state and sensitivity", testSteadyStateAndSensitivity},
         {"jfet, flux element, functions", testMoreDevices},
         {"delays and transmission lines", testDelaysAndLines},
+        {"vectors", testVectors},
+        {"structural index", testStructuralIndex},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},

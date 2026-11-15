@@ -231,6 +231,15 @@ private:
         skipWs();
         auto node = std::make_shared<Ast>();
         node->name = name;
+        if (pos_ < s_.size() && s_[pos_] == '[') {  // element of a vector
+            ++pos_;
+            node->kind = Ast::Kind::Symbol;
+            node->args.push_back(parseOr());
+            skipWs();
+            if (pos_ >= s_.size() || s_[pos_] != ']') fail("expected ']'");
+            ++pos_;
+            return node;
+        }
         if (pos_ >= s_.size() || s_[pos_] != '(') {
             node->kind = Ast::Kind::Symbol;
             return node;
@@ -363,7 +372,8 @@ public:
     int emit(const AstPtr& n) {
         switch (n->kind) {
             case Ast::Kind::Number: return constant(n->number);
-            case Ast::Kind::Symbol: return symbol(n->name);
+            case Ast::Kind::Symbol:
+                return n->args.empty() ? symbol(n->name) : symbol(elementName(*n));
             case Ast::Kind::Probe: return probe(*n);
             case Ast::Kind::Unary: {
                 const int a = emit(n->args[0]);
@@ -382,6 +392,7 @@ public:
                 if (n->name == "der")
                     throw std::runtime_error("der() is only allowed in equations");
                 if (n->name == "delay") return delay(*n);
+                if (n->name == "sum") return sum(*n);
                 const Function* fn = findFunction(n->name);
                 if (!fn) {
                     if (const FunctionDef* def = symbols_.function(n->name)) return call(*def, *n);
@@ -426,7 +437,7 @@ private:
         if (++depth_ > 50)
             throw std::runtime_error("function '" + n.name + "' calls itself without end");
         const AstPtr body = mapLeaves(def.body, [&](const Ast& leaf) -> AstPtr {
-            if (leaf.kind != Ast::Kind::Symbol) return nullptr;
+            if (leaf.kind != Ast::Kind::Symbol || !leaf.args.empty()) return nullptr;
             for (size_t k = 0; k < def.params.size(); ++k)
                 if (def.params[k] == leaf.name) return n.args[k];
             return nullptr;
@@ -434,6 +445,40 @@ private:
         const int slot = emit(body);
         --depth_;
         return slot;
+    }
+
+    // x[i]: the index has to be known now; the element is the symbol "x[3]".
+    std::string elementName(const Ast& n) {
+        const int slot = emit(n.args[0]);
+        const double k = code_[slot].k;
+        if (code_[slot].op != Op::Const || k != std::floor(k))
+            throw std::runtime_error("the index of " + n.name + "[...] must be a constant whole number");
+        return n.name + "[" + std::to_string(static_cast<long>(k)) + "]";
+    }
+
+    // sum(i, from, to, e)
+    int sum(const Ast& n) {
+        if (n.args.size() != 4 || n.args[0]->kind != Ast::Kind::Symbol || !n.args[0]->args.empty())
+            throw std::runtime_error("sum() takes four arguments: sum(i, from, to, expression)");
+        const std::string& index = n.args[0]->name;
+        double bound[2];
+        for (int k = 0; k < 2; ++k) {
+            const int slot = emit(n.args[k + 1]);
+            bound[k] = code_[slot].k;
+            if (code_[slot].op != Op::Const || bound[k] != std::floor(bound[k]))
+                throw std::runtime_error("sum(): the limits must be constant whole numbers");
+        }
+        if (bound[1] - bound[0] > 1e6) throw std::runtime_error("sum(): more than a million terms");
+        int total = -1;
+        for (double k = bound[0]; k <= bound[1]; k += 1.0) {
+            const AstPtr term = mapLeaves(n.args[3], [&](const Ast& leaf) -> AstPtr {
+                return leaf.kind == Ast::Kind::Symbol && leaf.args.empty() && leaf.name == index
+                           ? makeNumber(k) : nullptr;
+            });
+            const int slot = emit(term);
+            total = total < 0 ? slot : push(Op::Add, total, slot);
+        }
+        return total < 0 ? constant(0.0) : total;
     }
 
     // delay(e, td): the argument is compiled twice, into this program (its
@@ -700,6 +745,12 @@ AstPtr makeNumber(double v) {
 }
 
 AstPtr mapLeaves(const AstPtr& ast, const std::function<AstPtr(const Ast&)>& replace) {
+    if (ast->kind == Ast::Kind::Symbol && !ast->args.empty()) {  // x[i]: the index first
+        auto copy = std::make_shared<Ast>(*ast);
+        copy->args[0] = mapLeaves(copy->args[0], replace);
+        AstPtr r = replace(*copy);
+        return r ? r : copy;
+    }
     if (ast->kind == Ast::Kind::Symbol || ast->kind == Ast::Kind::Probe) {
         AstPtr r = replace(*ast);
         return r ? r : ast;
@@ -711,7 +762,7 @@ AstPtr mapLeaves(const AstPtr& ast, const std::function<AstPtr(const Ast&)>& rep
 }
 
 bool isBuiltinFunction(const std::string& name) {
-    return findFunction(name) != nullptr || name == "der" || name == "delay";
+    return findFunction(name) != nullptr || name == "der" || name == "delay" || name == "sum";
 }
 
 AstPtr parseExpression(const std::string& text) { return Parser(text).expression(); }

@@ -52,6 +52,7 @@ public:
     std::map<std::string, double> parameters;  // named constants for expressions
     std::map<std::string, std::shared_ptr<const expr::Table>> tables;  // callable in expressions
     std::map<std::string, expr::FunctionDef> functions;                // user-defined functions
+    std::map<std::string, int> vectors;                                // vector variables: size
 
     // --- construction -----------------------------------------------------
     static bool isGroundName(const std::string& name);
@@ -97,7 +98,13 @@ public:
     void noteDiscontinuity(double t) override;
     // History of a delay() in an expression compiled against this circuit.
     void addDelay(const std::shared_ptr<expr::DelayLine>& line) const { delays_.push_back(line); }
-    bool hasHistory() const;  // delays or transmission lines: the future depends on more than the state
+    bool hasHistory() const;
+    // What the equation in row i says, for messages: the text of a user
+    // equation, otherwise the unknown whose row it is (current balance of a
+    // node, branch equation of a component).
+    void setEquationText(int row, const std::string& text) { equationText_[row] = text; }
+    std::string equationText(int row) const;
+    bool hasUserEquations() const { return !equationText_.empty(); }  // delays or transmission lines: the future depends on more than the state
     bool setSourceScale(double scale) override {
         srcScale_ = scale;
         return true;
@@ -127,6 +134,7 @@ private:
     std::vector<std::unique_ptr<Device>> devices_;
     // Delays of all expressions (also of outputs, which come and go).
     mutable std::vector<std::weak_ptr<expr::DelayLine>> delays_;
+    std::map<int, std::string> equationText_;
     std::unordered_map<std::string, Device*> deviceByName_;
     bool finalized_ = false;
     int eventCount_ = 0;

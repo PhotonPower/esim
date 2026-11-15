@@ -18,6 +18,7 @@
 #include "circuit/Analysis.hpp"
 #include "circuit/Device.hpp"
 #include "circuit/devices/Sources.hpp"
+#include "core/StructuralIndex.hpp"
 #include "core/Transient.hpp"
 #include "io/Output.hpp"
 
@@ -427,6 +428,32 @@ TransientOptions transientOptions(Context& c, const json& a, const char* where, 
     return to;
 }
 
+// Systems with user equations: warn if their index is beyond what the
+// integration methods handle, and say which equation is the cause.
+void checkIndex(Context& c) {
+    Circuit& ckt = c.ckt();
+    if (!ckt.hasUserEquations()) return;
+    const IndexAnalysis a = structuralIndex(ckt, Vector::Zero(ckt.size()));
+    if (!a.analyzed || (!a.singular && a.index <= 2)) return;
+    if (a.singular) {
+        c.log << "warning: the equations do not determine all unknowns (structural analysis): no "
+                 "assignment of equations to unknowns exists, however often they are differentiated\n";
+        return;
+    }
+    c.log << "warning: the system has index " << a.index << " (structural analysis); the "
+             "integration handles index 1 and 2 only and will lose accuracy or fail.\n";
+    int shown = 0;
+    for (int k = a.index - 1; k >= 2 && shown < 8; --k)
+        for (int i = 0; i < ckt.size() && shown < 8; ++i)
+            if (a.differentiations[i] == k) {
+                c.log << "  " << ckt.equationText(i) << " would have to be differentiated " << k
+                      << " times\n";
+                ++shown;
+            }
+    c.log << "  Replace such a constraint by its time derivative (once less than stated), so that "
+             "it holds for the rates instead of the values.\n";
+}
+
 // State at t = 0: the operating point with prescribed states held, or the
 // initial conditions ("uic"); q0 is set in the second case only.
 Vector initialPoint(Context& c, bool uic, Vector& q0) {
@@ -466,6 +493,7 @@ void runTran(Context& c, const json& a) {
 
     Circuit& ckt = c.ckt();
     ckt.setTransientMode(true);
+    checkIndex(c);
     TransientStats stats;
     try {
         Vector q0;

@@ -51,7 +51,8 @@ add_library(esimcore
   src/core/LinearSolver.cpp
   src/core/Newton.cpp
   src/core/DcSolver.cpp
-  src/core/Transient.cpp)
+  src/core/Transient.cpp
+  src/core/StructuralIndex.cpp)
 target_include_directories(esimcore PUBLIC src)
 target_link_libraries(esimcore PUBLIC Eigen3::Eigen)
 target_compile_options(esimcore PRIVATE ${ESIM_WARNINGS})

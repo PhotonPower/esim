@@ -1,0 +1,44 @@
+{
+  // A partial differential equation by the method of lines: heat conduction
+  // along a rod, dT/dt = a d2T/dx2, cut into n points. The vector T[n] holds
+  // the temperatures, and one loop writes the equation of every inner point.
+  //
+  // The left end is heated to 100 degrees at t = 0, the right end loses heat
+  // to the surroundings (20 degrees). The rod ends up with a straight
+  // temperature profile.
+  "title": "Heat conduction along a rod (method of lines)",
+
+  "parameters": {
+    "n": 41,                 // number of points
+    "len": 0.2,              // length of the rod [m]
+    "a": 1.1e-4,             // thermal diffusivity of copper [m^2/s]
+    "h": 25,                 // heat loss at the right end, as h/lambda [1/m]
+    "dx": "len/(n-1)",
+    "Tamb": 20
+  },
+
+  "variables": {
+    "T[n]": 20,              // all points start at 20 degrees
+    "Tmean": { "guess": 20 }
+  },
+
+  "equations": [
+    "T[1] = 100",
+    { "for": "i", "from": 2, "to": "n-1",
+      "equation": "der(T[i]) = a * (T[i-1] - 2*T[i] + T[i+1]) / dx^2" },
+    // boundary condition dT/dx = -h (T - Tamb) with a one-sided difference
+    "(T[n] - T[n-1]) / dx = -h * (T[n] - Tamb)",
+    "Tmean = sum(i, 1, n, T[i]) / n"
+  ],
+
+  "analyses": [
+    { "type": "tran", "tstop": 600, "uic": true, "output_step": 5,
+      "measure": {
+        "T_end_final": { "final": "T[n]" },
+        "t_half":      { "cross": "T[21]", "level": 50 }
+      } }
+  ],
+
+  // T[*] would write all 41 temperatures.
+  "outputs": ["T[11]", "T[21]", "T[31]", "T[n]", "Tmean"]
+}

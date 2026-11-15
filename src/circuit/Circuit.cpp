@@ -160,6 +160,14 @@ void Circuit::noteDiscontinuity(double t) {
         if (const auto line = w.lock()) line->history.mark(t);
 }
 
+std::string Circuit::equationText(int row) const {
+    auto it = equationText_.find(row);
+    if (it != equationText_.end()) return "\"" + it->second + "\"";
+    const Unknown& u = unknowns_[row];
+    if (u.kind == UnknownKind::Voltage) return "the current balance of node " + u.label.substr(2, u.label.size() - 3);
+    return "the branch equation of " + u.label;
+}
+
 bool Circuit::hasHistory() const {
     for (const auto& d : devices_)
         if (d->usesHistory()) return true;
