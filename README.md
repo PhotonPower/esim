@@ -136,8 +136,8 @@ Messgrößen, Statistik).
     ./build/esim amplifier.json
 
 Übersetzt werden die Bauteile R, C, L, K, V, I, E, G, F, H, D, Q, M, J, X, S,
-T und O (verlustbehaftete Leitung mit LTRA-Modell), die Quellenformen DC, AC, SIN, PULSE und PWL sowie `.model`, `.subckt`,
-`.param`, `.op`, `.dc`, `.ac`, `.tran`, `.noise`, `.four`, `.ic`, `.nodeset`,
+T und O (verlustbehaftete Leitung mit LTRA-Modell), die Quellenformen DC, AC,
+SIN, PULSE und PWL sowie `.model`, `.subckt`, `.param`, `.op`, `.dc`, `.ac`, `.tran`, `.noise`, `.four`, `.ic`, `.nodeset`,
 `.temp`, `.options` und `.print`. Namen und Knoten werden kleingeschrieben
 (SPICE unterscheidet keine Groß- und Kleinschreibung). Was nicht übersetzt
 werden kann, wird gemeldet und ausgelassen; eingebundene Dateien (`.include`,
