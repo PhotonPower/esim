@@ -109,10 +109,13 @@ res = esim.run(netlist, parameters={"C": 220e-9},
 t, v = res.tran["time"], res.tran["v(out)"]
 ```
 
-- `res.op`, `res.dc`, `res.ac`, `res.tran` sind die erste Analyse des Typs,
-  `res["name"]` eine benannte, `res.analyses` alle.
-- Monte Carlo liefert `statistics`, ein Fit `parameters`; `info` enthält alles,
-  was der Simulator zu der Analyse gemeldet hat.
+- `res.op`, `res.dc`, `res.ac`, `res.tran`, `res.pss`, `res.noise`, `res.sens`
+  sind die erste Analyse des Typs, `res["name"]` eine benannte,
+  `res.analyses` alle.
+- Monte Carlo liefert `statistics`, ein Fit `parameters`, die
+  Empfindlichkeitsanalyse `sensitivities`; `info` enthält alles, was der
+  Simulator zu der Analyse gemeldet hat.
+- `threads=n` begrenzt die Zahl gleichzeitiger Läufe einer Parameterstudie.
 - Jede Analyse hat `data` (Spalten, auch per `analyse["spalte"]`), `measures`,
   `values` (Arbeitspunkt) und `stats`. Bei einem Parameter-Sweep enthält
   `measures` je Messung eine Liste, und `runs()` liefert die Kurven je
