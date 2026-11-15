@@ -38,6 +38,10 @@ Der Arbeitspunkt wird auf der Konsole ausgegeben, alle anderen Analysen landen
 in `<Ausgabeordner>/<Dateiname>.<Analyse>.csv`, z. B.
 `results/bjt_amplifier.tran.csv`.
 
+Parameterstudien (Sweeps, Monte Carlo, Empfindlichkeiten, Fit) rechnen ihre
+Läufe gleichzeitig auf allen Prozessorkernen; `-j <n>` begrenzt die Zahl. Die
+Ergebnisse hängen nicht von der Zahl der Threads ab.
+
 Beispiele in [`examples/`](examples):
 
 | Datei | Inhalt |
@@ -907,7 +911,8 @@ Zweigströme und Variablen ausgegeben.
   "temp": 27,           // Temperatur der Schaltung [°C]
   "tnom": 27,           // Temperatur, für die die Modellparameter gelten [°C]
   "maxiter_dc": 100,    // Newton-Iterationen im Arbeitspunkt
-  "maxiter_tran": 20    // Newton-Iterationen pro Zeitschritt
+  "maxiter_tran": 20,   // Newton-Iterationen pro Zeitschritt
+  "reuse_jacobian": true  // faktorisierte Matrix innerhalb eines Zeitschritts weiterverwenden
 },
 "nodeset": { "out": 2.5 },   // Startwerte für den Arbeitspunkt (z. B. bistabile Schaltungen)
 "ic": { "c1": 5 }            // Knotenspannungen bei t = 0 für "uic"
@@ -937,15 +942,17 @@ src/core/      generischer DAE-Kern (hängt nur von Eigen ab)   -> Bibliothek es
   Transient        BDF variabler Ordnung, BDF2, Trapez, Rückwärts-Euler;
                    Schrittweiten- und Ordnungssteuerung, Ereignissuche
   LinearSolver     dünnbesetzte LU-Zerlegung
+  StructuralIndex  Indexbestimmung nach Pantelides
+  History.hpp      Vorgeschichte für Totzeiten und Leitungen
 src/expr/      Ausdrücke: Parser, Auswertung, automatisches Differenzieren,
                Zerlegung von Gleichungen in q und f               (in esimcore)
 src/circuit/   das simulierte System als DaeSystem               -> Bibliothek esimcircuit
   Circuit          Knoten, Unbekannte, Stempeln aller Bauteile
   Device.hpp       Basisklasse und StampContext
   Symbols.hpp      Namen in Ausdrücken -> Unbekannte der Schaltung
-  devices/         R, C, L, Kopplung, Quellen, Diode, BJT, MOSFET,
-                   Equations (Gleichungsblock), Behavioral (B-Quelle),
-                   Switching (Schalter, ideale Diode)
+  devices/         R, C, L, Kopplung, Quellen, Diode, BJT, MOSFET, JFET,
+                   TransmissionLine, Equations (Gleichungsblock),
+                   Behavioral (B-Quelle), Switching (Schalter, ideale Diode)
   Analysis         Arbeitspunkt, AC-Analyse
 src/io/        JSON-Eingabe, SI-Zahlen, Ausgänge, CSV
 src/app/       Ablauf der Analysen aus der Eingabedatei, Messgrößen
@@ -967,6 +974,13 @@ Numerik in Kürze:
   sodass sie über eine gespeicherte Zuordnung direkt an ihren Platz
   geschrieben werden. Ist die Matrix gegenüber dem letzten Schritt unverändert
   (lineare Schaltung bei gleicher Schrittweite), entfällt die Zerlegung ganz.
+  Bei nichtlinearen Schaltungen wird die zerlegte Matrix der ersten
+  Newton-Iteration eines Zeitschritts für die folgenden weiterverwendet,
+  solange jede Iteration die Korrektur mindestens halbiert und kein Bauteil
+  seine Spannungen begrenzt (modifiziertes Newton-Verfahren). Das halbiert die
+  Zahl der Zerlegungen bei praktisch gleicher Zahl von Iterationen und spart
+  in den Testschaltungen rund 20 % Rechenzeit; `"reuse_jacobian": false`
+  schaltet es ab.
 - **Anfangspunkt einer Transientenanalyse**: dasselbe Problem, wobei für jeden
   Zustand mit vorgegebenem Anfangswert eine Differentialgleichung durch
   "Zustand = Anfangswert" ersetzt wird. Algebraische Unbekannte ergeben sich
@@ -1062,8 +1076,13 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET), dazu ein
   EKV-artiges MOSFET-Modell. Industrielle Kurzkanal-Modelle (BSIM) und
   verlustbehaftete Leitungen fehlen.
-- **Große Schaltungen**: Getestet mit einigen tausend Knoten. Es gibt keine
-  Parallelisierung und kein Überspringen ruhender Schaltungsteile; die
+- **Große Schaltungen**: Getestet mit bis zu 40 000 Knoten. Eine einzelne
+  Simulation rechnet auf einem Kern; parallel laufen nur die Läufe einer
+  Parameterstudie. Ein Versuch, die Bauteile einer Schaltung auf mehreren
+  Kernen auszuwerten, brachte bei 20 000 Dioden und bei 3000 Transistoren
+  höchstens 10 % und wurde verworfen: Das Zusammenführen der Teilergebnisse
+  kostet so viel, wie die Aufteilung spart, und die Matrixzerlegung bleibt
+  ohnehin seriell. Ruhende Schaltungsteile werden nicht übersprungen; die
   Rechenzeit wächst mit der Zahl der Bauteile mal der Zahl der Zeitschritte.
 - **Potentialfreie Schaltungsteile** (Sekundärseite eines Transformators,
   Brückengleichrichter) brauchen einen Gleichstrompfad nach Masse, z. B. einen

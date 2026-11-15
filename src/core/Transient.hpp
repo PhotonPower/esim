@@ -33,6 +33,9 @@ struct TransientOptions {
     double outputStep = 0.0;
     int maxEvents = 100000;  // guard against endless switching (chattering)
     NewtonOptions newton{20, 1e-4};
+    // Reuse the factorized Jacobian within a step while the Newton iteration
+    // converges fast (see NewtonOptions::reuseJacobian).
+    bool reuseJacobian = true;
 };
 
 struct TransientStats {
@@ -40,6 +43,7 @@ struct TransientStats {
     int rejected = 0;        // steps rejected by the truncation error estimate
     int newtonFailures = 0;  // steps repeated because Newton did not converge
     int newtonIterations = 0;
+    int factorizations = 0;  // matrix factorizations (fewer than iterations: Jacobians were reused)
     int events = 0;          // located sign changes of event functions
     int maxOrder = 1;        // highest order of an accepted step
 };

@@ -48,6 +48,10 @@ NewtonResult NewtonSolver::solve(DaeSystem& sys, double t, double a, const Vecto
     abstol_.resize(n);
     for (int i = 0; i < n; ++i) abstol_[i] = sys.absTol(i);
 
+    bool haveLu = false;   // lin_ holds a Jacobian of this solve
+    bool refresh = false;  // it has become too inaccurate
+    double previous = 0.0; // size of the last correction, in units of the tolerance
+
     for (int it = 0; it < opt.maxIter; ++it) {
         const bool limit = it > 0 || opt.limitFromMemory;
         sys.evaluate(t, x, limit ? LimitMode::On : LimitMode::Init, ev_);
@@ -58,7 +62,10 @@ NewtonResult NewtonSolver::solve(DaeSystem& sys, double t, double a, const Vecto
         r_ = ev_.f + a * ev_.q;
         if (b) r_ += *b;
 
-        assemble(a, n);
+        // Modified Newton: the Jacobian of an earlier iterate is good enough
+        // while the corrections keep shrinking fast.
+        const bool reuse = opt.reuseJacobian && haveLu && !refresh && !ev_.limited;
+        if (!reuse) assemble(a, n);
 
         if (!r_.allFinite()) {
             res.singular = true;
@@ -87,9 +94,14 @@ NewtonResult NewtonSolver::solve(DaeSystem& sys, double t, double a, const Vecto
             }
         }
 
-        if (!lin_.factorize(J_)) {
-            res.singular = true;
-            return res;
+        if (!reuse) {
+            if (!lin_.factorize(J_)) {
+                res.singular = true;
+                return res;
+            }
+            ++res.factorizations;
+            haveLu = true;
+            refresh = false;
         }
         dx_ = lin_.solve(-r_);
         if (!dx_.allFinite()) {
@@ -98,18 +110,27 @@ NewtonResult NewtonSolver::solve(DaeSystem& sys, double t, double a, const Vecto
         }
         x += dx_;
 
-        if (ev_.limited) continue;  // residual was evaluated at a damped point
+        if (ev_.limited) {  // residual was evaluated at a damped point
+            refresh = true;
+            continue;
+        }
 
-        bool converged = true;
+        // Largest correction relative to its tolerance.
+        double size = 0.0;
         for (int i = 0; i < n; ++i) {
             const double tol =
                 opt.reltol * std::max(std::abs(x[i]), std::abs(x[i] - dx_[i])) + abstol_[i];
-            if (std::abs(dx_[i]) > tol) {
-                converged = false;
-                break;
-            }
+            size = std::max(size, std::abs(dx_[i]) / tol);
         }
-        if (converged) {
+        // With an old Jacobian the correction says how far the solution still
+        // is only if the iteration contracts well.
+        const bool slow = reuse && size > 0.5 * previous;
+        previous = size;
+        if (slow) {
+            refresh = true;
+            continue;
+        }
+        if (size <= 1.0) {
             res.converged = true;
             return res;
         }

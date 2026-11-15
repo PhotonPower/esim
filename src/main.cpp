@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -11,13 +12,14 @@
 namespace {
 
 void usage() {
-    std::cout << "usage: esim <netlist.json> [-o <output directory>] [--summary <file.json>]\n"
+    std::cout << "usage: esim <netlist.json> [-o <output directory>] [--summary <file.json>] [-j <n>]\n"
                  "\n"
                  "Runs the analyses listed in the netlist. Sweep and transient results\n"
                  "are written to <output directory>/<netlist name>.<analysis>.csv\n"
                  "(default output directory: current directory).\n"
                  "--summary writes a machine-readable description of all results\n"
-                 "(files, operating point values, measurements) for use by other programs.\n";
+                 "(files, operating point values, measurements) for use by other programs.\n"
+                 "-j <n> computes n runs of a parameter study at the same time (default: all cores).\n";
 }
 
 }  // namespace
@@ -44,6 +46,12 @@ int main(int argc, char** argv) {
                 return 2;
             }
             summaryPath = argv[++i];
+        } else if (arg == "-j" || arg == "--threads") {
+            if (i + 1 >= argc || std::atoi(argv[i + 1]) < 1) {
+                std::cerr << "error: " << arg << " needs a number >= 1\n";
+                return 2;
+            }
+            cfg.threads = std::atoi(argv[++i]);
         } else if (input.empty() && !arg.empty() && arg[0] != '-') {
             input = arg;
         } else {

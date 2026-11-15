@@ -211,6 +211,7 @@ TransientStats runTransient(DaeSystem& sys, const Vector& x0, const Vector* q0,
     NewtonSolver newton;
     NewtonOptions nopt = opt.newton;
     nopt.limitFromMemory = true;
+    nopt.reuseJacobian = opt.reuseJacobian;
     int holdGrowth = 0;     // accepted steps without growth after a failed step
     int nextOrder = 1;      // variable order: order to use for the next step
     int stepsAtOrder = 0;   // accepted steps since the order was changed
@@ -249,6 +250,7 @@ TransientStats runTransient(DaeSystem& sys, const Vector& x0, const Vector* q0,
         xnew = xp;
         const NewtonResult nr = newton.solve(sys, tn, a0, &b, xnew, nopt);
         stats.newtonIterations += nr.iterations;
+        stats.factorizations += nr.factorizations;
         if (!nr.converged) return false;
         // f, q and dq/dx at the result: Newton already has them if it stopped
         // right after an evaluation (always so for a linear system).

@@ -77,7 +77,8 @@ add_library(esimcircuit
   src/io/Output.cpp
   src/app/Measure.cpp
   src/app/Runner.cpp)
-target_link_libraries(esimcircuit PUBLIC esimcore nlohmann_json::nlohmann_json)
+find_package(Threads REQUIRED)
+target_link_libraries(esimcircuit PUBLIC esimcore nlohmann_json::nlohmann_json Threads::Threads)
 target_compile_options(esimcircuit PRIVATE ${ESIM_WARNINGS})
 
 add_executable(esim src/main.cpp)

@@ -185,7 +185,7 @@ def _find_program(esim):
                     "set ESIM_BIN or pass esim=<path>")
 
 
-def run(netlist, parameters=None, analyses=None, outputs=None, esim=None, keep=None):
+def run(netlist, parameters=None, analyses=None, outputs=None, esim=None, keep=None, threads=None):
     """Simulate a netlist and return a Result.
 
     netlist     path of a netlist file, or the netlist as a dict
@@ -195,6 +195,9 @@ def run(netlist, parameters=None, analyses=None, outputs=None, esim=None, keep=N
     esim        path of the esim program (see the module text for the search order)
     keep        directory in which the result files are kept; default: a
                 temporary directory that is removed again
+    threads     runs of a parameter study computed at the same time (default:
+                all cores); use 1 when many simulations are started in parallel
+                from Python
 
     Raises EsimError with the simulator's message if the run fails.
     """
@@ -224,8 +227,10 @@ def run(netlist, parameters=None, analyses=None, outputs=None, esim=None, keep=N
         summary_path = os.path.join(workdir, "summary.json")
         with open(netlist_path, "w") as f:
             json.dump(spec, f)
-        proc = subprocess.run([program, netlist_path, "-o", workdir, "--summary", summary_path],
-                              capture_output=True, text=True)
+        command = [program, netlist_path, "-o", workdir, "--summary", summary_path]
+        if threads:
+            command += ["-j", str(int(threads))]
+        proc = subprocess.run(command, capture_output=True, text=True)
         log = proc.stdout + proc.stderr
         if proc.returncode != 0:
             message = [l for l in proc.stderr.splitlines() if l.startswith("error:")]

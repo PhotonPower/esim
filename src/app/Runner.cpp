@@ -1,9 +1,12 @@
 #include "app/Runner.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <exception>
 #include <random>
 #include <fstream>
+#include <functional>
 #include <cstdint>
 #include <Eigen/Dense>
 #include <filesystem>
@@ -13,6 +16,7 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 #include "app/Measure.hpp"
 #include "circuit/Analysis.hpp"
@@ -30,9 +34,20 @@ namespace {
 
 // A series of runs of one analysis (parameter sweep, Monte Carlo, fit): all
 // runs write to shared tables whose leading columns identify the run.
+//
+// Several runs are computed at the same time on different threads. A run
+// therefore does not write to the shared tables itself: it collects its
+// results in a RunBuffer, and the buffers are merged in the order of the runs.
+struct RunBuffer {
+    std::vector<std::string> header;        // columns of the curve table (empty: no curves)
+    std::vector<std::vector<double>> rows;
+    std::vector<std::string> measureNames;
+    std::vector<double> measures;
+    std::vector<double> captureX, captureY;  // fit: the captured curve
+};
+
 struct Sweep {
     std::vector<std::string> columns;  // names of the leading columns
-    std::vector<double> values;        // their values for the current run
     std::string path;                  // curves of all runs
     std::string measurePath;           // one row of measurements per run
     std::unique_ptr<CsvWriter> csv;
@@ -41,9 +56,40 @@ struct Sweep {
     std::vector<std::string> measureNames;
     std::vector<std::vector<double>> measureValues;
     bool writeMeasures = true;  // false: only collect them (sensitivities)
-    // Fit: the curve of one output is captured here instead of being measured.
+    // Fit: the curve of this output is captured instead of being measured.
     std::string capture;
-    std::vector<double> captureX, captureY;
+
+    // Take over the results of one run; `leading` are its values of the leading columns.
+    void merge(const std::vector<double>& leading, const RunBuffer& run) {
+        std::vector<double> line;
+        if (!run.header.empty()) {
+            if (!csv) {
+                std::vector<std::string> header = columns;
+                header.insert(header.end(), run.header.begin(), run.header.end());
+                csv = std::make_unique<CsvWriter>(path, header);
+            }
+            for (const std::vector<double>& row : run.rows) {
+                line = leading;
+                line.insert(line.end(), row.begin(), row.end());
+                csv->row(line);
+            }
+        }
+        if (run.measureNames.empty()) return;
+        if (measureNames.empty()) {
+            measureNames = run.measureNames;
+            measureValues.resize(measureNames.size());
+        }
+        for (size_t k = 0; k < run.measures.size(); ++k) measureValues[k].push_back(run.measures[k]);
+        if (!writeMeasures) return;
+        if (!measureCsv) {
+            std::vector<std::string> header = columns;
+            header.insert(header.end(), measureNames.begin(), measureNames.end());
+            measureCsv = std::make_unique<CsvWriter>(measurePath, header);
+        }
+        line = leading;
+        line.insert(line.end(), run.measures.begin(), run.measures.end());
+        measureCsv->row(line);
+    }
 };
 
 struct Context {
@@ -51,7 +97,8 @@ struct Context {
     const RunConfig& cfg;
     std::ostream& log;
     std::map<std::string, int> count;  // analyses run so far, per type
-    Sweep* sweep = nullptr;
+    const Sweep* sweep = nullptr;      // set inside a series of runs
+    RunBuffer* run = nullptr;          // where this run of the series puts its results
 
     Circuit& ckt() { return *nl.circuit; }
 
@@ -109,13 +156,9 @@ public:
             return;
         }
         if (c.sweep) {
-            if (!c.sweep->csv) {
-                header.insert(header.begin(), c.sweep->columns.begin(), c.sweep->columns.end());
-                c.sweep->csv = std::make_unique<CsvWriter>(c.sweep->path, header);
-            }
-            csv_ = c.sweep->csv.get();
+            run_ = c.run;
+            run_->header = header;
             path_ = c.sweep->path;
-            prefix_ = c.sweep->values;
         } else {
             path_ = outputPath(c, a, type);
             owned_ = std::make_unique<CsvWriter>(path_, header);
@@ -125,17 +168,15 @@ public:
 
     // Row consisting of a leading value (time, frequency, ...) and the probes.
     void row(double first, const std::vector<double>& rest) {
-        if (!csv_) return;
-        buffer_ = prefix_;
-        buffer_.push_back(first);
+        if (!csv_ && !run_) return;
+        buffer_.assign(1, first);
         buffer_.insert(buffer_.end(), rest.begin(), rest.end());
-        csv_->row(buffer_);
+        if (run_) run_->rows.push_back(buffer_);
+        else csv_->row(buffer_);
     }
     void row(const std::vector<double>& values) {
-        if (!csv_) return;
-        buffer_ = prefix_;
-        buffer_.insert(buffer_.end(), values.begin(), values.end());
-        csv_->row(buffer_);
+        if (run_) run_->rows.push_back(values);
+        else if (csv_) csv_->row(values);
     }
 
     // " -> file" for the log, or nothing if the curves are not saved.
@@ -151,9 +192,10 @@ public:
 
 private:
     CsvWriter* csv_ = nullptr;
+    RunBuffer* run_ = nullptr;  // inside a series: the rows are collected here
     std::unique_ptr<CsvWriter> owned_;
     std::string path_;
-    std::vector<double> prefix_, buffer_;
+    std::vector<double> buffer_;
 };
 
 // The measurements of one analysis: collects the curves they need while the
@@ -179,8 +221,8 @@ public:
 
     void report(Context& c, json* entry = nullptr) {
         if (capturing_) {
-            c.sweep->captureX = x_;
-            c.sweep->captureY = y_.back();
+            c.run->captureX = x_;
+            c.run->captureY = y_.back();
         }
         if (specs_.empty()) return;
         std::vector<double> results;
@@ -191,20 +233,8 @@ public:
                 (*entry)["measures"][specs_[k].name] = number(results[k]);
 
         if (c.sweep) {  // table: one row per run
-            Sweep& sw = *c.sweep;
-            if (sw.measureNames.empty()) {
-                for (const MeasureSpec& spec : specs_) sw.measureNames.push_back(spec.name);
-                sw.measureValues.resize(specs_.size());
-            }
-            for (size_t k = 0; k < results.size(); ++k) sw.measureValues[k].push_back(results[k]);
-            if (!sw.writeMeasures) return;
-            if (!sw.measureCsv) {
-                std::vector<std::string> header = sw.columns;
-                header.insert(header.end(), sw.measureNames.begin(), sw.measureNames.end());
-                sw.measureCsv = std::make_unique<CsvWriter>(sw.measurePath, header);
-            }
-            results.insert(results.begin(), sw.values.begin(), sw.values.end());
-            sw.measureCsv->row(results);
+            for (const MeasureSpec& spec : specs_) c.run->measureNames.push_back(spec.name);
+            c.run->measures = results;
             return;
         }
         size_t width = 0;
@@ -322,12 +352,8 @@ void runOp(Context& c, const json& a) {
         for (const Probe& p : probes) row.push_back(p.value(x));
         table.row(row);
         // The outputs are the quantities a study of the operating point looks at.
-        Sweep& sw = *c.sweep;
-        if (sw.measureNames.empty()) {
-            sw.measureNames = labels(probes);
-            sw.measureValues.resize(probes.size());
-        }
-        for (size_t k = 0; k < row.size(); ++k) sw.measureValues[k].push_back(row[k]);
+        c.run->measureNames = labels(probes);
+        c.run->measures = row;
         return;
     }
     c.log << "[op] converged after " << info.iterations << " iterations (" << info.strategy
@@ -425,6 +451,7 @@ TransientOptions transientOptions(Context& c, const json& a, const char* where, 
     to.peakFloor = so.lteFloor;
     to.newton.maxIter = so.maxIterTran;
     to.newton.reltol = so.reltol;
+    to.reuseJacobian = so.reuseJacobian;
     return to;
 }
 
@@ -516,6 +543,8 @@ void runTran(Context& c, const json& a) {
     c.log << (uic ? ", uic" : "") << ": " << stats.accepted << " steps (" << stats.rejected
           << " rejected, " << stats.newtonFailures << " Newton failures), "
           << stats.newtonIterations << " Newton iterations";
+    if (stats.factorizations < stats.newtonIterations)
+        c.log << ", " << stats.factorizations << " factorizations";
     if (stats.events > 0) c.log << ", " << stats.events << " events";
     c.log << table.arrow() << '\n';
     json* e = c.entry(a, "tran");
@@ -525,6 +554,7 @@ void runTran(Context& c, const json& a) {
                          {"rejected", stats.rejected},
                          {"newton_failures", stats.newtonFailures},
                          {"newton_iterations", stats.newtonIterations},
+                         {"factorizations", stats.factorizations},
                          {"events", stats.events},
                          {"max_order", stats.maxOrder}};
     }
@@ -884,23 +914,80 @@ const std::string& definedParameter(Context& c, const std::string& name, const c
     return name;
 }
 
+using ParameterSet = std::vector<std::pair<std::string, double>>;
+
 // One run of an analysis with changed parameters. Parameters are resolved
-// while the input is read, so every run gets a freshly built system.
-void runWith(Context& c, Sweep& sweep, const json& inner, const std::string& type,
-             const std::vector<std::pair<std::string, double>>& parameters) {
+// while the input is read, so every run gets a freshly built system. Nothing
+// outside of `out` is written, so that runs can execute at the same time.
+void runWith(Context& c, const Sweep& sweep, const json& inner, const std::string& type,
+             const ParameterSet& parameters, RunBuffer& out) {
     json root = c.nl.source;
     for (const auto& [name, value] : parameters) root["parameters"][name] = value;
     Netlist sub = parseNetlist(root, /*warnings=*/false, c.nl.baseDir);
     std::ostringstream quiet;  // per-run progress is not reported
-    Context sc{sub, c.cfg, quiet, {}, &sweep};  // sc.entry() stays silent inside a series
+    Context sc{sub, c.cfg, quiet, {}, &sweep, &out};  // sc.entry() stays silent inside a series
     runOne(sc, inner, type);
 }
 
-std::string describe(const std::vector<std::pair<std::string, double>>& parameters) {
+std::string describe(const ParameterSet& parameters) {
     std::ostringstream os;
     for (size_t k = 0; k < parameters.size(); ++k)
         os << (k ? ", " : "") << parameters[k].first << " = " << parameters[k].second;
     return os.str();
+}
+
+// Run the analysis once per parameter set, several runs at a time, and merge
+// the results in the order of the sets. leading[k] are the values of the
+// leading table columns of run k, where(k) the start of an error message.
+// onDone is called for every run after its results have been merged.
+void runSeries(Context& c, Sweep& sweep, const json& inner, const std::string& type,
+               const std::vector<ParameterSet>& sets, const std::vector<std::vector<double>>& leading,
+               const std::function<std::string(size_t)>& where,
+               const std::function<void(size_t, RunBuffer&)>& onDone = nullptr) {
+    size_t threads = c.cfg.threads > 0 ? static_cast<size_t>(c.cfg.threads)
+                                       : std::max(1u, std::thread::hardware_concurrency());
+    threads = std::min(threads, sets.size());
+    // The runs are handed out in blocks, so that only the results of one block
+    // are held in memory at a time; within a block every thread takes the
+    // next run that is still to do.
+    const size_t block = threads * 16;
+    for (size_t first = 0; first < sets.size(); first += block) {
+        const size_t count = std::min(block, sets.size() - first);
+        std::vector<RunBuffer> buffers(count);
+        std::vector<std::exception_ptr> errors(count);
+        std::atomic<size_t> next{0};
+        std::atomic<bool> failed{false};
+        // After a failure no further runs are started. The runs are taken in
+        // order, so all runs before the failed one are complete.
+        const auto worker = [&]() {
+            for (size_t j; !failed && (j = next++) < count;) {
+                try {
+                    runWith(c, sweep, inner, type, sets[first + j], buffers[j]);
+                } catch (...) {
+                    errors[j] = std::current_exception();
+                    failed = true;
+                }
+            }
+        };
+        if (threads == 1) {
+            worker();
+        } else {
+            std::vector<std::thread> pool;
+            for (size_t k = 0; k < std::min(threads, count); ++k) pool.emplace_back(worker);
+            for (std::thread& t : pool) t.join();
+        }
+        for (size_t j = 0; j < count; ++j) {
+            if (errors[j]) {
+                try {
+                    std::rethrow_exception(errors[j]);
+                } catch (const std::exception& e) {
+                    throw std::runtime_error(where(first + j) + ": " + e.what());
+                }
+            }
+            sweep.merge(leading[first + j], buffers[j]);
+            if (onDone) onDone(first + j, buffers[j]);
+        }
+    }
 }
 
 // "param_sweep": one sweep, or a list of sweeps that are nested (the first
@@ -921,21 +1008,16 @@ void runParamSweep(Context& c, const json& a, const std::string& type) {
 
     json inner = a;
     inner.erase("param_sweep");
-    size_t runs = 0;
+    std::vector<ParameterSet> sets;
+    std::vector<std::vector<double>> leading;
     std::vector<size_t> index(axes.size(), 0);
     for (bool done = false; !done;) {
-        std::vector<std::pair<std::string, double>> parameters;
-        sweep.values.clear();
+        sets.emplace_back();
+        leading.emplace_back();
         for (size_t k = 0; k < axes.size(); ++k) {
-            parameters.emplace_back(sweep.columns[k], axes[k][index[k]]);
-            sweep.values.push_back(axes[k][index[k]]);
+            sets.back().emplace_back(sweep.columns[k], axes[k][index[k]]);
+            leading.back().push_back(axes[k][index[k]]);
         }
-        try {
-            runWith(c, sweep, inner, type, parameters);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("param_sweep, " + describe(parameters) + ": " + e.what());
-        }
-        ++runs;
         // Advance like an odometer; the last parameter runs fastest.
         done = true;
         for (size_t k = axes.size(); k-- > 0;) {
@@ -946,6 +1028,9 @@ void runParamSweep(Context& c, const json& a, const std::string& type) {
             index[k] = 0;
         }
     }
+    const size_t runs = sets.size();
+    runSeries(c, sweep, inner, type, sets, leading,
+              [&](size_t k) { return "param_sweep, " + describe(sets[k]); });
 
     c.log << "[" << type << "] sweep of";
     for (size_t k = 0; k < axes.size(); ++k)
@@ -1022,21 +1107,21 @@ void runMonteCarlo(Context& c, const json& a, const std::string& type) {
     if (!a.contains("measure"))
         throw std::runtime_error("monte_carlo: the analysis needs \"measure\" (the statistics are "
                                  "taken over the measurements)");
+    // All random numbers are drawn here, in the order of the runs: the result
+    // does not depend on how the runs are distributed over the threads.
+    std::vector<ParameterSet> sets(static_cast<size_t>(runs));
+    std::vector<std::vector<double>> leading(static_cast<size_t>(runs));
     for (int run = 0; run < runs; ++run) {
-        std::vector<std::pair<std::string, double>> parameters;
-        sweep.values = {static_cast<double>(run)};
+        leading[static_cast<size_t>(run)] = {static_cast<double>(run)};
         for (const Varied& p : varied) {
             const double value = p.nominal + p.spread * (p.gauss ? normal() : 2.0 * uniform() - 1.0);
-            parameters.emplace_back(p.name, value);
-            sweep.values.push_back(value);
-        }
-        try {
-            runWith(c, sweep, inner, type, parameters);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("monte_carlo, run " + std::to_string(run) + " (" +
-                                     describe(parameters) + "): " + e.what());
+            sets[static_cast<size_t>(run)].emplace_back(p.name, value);
+            leading[static_cast<size_t>(run)].push_back(value);
         }
     }
+    runSeries(c, sweep, inner, type, sets, leading, [&](size_t k) {
+        return "monte_carlo, run " + std::to_string(k) + " (" + describe(sets[k]) + ")";
+    });
 
     c.log << "[" << type << "] monte carlo: " << runs << " runs -> " << sweep.measurePath << '\n';
     json* e = c.entry(a, type);
@@ -1195,18 +1280,23 @@ void runFit(Context& c, const json& a) {
     inner.erase("measure");
     int evaluations = 0;
     std::vector<double> model(dx.size());
-    auto residuals = [&](const Eigen::VectorXd& v, Eigen::VectorXd& r) {
-        std::vector<std::pair<std::string, double>> parameters;
-        for (Eigen::Index k = 0; k < np; ++k) parameters.emplace_back(fitted[static_cast<size_t>(k)].name, value(v, k));
-        try {
-            runWith(c, sweep, inner, innerType, parameters);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("fit, " + describe(parameters) + ": " + e.what());
-        }
-        ++evaluations;
+    // Residuals for several parameter vectors at once (the simulations run in parallel).
+    std::function<void(const Eigen::VectorXd&, Eigen::VectorXd&, const RunBuffer&)> fromCurve;
+    auto residualsOf = [&](const std::vector<Eigen::VectorXd>& vs, std::vector<Eigen::VectorXd>& rs) {
+        std::vector<ParameterSet> sets(vs.size());
+        for (size_t j = 0; j < vs.size(); ++j)
+            for (Eigen::Index k = 0; k < np; ++k)
+                sets[j].emplace_back(fitted[static_cast<size_t>(k)].name, value(vs[j], k));
+        rs.resize(vs.size());
+        runSeries(c, sweep, inner, innerType, sets, std::vector<std::vector<double>>(vs.size()),
+                  [&](size_t j) { return "fit, " + describe(sets[j]); },
+                  [&](size_t j, RunBuffer& run) { fromCurve(vs[j], rs[j], run); });
+        evaluations += static_cast<int>(vs.size());
+    };
+    fromCurve = [&](const Eigen::VectorXd&, Eigen::VectorXd& r, const RunBuffer& run) {
         r.resize(nd);
         for (Eigen::Index i = 0; i < nd; ++i) {
-            const double m = interpolate(sweep.captureX, sweep.captureY, dx[static_cast<size_t>(i)]);
+            const double m = interpolate(run.captureX, run.captureY, dx[static_cast<size_t>(i)]);
             const double d = dy[static_cast<size_t>(i)];
             if (std::isnan(m))
                 throw std::runtime_error("fit: the data point x = " + std::to_string(dx[static_cast<size_t>(i)]) +
@@ -1221,6 +1311,11 @@ void runFit(Context& c, const json& a) {
             }
         }
     };
+    auto residuals = [&](const Eigen::VectorXd& v, Eigen::VectorXd& r) {
+        std::vector<Eigen::VectorXd> rs;
+        residualsOf({v}, rs);
+        r = rs[0];
+    };
 
     // Levenberg-Marquardt
     const int maxIterations = a.value("max_iterations", 50);
@@ -1232,12 +1327,16 @@ void runFit(Context& c, const json& a) {
     Eigen::MatrixXd J(nd, np);
     int iterations = 0;
     for (; iterations < maxIterations; ++iterations) {
-        for (Eigen::Index k = 0; k < np; ++k) {  // forward differences
-            const double h = 1e-4 * std::max(std::abs(u[k]), 1e-3);
-            uTrial = u;
-            uTrial[k] += h;
-            residuals(uTrial, rTrial);
-            J.col(k) = (rTrial - r) / h;
+        {  // forward differences, one simulation per parameter
+            std::vector<Eigen::VectorXd> trials(static_cast<size_t>(np), u), rs;
+            std::vector<double> h(static_cast<size_t>(np));
+            for (Eigen::Index k = 0; k < np; ++k) {
+                h[static_cast<size_t>(k)] = 1e-4 * std::max(std::abs(u[k]), 1e-3);
+                trials[static_cast<size_t>(k)][k] += h[static_cast<size_t>(k)];
+            }
+            residualsOf(trials, rs);
+            for (Eigen::Index k = 0; k < np; ++k)
+                J.col(k) = (rs[static_cast<size_t>(k)] - r) / h[static_cast<size_t>(k)];
         }
         const Eigen::MatrixXd JtJ = J.transpose() * J;
         const Eigen::VectorXd g = J.transpose() * r;
@@ -1320,18 +1419,25 @@ void runSensitivity(Context& c, const json& a) {
 
     Sweep sweep;
     sweep.writeMeasures = false;
-    auto quantities = [&](const std::vector<std::pair<std::string, double>>& changed) {
-        try {
-            runWith(c, sweep, inner, innerType, changed);
-        } catch (const std::exception& e) {
-            throw std::runtime_error("sens" + (changed.empty() ? std::string() : ", " + describe(changed)) +
-                                     ": " + e.what());
-        }
+    // All simulations in one series: the nominal one, then two per parameter.
+    std::vector<ParameterSet> sets(1);
+    std::vector<int> firstRun(params.size(), -1);  // run with the raised value, -1: skipped
+    for (size_t k = 0; k < params.size(); ++k) {
+        const double p0 = c.ckt().parameters.at(params[k]);
+        if (p0 == 0.0) continue;
+        const double h = delta * std::abs(p0);
+        firstRun[k] = static_cast<int>(sets.size());
+        sets.push_back({{params[k], p0 + h}});
+        sets.push_back({{params[k], p0 - h}});
+    }
+    runSeries(c, sweep, inner, innerType, sets, std::vector<std::vector<double>>(sets.size()),
+              [&](size_t k) { return "sens" + (sets[k].empty() ? std::string() : ", " + describe(sets[k])); });
+    const auto quantities = [&](int run) {
         std::vector<double> q;
-        for (const auto& column : sweep.measureValues) q.push_back(column.back());
+        for (const auto& column : sweep.measureValues) q.push_back(column[static_cast<size_t>(run)]);
         return q;
     };
-    const std::vector<double> nominal = quantities({});
+    const std::vector<double> nominal = quantities(0);
     const std::vector<std::string> names = sweep.measureNames;
 
     const std::string path = outputPath(c, a, "sens");
@@ -1355,14 +1461,15 @@ void runSensitivity(Context& c, const json& a) {
     c.log << "  " << std::left << std::setw(static_cast<int>(wp)) << "";
     for (const std::string& n : names) c.log << "  " << std::right << std::setw(static_cast<int>(wq)) << n;
     c.log << '\n';
-    for (const std::string& p : params) {
+    for (size_t pk = 0; pk < params.size(); ++pk) {
+        const std::string& p = params[pk];
         const double p0 = c.ckt().parameters.at(p);
-        if (p0 == 0.0) {
+        if (firstRun[pk] < 0) {
             c.log << "  " << std::left << std::setw(static_cast<int>(wp)) << p << "  (is 0, skipped)\n";
             continue;
         }
         const double h = delta * std::abs(p0);
-        const std::vector<double> up = quantities({{p, p0 + h}}), down = quantities({{p, p0 - h}});
+        const std::vector<double> up = quantities(firstRun[pk]), down = quantities(firstRun[pk] + 1);
         csv << p;
         c.log << "  " << std::left << std::setw(static_cast<int>(wp)) << p;
         for (size_t k = 0; k < names.size(); ++k) {

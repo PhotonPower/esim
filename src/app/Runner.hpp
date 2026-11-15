@@ -13,6 +13,9 @@ struct RunConfig {
     // If set, a machine-readable description of every analysis is appended:
     // type, name, result files, operating point values, measurements, statistics.
     nlohmann::json* summary = nullptr;
+    // Runs of a series (parameter sweep, Monte Carlo, sensitivities, fit) that
+    // are computed at the same time. 0: as many as the machine has cores.
+    int threads = 0;
 };
 
 // Run all analyses of the netlist in order. Progress and the operating point

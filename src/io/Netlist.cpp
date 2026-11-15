@@ -55,7 +55,9 @@ namespace {
 
 const double kInf = std::numeric_limits<double>::infinity();
 
-bool g_warnings = true;  // hints about unknown keys, see parseNetlist()
+// Hints about unknown keys, see parseNetlist(). Per thread: series of runs
+// read their netlists on several threads at once.
+thread_local bool g_warnings = true;
 
 std::ostream& warn() {
     static std::ostream discard(nullptr);
@@ -622,6 +624,7 @@ void parseOptions(const json& j, Netlist& nl) {
     s.reltol = p.num("reltol", s.reltol);
     s.trtol = p.num("trtol", s.trtol);
     s.lteFloor = p.num("lte_floor", s.lteFloor);
+    s.reuseJacobian = p.flag("reuse_jacobian", s.reuseJacobian);
     s.maxIterDc = static_cast<int>(p.num("maxiter_dc", s.maxIterDc));
     s.maxIterTran = static_cast<int>(p.num("maxiter_tran", s.maxIterTran));
     p.warnUnused();

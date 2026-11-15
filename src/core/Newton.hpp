@@ -12,12 +12,19 @@ struct NewtonOptions {
     // (set by an evaluation with LimitMode::Init): limit from the first
     // iteration on instead of trusting the start value.
     bool limitFromMemory = false;
+    // Keep the factorized Jacobian of the first iteration for the following
+    // ones as long as they converge quickly (modified Newton). Meant for the
+    // steps of a time integration, which start close to their solution; the
+    // matrix is factorized anew as soon as an iteration gains less than a
+    // factor of two, or a device limits its voltages.
+    bool reuseJacobian = false;
 };
 
 struct NewtonResult {
     bool converged = false;
     bool singular = false;  // Jacobian singular or residual not finite
     int iterations = 0;
+    int factorizations = 0;
     // The last evaluation was made at the returned x (nothing was changed
     // after it), so NewtonSolver::evaluation() holds f, q, G, C of the solution.
     bool evaluatedAtSolution = false;

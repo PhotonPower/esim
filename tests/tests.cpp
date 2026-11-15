@@ -2327,6 +2327,96 @@ void testStructuralIndex() {
               "index: warning names the constraint");
 }
 
+void testSpeedFeatures() {
+    // --- reuse of the factorized Jacobian: same result, about half the factorizations ---
+    const char* rectifier = R"json({
+        "options": {"reltol": 1e-5, "reuse_jacobian": %s},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "wave": {"type": "sin", "amplitude": 10, "freq": 50}},
+            {"type": "D", "name": "D1", "nodes": ["in", "out"], "is": 1e-12, "rs": 0.5, "cj0": "20p"},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "100u"},
+            {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 200}
+        ]})json";
+    double vout[2];
+    TransientStats st[2];
+    for (int k = 0; k < 2; ++k) {
+        char text[1024];
+        std::snprintf(text, sizeof text, rectifier, k == 0 ? "true" : "false");
+        Netlist nl = parseNetlistText(text);
+        TransientOptions to;
+        to.tstop = 0.06;
+        to.reltol = nl.options.reltol;
+        to.newton.reltol = nl.options.reltol;
+        to.reuseJacobian = nl.options.reuseJacobian;
+        nl.circuit->setTransientMode(true);
+        nl.circuit->setInitialPointMode(true);
+        const Vector x0 = solveOperatingPoint(*nl.circuit, nl.options);
+        nl.circuit->setInitialPointMode(false);
+        Vector last = x0;
+        st[k] = runTransient(*nl.circuit, x0, nullptr, to, [&](double, const Vector& x) { last = x; });
+        vout[k] = probe(*nl.circuit, last, "v(out)");
+    }
+    checkNear(vout[0], vout[1], 1e-4, "jacobian reuse: same result");
+    checkTrue(st[0].factorizations < 0.75 * st[0].newtonIterations, "jacobian reuse: fewer factorizations than iterations");
+    checkTrue(st[1].factorizations >= st[1].newtonIterations - st[1].accepted, "without reuse every iteration factorizes");
+    checkTrue(st[0].newtonIterations < 1.15 * st[1].newtonIterations, "jacobian reuse: no more iterations to speak of");
+    std::cout << "    rectifier: " << st[0].newtonIterations << " iterations, " << st[0].factorizations
+              << " factorizations (without reuse " << st[1].newtonIterations << ", " << st[1].factorizations << ")\n";
+
+    // --- series of runs on several threads: identical files ---
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "esim_tests";
+    const auto run = [&](const char* text, const std::string& stem, int threads) {
+        Netlist nl = parseNetlistText(text);
+        RunConfig cfg;
+        cfg.outDir = dir.string();
+        cfg.stem = stem;
+        cfg.threads = threads;
+        std::ostringstream log;
+        runAnalyses(nl, cfg, log);
+    };
+    const auto content = [&](const std::string& name) {
+        std::ifstream in(dir / name);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const char* study = R"json({
+        "parameters": {"R": "1k", "C": "1u"},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 0, "ac": 1,
+             "wave": {"type": "pulse", "v1": 0, "v2": 1, "rise": "1u"}},
+            {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R"},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "C"}
+        ],
+        "analyses": [
+            {"type": "tran", "tstop": "5m", "name": "sweep",
+             "param_sweep": [{"param": "R", "values": [500, 1000, 2000]}, {"param": "C", "values": ["0.5u", "1u", "2u"]}],
+             "measure": {"t50": {"cross": "v(out)", "level": 0.5}}},
+            {"type": "ac", "sweep": "dec", "points": 20, "fstart": 1, "fstop": "100k", "name": "mc",
+             "monte_carlo": {"runs": 40, "seed": 7, "vary": {"R": {"tol": 0.05}, "C": {"tol": 0.1}}},
+             "measure": {"fc": {"f3db": "v(out)"}}},
+            {"type": "sens", "name": "sens", "analysis": {"type": "tran", "tstop": "5m",
+             "measure": {"t50": {"cross": "v(out)", "level": 0.5}}}}
+        ],
+        "outputs": ["v(out)"]})json";
+    run(study, "par1", 1);
+    run(study, "par4", 4);
+    for (const char* file : {"sweep.csv", "sweep.measure.csv", "mc.measure.csv", "sens.csv"}) {
+        const std::string a = content(std::string("par1.") + file), b = content(std::string("par4.") + file);
+        checkTrue(!a.empty() && a == b, std::string("parallel runs: ") + file + " does not depend on the number of threads");
+    }
+    // A failing run is reported with its parameters, whichever thread it ran on.
+    std::string message;
+    try {
+        run(R"json({"parameters": {"R": 1},
+                    "components": [{"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 1},
+                                   {"type": "R", "name": "R1", "nodes": ["a", "0"], "value": "R"}],
+                    "analyses": [{"type": "op", "param_sweep": {"param": "R", "values": [1, 2, 3, 0, 5, 6, 7, 8]}}]})json",
+            "parfail", 4);
+    } catch (const std::exception& e) {
+        message = e.what();
+    }
+    checkTrue(message.find("param_sweep, R = 0") != std::string::npos, "parallel runs: the failing run is named");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -2566,6 +2656,7 @@ int main() {
         {"delays and transmission lines", testDelaysAndLines},
         {"vectors", testVectors},
         {"structural index", testStructuralIndex},
+        {"jacobian reuse and parallel runs", testSpeedFeatures},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},
