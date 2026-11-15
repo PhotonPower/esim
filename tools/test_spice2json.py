@@ -93,5 +93,15 @@ check(len(spice2json.warnings) == 2, "warnings for unsupported lines")
 check(line["components"] == [{"type": "T", "name": "t1", "nodes": ["a", "0", "b", "0"],
                               "z0": 50.0, "td": 1e-9}], "transmission line")
 
+spice2json.warnings.clear()
+lossy = spice2json.convert("title\nO1 a 0 b 0 cable\n.model cable LTRA(R=0.2 L=250n G=0 C=100p LEN=3)\n.end\n")
+check(not spice2json.warnings and lossy["components"] == [
+    {"type": "T", "name": "o1", "nodes": ["a", "0", "b", "0"], "r": 0.2, "l": 2.5e-7, "g": 0.0,
+     "c": 1e-10, "len": 3.0}], "lossy line with an LTRA model")
+check(esim.run(dict(lossy, components=lossy["components"] + [
+    {"type": "V", "name": "v1", "nodes": ["a", "0"], "dc": 1},
+    {"type": "R", "name": "rl", "nodes": ["b", "0"], "value": 50}], analyses=[{"type": "op"}],
+    outputs=["v(b)"])).op.values["v(b)"] - 50 / 50.6 < 1e-9, "the lossy line runs")
+
 print("spice import:", "ok" if failures == 0 else f"{failures} failures")
 sys.exit(1 if failures else 0)

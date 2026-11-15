@@ -4,7 +4,7 @@
     python3 tools/spice2json.py amplifier.cir -o amplifier.json
     ./build/esim amplifier.json
 
-Understood: R C L K V I E G F H D Q M J X S T, .model, .subckt/.ends, .param,
+Understood: R C L K V I E G F H D Q M J X S T O, .model, .subckt/.ends, .param,
 .op .dc .ac .tran .noise .four, .ic .nodeset .temp .options .print/.plot.
 Sources: DC, AC, SIN, PULSE, PWL. Everything else is reported on stderr and
 left out. Names and nodes are converted to lower case (SPICE ignores case).
@@ -129,7 +129,7 @@ def source(name, parts, kind):
     return comp
 
 
-def element(line, models, switch_models):
+def element(line, models, switch_models, line_models):
     parts = tokens(line)
     name = parts[0].lower()
     kind = name[0].upper()
@@ -181,6 +181,14 @@ def element(line, models, switch_models):
             if key in named:
                 comp[key] = named[key]
         return comp
+    if kind == "O":  # lossy line with an LTRA model: R, L, G, C per unit length and LEN
+        model = line_models.get(node(4))
+        if model is None:
+            warn(f"{name}: line model {node(4)} not found, ignored")
+            return None
+        comp = {"type": "T", "name": name, "nodes": [node(0), node(1), node(2), node(3)]}
+        comp.update(model)
+        return comp
     if kind == "X":
         comp = {"type": "X", "name": name, "subcircuit": pos[-1].lower(),
                 "nodes": [p.lower() for p in pos[:-1]]}
@@ -206,6 +214,7 @@ def convert(text):
     title, lines = logical_lines(text)
     result = {"title": title}
     parameters, models, switch_models, subcircuits = {}, {}, {}, {}
+    line_models = {}
     options, ic, nodeset, outputs, analyses = {}, {}, {}, [], []
     components = []
     current = components  # where components are added (top level or a subcircuit)
@@ -223,13 +232,16 @@ def convert(text):
                     if src in named:
                         sw[dst] = named[src]
                 switch_models[name] = sw
+            elif kind == "ltra":
+                _, named = split_params(parts[3:])
+                line_models[name] = {k: named[k] for k in ("r", "l", "g", "c", "len") if k in named}
             else:
                 models[name] = re.sub(r"^\.model\s+\S+", f".model {name}", line, flags=re.I)
 
     for line in lines:
         low = line.lower()
         if not low.startswith("."):
-            comp = element(line, models, switch_models)
+            comp = element(line, models, switch_models, line_models)
             if comp:
                 current.append(comp)
             continue

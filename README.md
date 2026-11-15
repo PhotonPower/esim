@@ -135,8 +135,8 @@ Messgrößen, Statistik).
     python3 tools/spice2json.py examples/spice/amplifier.cir -o amplifier.json
     ./build/esim amplifier.json
 
-Übersetzt werden die Bauteile R, C, L, K, V, I, E, G, F, H, D, Q, M, J, X, S
-und T, die Quellenformen DC, AC, SIN, PULSE und PWL sowie `.model`, `.subckt`,
+Übersetzt werden die Bauteile R, C, L, K, V, I, E, G, F, H, D, Q, M, J, X, S,
+T und O (verlustbehaftete Leitung mit LTRA-Modell), die Quellenformen DC, AC, SIN, PULSE und PWL sowie `.model`, `.subckt`,
 `.param`, `.op`, `.dc`, `.ac`, `.tran`, `.noise`, `.four`, `.ic`, `.nodeset`,
 `.temp`, `.options` und `.print`. Namen und Knoten werden kleingeschrieben
 (SPICE unterscheidet keine Groß- und Kleinschreibung). Was nicht übersetzt
@@ -473,7 +473,7 @@ Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibun
 | `B`, `behavioral` | Verhaltensquelle | +, − | genau eines von `i`, `v`, `q`, `phi` (Ausdruck) |
 | `J`, `njf`, `pjf` | Sperrschicht-FET | D, G, S | `vto` `beta` `lambda` `is` `cgs` `cgd` `pb` `fc` `kf` `af` |
 | `K`, `coupling` | magnetische Kopplung | – | `inductors`: zwei Spulennamen, `k` (−1 < k < 1) |
-| `T`, `tline` | verlustlose Leitung | Tor 1 (+, −), Tor 2 (+, −) | `z0`, `td` (oder `f` und `nl` wie in SPICE) |
+| `T`, `tline` | Leitung | Tor 1 (+, −), Tor 2 (+, −) | `z0`, `td` (oder `f` und `nl` wie in SPICE, oder `l`, `c` je Länge mit `len`); Verluste `r`, `g` je Länge, `segments` |
 | `X`, `subcircuit` | Instanz eines Subcircuits | Anschlüsse in der Reihenfolge von `ports` | `subcircuit`, `parameters` |
 | `S`, `switch` | idealer Schalter | a, b [, Steuer+, Steuer−] | `control` (Ausdruck, bei zwei Knoten), `vt`, `vh`, `ron`, `roff`, `initial` |
 | `ideal_diode` | ideale Diode | Anode, Kathode | `vf`, `ron`, `roff` |
@@ -572,9 +572,18 @@ Modellumfang:
   beiden Toren gespeichert; kein Schritt ist länger als `td`, und Flanken
   setzen an ihrer Ankunftszeit einen Haltepunkt. Im Arbeitspunkt ist die
   Leitung eine Verbindung, in der AC-Analyse wirkt die Laufzeit exakt als
-  Phasendrehung. `i(T1)` ist der Strom in Tor 1. Verluste lassen sich durch
-  Widerstände vor und hinter der Leitung oder durch eine Kette aus RLC-Gliedern
-  (als Subcircuit) annähern.
+  Phasendrehung. `i(T1)` ist der Strom in Tor 1.
+- **Verlustbehaftete Leitung**: Mit dem Längswiderstand `r` und dem
+  Querleitwert `g` (je Längeneinheit, Länge `len`, Standard 1) wird die Leitung
+  in verlustlose Abschnitte geteilt, zwischen denen die Verluste als
+  Widerstände sitzen. Die Laufzeit bleibt exakt; der Fehler der Aufteilung
+  fällt mit dem Quadrat der Abschnittszahl. Ohne Angabe von `segments` wird sie
+  so gewählt, dass auf jeden Abschnitt höchstens ein Zehntel von `z0` entfällt
+  (im Test weicht die AC-Antwort dann um weniger als 0,5 % von der exakten
+  Lösung der Leitungsgleichungen ab). Jeder Abschnitt begrenzt den Zeitschritt
+  auf seine Laufzeit. Der Skineffekt (Verluste, die mit der Frequenz wachsen)
+  ist nicht modelliert. `i(T1)` ist hier der Strom in den ersten Abschnitt,
+  ohne den Anteil des ersten Querleitwerts.
 - **Temperatur**: `options.temp` ist die Temperatur der Schaltung, `tnom`
   (Standard 27 °C) die, für die die Modellparameter gelten. Skaliert werden die
   Sättigungsströme aller pn-Übergänge (`eg`, `xti`), die Stromverstärkung
@@ -1077,8 +1086,7 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   verwenden.
 - **Schaltungen**: Die Halbleitermodelle entsprechen den
   klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET), dazu ein
-  EKV-artiges MOSFET-Modell. Industrielle Kurzkanal-Modelle (BSIM) und
-  verlustbehaftete Leitungen fehlen.
+  EKV-artiges MOSFET-Modell. Industrielle Kurzkanal-Modelle (BSIM) fehlen.
 - **Große Schaltungen**: Getestet mit bis zu 40 000 Knoten. Eine einzelne
   Simulation rechnet auf einem Kern; parallel laufen nur die Läufe einer
   Parameterstudie. Ein Versuch, die Bauteile einer Schaltung auf mehreren

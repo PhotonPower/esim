@@ -500,13 +500,76 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
         }
         case 't': {
             needNodes(4, 4, "[port1+, port1-, port2+, port2-]");
-            double td;
-            if (p.has("td")) td = p.num("td");
-            else {  // electrical length at a frequency: "f" and "nl" (wavelengths), as in SPICE
-                if (!p.has("f")) throw std::runtime_error(p.where() + ": needs \"td\", or \"f\" and \"nl\"");
-                td = p.num("nl", 0.25) / p.num("f");
+            // Lossless part: z0 and td (or f and nl as in SPICE), or the
+            // inductance l and capacitance c per unit length with the length len.
+            const double len = p.num("len", 1.0);
+            if (!(len > 0.0)) throw std::runtime_error(p.where() + ": len must be > 0");
+            double z0, td;
+            if (p.has("l") || p.has("c")) {
+                const double l = p.num("l"), c = p.num("c");
+                if (!(l > 0.0) || !(c > 0.0)) throw std::runtime_error(p.where() + ": l and c must be > 0");
+                z0 = std::sqrt(l / c);
+                td = len * std::sqrt(l * c);
+            } else {
+                z0 = p.num("z0");
+                if (p.has("td")) td = p.num("td");
+                else {  // electrical length at a frequency: "f" and "nl" (wavelengths), as in SPICE
+                    if (!p.has("f")) throw std::runtime_error(p.where() + ": needs \"td\", or \"f\" and \"nl\"");
+                    td = p.num("nl", 0.25) / p.num("f");
+                }
             }
-            ckt.add(std::make_unique<TransmissionLine>(name, n[0], n[1], n[2], n[3], p.num("z0"), td));
+            // Losses: series resistance r and shunt conductance g per unit length.
+            const double rtot = p.num("r", 0.0) * len, gtot = p.num("g", 0.0) * len;
+            if (rtot < 0.0 || gtot < 0.0) throw std::runtime_error(p.where() + ": r and g must be >= 0");
+            if (rtot == 0.0 && gtot == 0.0) {
+                if (p.has("segments")) p.ignore("segments");
+                ckt.add(std::make_unique<TransmissionLine>(name, n[0], n[1], n[2], n[3], z0, td));
+                break;
+            }
+            // A lossy line is a chain of short lossless sections with the
+            // losses lumped between them:  r/2 - section - r/2, and g across
+            // every junction. The delay stays exact; the lumping error falls
+            // with the square of the loss per section, which the default keeps
+            // below a tenth of z0.
+            const double loss = std::max(rtot / z0, gtot * z0);
+            int sections = static_cast<int>(p.num("segments", std::min(200.0, std::max(1.0, std::ceil(10.0 * loss)))));
+            if (sections < 1 || sections > 10000)
+                throw std::runtime_error(p.where() + ": segments must be between 1 and 10000");
+            const double rhalf = rtot / (2.0 * sections), gpart = gtot / sections;
+            auto inner = [&](const std::string& tag) {
+                const int idx = ckt.node(name + "#" + tag);
+                ckt.setInternal(idx, true);
+                return idx;
+            };
+            auto shunt = [&](int node, double g, const std::string& tag) {
+                if (g > 0.0) ckt.add(std::make_unique<Resistor>(name + "#g" + tag, node, n[1], 1.0 / g));
+            };
+            int left = n[0];  // junction in front of the next section
+            shunt(left, 0.5 * gpart, "0");
+            for (int k = 1; k <= sections; ++k) {
+                const std::string tag = std::to_string(k);
+                const bool last = k == sections;
+                int a = left, b2 = last ? n[2] : inner("j" + tag);
+                if (rhalf > 0.0) {
+                    a = inner("a" + tag);
+                    const int bb = inner("b" + tag);
+                    ckt.add(std::make_unique<Resistor>(name + "#ra" + tag, left, a, rhalf));
+                    ckt.add(std::make_unique<Resistor>(name + "#rb" + tag, bb, b2, rhalf));
+                    // The first section carries the name, so that i(name) is the current into it.
+                    ckt.add(std::make_unique<TransmissionLine>(k == 1 ? name : name + "#t" + tag, a, n[1], bb,
+                                                               last ? n[3] : n[1], z0, td / sections));
+                } else {
+                    ckt.add(std::make_unique<TransmissionLine>(k == 1 ? name : name + "#t" + tag, a, n[1], b2,
+                                                               last ? n[3] : n[1], z0, td / sections));
+                }
+                if (last) {
+                    if (gpart > 0.0)
+                        ckt.add(std::make_unique<Resistor>(name + "#g" + tag, n[2], n[3], 2.0 / gpart));
+                } else {
+                    shunt(b2, gpart, tag);
+                }
+                left = b2;
+            }
             break;
         }
         case 'x':

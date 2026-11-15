@@ -2142,6 +2142,57 @@ void testDelaysAndLines() {
         }
     });
 
+    // --- lossy line ---
+    // DC: the series resistance and the shunt conductance. With g = 0 the line is a resistor.
+    Netlist lossyDc = parseNetlistText(R"json({"components": [
+        {"type": "V", "name": "V1", "nodes": ["src", "0"], "dc": 1},
+        {"type": "R", "name": "RS", "nodes": ["src", "in"], "value": 50},
+        {"type": "T", "name": "T1", "nodes": ["in", "0", "out", "0"], "z0": 50, "td": "5n", "r": 20},
+        {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 50}]})json");
+    const Vector xl = solveOperatingPoint(*lossyDc.circuit, lossyDc.options);
+    checkNear(probe(*lossyDc.circuit, xl, "v(out)"), 50.0 / 120.0, 1e-9, "lossy line: series resistance at DC");
+    checkNear(probe(*lossyDc.circuit, xl, "i(T1)"), 1.0 / 120.0, 1e-9, "lossy line: current into the line");
+
+    // AC against the exact solution of the telegrapher's equations:
+    // gamma = sqrt((R + jwL)(G + jwC)), zc = sqrt((R + jwL)/(G + jwC)),
+    // vout/vin = 1 / (cosh(gamma l) + zc/RL sinh(gamma l)).
+    const auto lossyAc = [&](const std::string& extra, double tol, const std::string& what) {
+        Netlist nl = parseNetlistText(R"json({"components": [
+            {"type": "V", "name": "V1", "nodes": ["src", "0"], "ac": 1},
+            {"type": "R", "name": "RS", "nodes": ["src", "in"], "value": 30},
+            {"type": "T", "name": "T1", "nodes": ["in", "0", "out", "0"], "l": 250e-9, "c": 100e-12,
+             "r": 15, "g": 2e-3, "len": 1.5)json" + extra + R"json(},
+            {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 120}]})json");
+        const Vector x0 = solveOperatingPoint(*nl.circuit, nl.options);
+        const Probe pi = parseProbe(*nl.circuit, "v(in)"), po = parseProbe(*nl.circuit, "v(out)");
+        double worst = 0.0;
+        runAc(*nl.circuit, x0, {1e6, 30e6, 100e6, 400e6}, [&](double f, const Eigen::VectorXcd& x) {
+            const std::complex<double> j(0, 1), zs = 15.0 + j * 2.0 * kPi * f * 250e-9,
+                                       yp = 2e-3 + j * 2.0 * kPi * f * 100e-12;
+            const std::complex<double> gl = std::sqrt(zs * yp) * 1.5, zc = std::sqrt(zs / yp);
+            const std::complex<double> zin = zc * (120.0 + zc * std::tanh(gl)) / (zc + 120.0 * std::tanh(gl));
+            const std::complex<double> vin = zin / (30.0 + zin);
+            const std::complex<double> vout = vin / (std::cosh(gl) + zc / 120.0 * std::sinh(gl));
+            worst = std::max({worst, std::abs(pi.phasor(x) - vin), std::abs(po.phasor(x) - vout)});
+        });
+        checkNear(worst, 0.0, tol, what);
+    };
+    lossyAc("", 5e-3, "lossy line: AC agrees with the telegrapher's equations (default sections)");
+    lossyAc(R"json(, "segments": 60)json", 1e-4, "lossy line: AC converges with the number of sections");
+
+    // Step response: the first arrival at a matched end is attenuated by exp(-r / (2 z0)).
+    Netlist lossyStep = parseNetlistText(R"json({
+        "options": {"reltol": 1e-5},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["src", "0"],
+             "wave": {"type": "pulse", "v1": 0, "v2": 1, "delay": "1n", "rise": "0.1n"}},
+            {"type": "R", "name": "RS", "nodes": ["src", "in"], "value": 50},
+            {"type": "T", "name": "T1", "nodes": ["in", "0", "out", "0"], "z0": 50, "td": "5n", "r": 10, "segments": 20},
+            {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 50}]})json");
+    const Trace tls = transient(lossyStep, 7e-9, IntegrationMethod::Bdf, false);
+    checkNear(at(lossyStep, tls, "v(out)", 6.5e-9), 0.5 * std::exp(-10.0 / 100.0), 2e-3,
+              "lossy line: attenuation of the first arrival");
+
     // --- delay() in expressions ---
     // A delayed copy of a signal.
     Netlist copy = parseNetlistText(R"json({
