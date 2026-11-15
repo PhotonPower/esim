@@ -1850,6 +1850,138 @@ void testMoreDevices() {
               "redefining a built-in function is rejected");
 }
 
+void testSteadyStateAndSensitivity() {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "esim_tests";
+    const auto runAll = [&](const std::string& text, const std::string& stem) {
+        Netlist nl = parseNetlistText(text);
+        RunConfig cfg;
+        cfg.outDir = dir.string();
+        cfg.stem = stem;
+        nlohmann::json summary = nlohmann::json::array();
+        cfg.summary = &summary;
+        std::ostringstream log;
+        runAnalyses(nl, cfg, log);
+        return summary;
+    };
+
+    // --- periodic steady state ---
+    // RC low-pass with a time constant of 100 periods, started far away. A linear
+    // circuit with one state is solved by a single extrapolation.
+    nlohmann::json s = runAll(R"json({
+        "options": {"reltol": 1e-6},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"],
+             "wave": {"type": "sin", "offset": 2, "amplitude": 1, "freq": "1k"}},
+            {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "1k"},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "100u", "ic": 0}
+        ],
+        "analyses": [{"type": "pss", "period": "1m", "uic": true, "periods": 2,
+                      "measure": {"mean": {"avg": "v(out)"}, "pp": {"pp": "v(out)"},
+                                  "end": {"final": "time"}}}],
+        "outputs": ["v(out)", "time"]})json", "pss_rc");
+    checkNear(s[0]["measures"]["mean"].get<double>(), 2.0, 5e-4, "pss: mean of the RC low-pass");
+    checkNear(s[0]["measures"]["pp"].get<double>(), 2.0 / std::sqrt(1.0 + std::pow(2.0 * kPi * 100.0, 2)),
+              1e-5, "pss: ripple of the RC low-pass");
+    checkNear(s[0]["measures"]["end"].get<double>(), 2e-3, 1e-12, "pss: the requested number of periods is written");
+    checkTrue(s[0]["periods_simulated"].get<int>() <= 5, "pss: a linear circuit needs a handful of periods");
+
+    // Rectifier that charges its capacitor slowly: compared with a long transient run.
+    s = runAll(R"json({
+        "options": {"reltol": 1e-6},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "wave": {"type": "sin", "amplitude": 10, "freq": 50}},
+            {"type": "R", "name": "RS", "nodes": ["in", "a"], "value": 100},
+            {"type": "D", "name": "D1", "nodes": ["a", "out"], "is": 1e-12},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "1000u"},
+            {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": "1k"}
+        ],
+        "analyses": [
+            {"type": "pss", "period": "20m", "measure": {"mean": {"avg": "v(out)"}, "pp": {"pp": "v(out)"}}},
+            {"type": "tran", "tstop": 6, "save": false,
+             "measure": {"mean": {"avg": "v(out)", "from": 5.98}, "pp": {"pp": "v(out)", "from": 5.98}}}
+        ],
+        "outputs": ["v(out)"]})json", "pss_rectifier");
+    checkNear(s[0]["measures"]["mean"].get<double>() / s[1]["measures"]["mean"].get<double>(), 1.0, 5e-4,
+              "pss: rectifier, mean as after 300 periods");
+    checkNear(s[0]["measures"]["pp"].get<double>() / s[1]["measures"]["pp"].get<double>(), 1.0, 5e-3,
+              "pss: rectifier, ripple as after 300 periods");
+    checkTrue(s[0]["periods_simulated"].get<int>() <= 12, "pss: rectifier needs few periods");
+
+    // Switched converter: two states, events in every period.
+    s = runAll(R"json({
+        "parameters": {"T": "10u"},
+        "components": [
+            {"type": "V", "name": "VIN", "nodes": ["in", "0"], "dc": 12},
+            {"type": "V", "name": "PWM", "nodes": ["gate", "0"],
+             "wave": {"type": "pulse", "v1": 0, "v2": 1, "rise": "T/1000", "fall": "T/1000",
+                      "width": "0.5*T", "period": "T"}},
+            {"type": "S", "name": "S1", "nodes": ["in", "sw", "gate", "0"], "vt": 0.5, "ron": "10m"},
+            {"type": "ideal_diode", "name": "D1", "nodes": ["0", "sw"], "vf": 0.4, "ron": "10m"},
+            {"type": "L", "name": "L1", "nodes": ["sw", "out"], "value": "100u"},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "100u"},
+            {"type": "R", "name": "RL", "nodes": ["out", "0"], "value": 5}
+        ],
+        "analyses": [
+            {"type": "pss", "period": "T",
+             "measure": {"vout": {"avg": "v(out)"}, "ripple": {"pp": "i(L1)"}}},
+            {"type": "tran", "tstop": "20m", "save": false,
+             "measure": {"vout": {"avg": "v(out)", "from": "20m - T"}, "ripple": {"pp": "i(L1)", "from": "20m - T"}}}
+        ],
+        "outputs": ["v(out)", "i(L1)"]})json", "pss_buck");
+    checkNear(s[0]["measures"]["vout"].get<double>(), s[1]["measures"]["vout"].get<double>(), 1e-3,
+              "pss: converter output as after 2000 periods");
+    checkNear(s[0]["measures"]["ripple"].get<double>() / s[1]["measures"]["ripple"].get<double>(), 1.0, 1e-2,
+              "pss: converter current ripple");
+    checkTrue(s[0]["periods_simulated"].get<int>() <= 12, "pss: converter needs few periods");
+
+    checkTrue(throws([&] {
+                  runAll(R"json({"components": [
+                      {"type": "V", "name": "V1", "nodes": ["a", "0"], "wave": {"type": "sin", "amplitude": 1, "freq": 1370}},
+                      {"type": "R", "name": "R1", "nodes": ["a", "b"], "value": "1k"},
+                      {"type": "C", "name": "C1", "nodes": ["b", "0"], "value": "1u"}],
+                      "analyses": [{"type": "pss", "period": "1m"}]})json", "pss_bad");
+              }),
+              "pss: a wrong period is reported");
+
+    // --- sensitivities ---
+    // Divider: v = V R2/(R1+R2), i(V1) = -V/(R1+R2); corner frequency 1/(2 pi (R1||R2) C).
+    s = runAll(R"json({
+        "parameters": {"R1": "1k", "R2": "3k", "V": 10, "C": "100n"},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": "V", "ac": 1},
+            {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R1"},
+            {"type": "R", "name": "R2", "nodes": ["out", "0"], "value": "R2"},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "C"}
+        ],
+        "analyses": [
+            {"type": "sens", "analysis": {"type": "op"}},
+            {"type": "sens", "parameters": ["R1", "R2", "C"], "delta": 0.02,
+             "analysis": {"type": "ac", "sweep": "dec", "points": 200, "fstart": 1, "fstop": "100k",
+                          "measure": {"f3db": {"f3db": "v(out)"}}}}
+        ],
+        "outputs": ["v(out)", "i(V1)"]})json", "sens");
+    const nlohmann::json& n0 = s[0]["normalized"];
+    checkNear(n0["R1"]["v(out)"].get<double>(), -0.25, 1e-6, "sens: divider, R1");
+    checkNear(n0["R2"]["v(out)"].get<double>(), 0.25, 1e-6, "sens: divider, R2");
+    checkNear(n0["V"]["v(out)"].get<double>(), 1.0, 1e-9, "sens: divider, source");
+    checkNear(n0["C"]["v(out)"].get<double>(), 0.0, 1e-12, "sens: divider, capacitor has no influence at DC");
+    checkNear(n0["R2"]["i(V1)"].get<double>(), -0.75, 1e-6, "sens: source current");
+    checkNear(s[0]["absolute"]["R2"]["v(out)"].get<double>(), 10.0 * 1e3 / 16e6, 1e-9, "sens: absolute value");
+    checkNear(s[0]["nominal"]["v(out)"].get<double>(), 7.5, 1e-9, "sens: nominal value");
+    const nlohmann::json& n1 = s[1]["normalized"];
+    checkNear(n1["R1"]["f3db"].get<double>(), -0.75, 3e-3, "sens: corner frequency, R1");
+    checkNear(n1["R2"]["f3db"].get<double>(), -0.25, 3e-3, "sens: corner frequency, R2");
+    checkNear(n1["C"]["f3db"].get<double>(), -1.0, 3e-3, "sens: corner frequency, C");
+    checkTrue(!n1.contains("V"), "sens: only the listed parameters");
+    checkTrue(throws([&] {
+                  runAll(R"json({"parameters": {"R": 1}, "components": [
+                      {"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 1},
+                      {"type": "R", "name": "R1", "nodes": ["a", "0"], "value": "R"}],
+                      "analyses": [{"type": "sens", "analysis": {"type": "tran", "tstop": 1}}]})json", "sens_bad");
+              }),
+              "sens: an analysis without measurements is rejected");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -2084,6 +2216,7 @@ int main() {
         {"noise", testNoise},
         {"fourier", testFourier},
         {"parameter studies", testParameterStudies},
+        {"steady state and sensitivity", testSteadyStateAndSensitivity},
         {"jfet, flux element, functions", testMoreDevices},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},

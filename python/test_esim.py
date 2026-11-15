@@ -83,5 +83,24 @@ res = esim.run(RC, analyses=[{"type": "tran", "tstop": "1m", "uic": True,
                               "measure": {"never": {"cross": "v(out)", "level": 5}}}])
 check(res.tran.measures["never"] is None, "undefined measurement is None")
 
+# --- periodic steady state and sensitivities ---
+divider = {
+    "parameters": {"R1": 1e3, "R2": 3e3},
+    "components": [
+        {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 10,
+         "wave": {"type": "sin", "offset": 10, "amplitude": 1, "freq": 1e3}},
+        {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R1"},
+        {"type": "R", "name": "R2", "nodes": ["out", "0"], "value": "R2"},
+        {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": 1e-5},
+    ],
+    "analyses": [{"type": "sens", "analysis": {"type": "op"}},
+                 {"type": "pss", "period": 1e-3, "measure": {"mean": {"avg": "v(out)"}}}],
+    "outputs": ["v(out)"],
+}
+res = esim.run(divider)
+check(abs(res.sens.sensitivities["R1"]["v(out)"] + 0.25) < 1e-6, "sensitivities")
+check(abs(res.pss.measures["mean"] - 7.5) < 1e-2, "periodic steady state")
+check(abs(res.pss["time"][-1] - 1e-3) < 1e-12, "steady state: one period of data")
+
 print("python interface:", "ok" if failures == 0 else f"{failures} failures")
 sys.exit(1 if failures else 0)

@@ -1,0 +1,30 @@
+{
+  // Which component decides the operating point and the gain of a transistor
+  // stage? The analysis "sens" changes every parameter a little and reports by
+  // how many percent each result changes per percent of the parameter.
+  "title": "Sensitivities of a common-emitter stage",
+
+  "parameters": { "R1": "47k", "R2": "10k", "RC": "4.7k", "RE": "1k", "BF": 200, "VCC": 12 },
+
+  "components": [
+    { "type": "V", "name": "VCC", "nodes": ["vcc", "0"], "dc": "VCC" },
+    { "type": "V", "name": "VIN", "nodes": ["in", "0"], "dc": 0, "ac": 1 },
+    { "type": "C", "name": "CIN", "nodes": ["in", "b"], "value": "10u" },
+    { "type": "R", "name": "R1", "nodes": ["vcc", "b"], "value": "R1" },
+    { "type": "R", "name": "R2", "nodes": ["b", "0"], "value": "R2" },
+    { "type": "npn", "name": "Q1", "nodes": ["c", "b", "e"], "bf": "BF", "is": 1e-14, "vaf": 100 },
+    { "type": "R", "name": "RC", "nodes": ["vcc", "c"], "value": "RC" },
+    { "type": "R", "name": "RE", "nodes": ["e", "0"], "value": "RE" },
+    { "type": "C", "name": "CE", "nodes": ["e", "0"], "value": "100u" }
+  ],
+
+  "analyses": [
+    // Operating point: the sensitivities of its outputs.
+    { "type": "sens", "name": "bias", "analysis": { "type": "op", "outputs": ["v(c)", "v(e)"] } },
+
+    // Any other analysis: the sensitivities of its measurements.
+    { "type": "sens", "name": "gain",
+      "analysis": { "type": "ac", "sweep": "dec", "points": 20, "fstart": 10, "fstop": "1Meg",
+                    "measure": { "gain_1k": { "at": "v(c)", "x": "1k" } } } }
+  ]
+}

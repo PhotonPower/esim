@@ -31,7 +31,15 @@
   ],
 
   "analyses": [
-    { "type": "tran", "tstop": "4m" }
+    { "type": "tran", "tstop": "4m" },
+
+    // The steady state directly: a few periods instead of the whole start-up.
+    { "type": "pss", "period": "T",
+      "measure": {
+        "vout":      { "avg": "v(out)" },
+        "v_ripple":  { "pp": "v(out)" },
+        "il_ripple": { "pp": "i(L1)" }
+      } }
   ],
 
   // Add "v(sw)" to see the switching node (a 100 kHz square wave).

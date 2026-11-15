@@ -78,6 +78,9 @@ public:
     UnknownKind kind(int i) const { return unknowns_[i].kind; }
     bool isInternal(int i) const { return unknowns_[i].internal; }
     void setInternal(int i, bool internal) { unknowns_[i].internal = internal; }
+    // Discrete unknowns only change at events (switch positions, sampled values).
+    bool isDiscrete(int i) const { return unknowns_[i].discrete; }
+    void setDiscrete(int i) { unknowns_[i].discrete = true; }
 
     // --- DaeSystem --------------------------------------------------------
     int size() const override { return static_cast<int>(unknowns_.size()); }
@@ -110,6 +113,7 @@ private:
         UnknownKind kind;
         bool internal;
         double abstol = -1.0;  // < 0: default of the kind
+        bool discrete = false;
     };
 
     std::vector<Unknown> unknowns_;

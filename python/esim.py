@@ -41,7 +41,7 @@ class EsimError(RuntimeError):
 class Analysis:
     """Result of one analysis.
 
-    type      "op", "dc", "ac" or "tran"
+    type      "op", "dc", "ac", "tran", "pss", "noise", "fit" or "sens"
     name      its name in the netlist (default: the type)
     data      {column name: values}; indexing the analysis looks up a column
     values    operating point: {output: value}
@@ -52,6 +52,7 @@ class Analysis:
               {"params": [...], "grid": [[...], ...]}, else None
     statistics  Monte Carlo: {measurement: {"mean", "std", "min", "max", "count"}}
     parameters  fit: {parameter: adjusted value}
+    sensitivities  sens: {parameter: {quantity: % change per % change}}
     info      the complete entry of the simulator's summary
     warnings  not per analysis, see Result.log
     """
@@ -69,6 +70,7 @@ class Analysis:
             self.measures = {k: v for k, v in measure_table.items() if k not in keys}
         self.statistics = entry.get("statistics", {})   # Monte Carlo: mean, std, min, max
         self.parameters = entry.get("parameters", {})   # fit: the adjusted values
+        self.sensitivities = entry.get("normalized", {})
         self.fourier = entry.get("fourier", {})
         self.info = entry                               # everything the simulator reported
 
@@ -106,7 +108,8 @@ class Result:
     """All analyses of one run, in the order of the netlist.
 
     res.analyses           list of Analysis
-    res.op / dc / ac / tran  the first analysis of that type (AttributeError if none)
+    res.op / dc / ac / tran / pss / noise / sens
+                           the first analysis of that type (AttributeError if none)
     res["name"]            the analysis with that name
     res.log                what the simulator printed, including warnings
     """
@@ -126,6 +129,9 @@ class Result:
     dc = property(lambda self: self._first("dc"))
     ac = property(lambda self: self._first("ac"))
     tran = property(lambda self: self._first("tran"))
+    pss = property(lambda self: self._first("pss"))
+    noise = property(lambda self: self._first("noise"))
+    sens = property(lambda self: self._first("sens"))
 
     def __getitem__(self, name):
         for a in self.analyses:
@@ -146,7 +152,13 @@ def _read_csv(path):
         rows = list(csv.reader(f))
     header, body = rows[0], rows[1:]
     columns = list(zip(*body)) if body else [[] for _ in header]
-    return {name: _array([float(v) for v in col]) for name, col in zip(header, columns)}
+    def column(col):
+        try:
+            return _array([float(v) for v in col])
+        except ValueError:  # a column of names (the parameters of a sensitivity table)
+            return list(col)
+
+    return {name: column(col) for name, col in zip(header, columns)}
 
 
 def _strip_comments(text):

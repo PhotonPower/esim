@@ -24,7 +24,10 @@ EquationBlock::EquationBlock(std::string name, std::vector<VariableSpec> variabl
 }
 
 void EquationBlock::setup(Circuit& ckt) {
-    for (const VariableSpec& v : vars_) index_.push_back(ckt.addVariable(v.name, v.abstol));
+    for (const VariableSpec& v : vars_) {
+        index_.push_back(ckt.addVariable(v.name, v.abstol));
+        if (v.discrete) ckt.setDiscrete(index_.back());
+    }
 }
 
 void EquationBlock::bind(Circuit& ckt) {

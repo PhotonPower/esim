@@ -62,6 +62,7 @@ Beispiele in [`examples/`](examples):
 | `pendulum.json` | Mechanik mit Zwangsbedingung (DAE vom Index 2) |
 | `monte_carlo_filter.json` | Toleranzanalyse (Monte Carlo) und verschachtelter Sweep |
 | `fit_diode.json` | Modellparameter an eine gemessene Kennlinie anpassen |
+| `sensitivity.json` | Empfindlichkeiten von Arbeitspunkt und Verstärkung einer Transistorstufe |
 | `saturating_inductor.json` | nichtlineare Induktivität über ihren Fluss, eigene Funktion |
 
 ### Ergebnisse plotten
@@ -558,6 +559,9 @@ Minus-Knoten, also negativ, solange die Quelle Leistung abgibt.
 | `ac` | `sweep` (`dec`/`oct`/`lin`), `points`, `fstart`, `fstop` | Betrag und Phase (Grad) je Ausgang |
 | `tran` | `tstop`, optional `tstep`, `hmax`, `hinit`, `hmin`, `method`, `max_order`, `uic`, `output_step`, `max_events`, `fourier` | Zeitverlauf |
 | `noise` | `output`, optional `input`, dazu `sweep`, `points`, `fstart`, `fstop` wie bei `ac` | Rauschdichte am Ausgang und auf den Eingang bezogen |
+| `pss` | `period`, optional `periods`, `tstab`, `tol`, `max_iterations` und die Angaben von `tran` | eingeschwungener periodischer Verlauf |
+| `sens` | `analysis`, optional `parameters`, `delta` | Empfindlichkeiten gegenüber Parametern |
+| `fit` | `analysis`, `output`, `data`, `parameters` | an Messdaten angepasste Parameter |
 
 Jede Analyse kann mit `"outputs": [...]` eigene Ausgänge und mit `"name"` einen
 eigenen Dateinamen bekommen.
@@ -588,6 +592,59 @@ Transientenanalyse:
   aus (interpoliert zwischen den Zeitpunkten des Lösers, die Schrittweite
   bleibt frei). Ohne diese Angabe wird jeder Zeitpunkt des Lösers ausgegeben.
 - `"max_events"` (Standard 100000) begrenzt die Zahl der Ereignisse.
+
+### Periodischer stationärer Zustand
+
+Schaltnetzteile, Gleichrichter oder Verstärker mit großen Koppelkondensatoren
+brauchen oft Tausende von Perioden, bis sie eingeschwungen sind. Die Analyse
+`pss` sucht den eingeschwungenen Zustand direkt:
+
+```jsonc
+{ "type": "pss", "period": "10u",
+  "measure": { "vout": { "avg": "v(out)" }, "ripple": { "pp": "v(out)" } } }
+```
+
+- `period` ist die Periode der Anregung. Alle Quellen müssen sich mit ihr
+  wiederholen; das wird geprüft.
+- Gesucht wird ein Zustand, der nach einer Periode wieder erreicht ist. Jede
+  Iteration rechnet eine Periode und schätzt aus den letzten Ergebnissen, wohin
+  die langsamen Vorgänge laufen (Anderson-Beschleunigung). Der Abwärtswandler
+  aus `examples/buck_converter.json` braucht so 5 Perioden statt etwa 2000.
+- Ergebnis ist eine Periode im eingeschwungenen Zustand (`"periods": n` für
+  mehrere); Messgrößen, `fourier` und `output_step` wirken wie bei `tran`.
+- `tol` (Standard 1e-4) ist die relative Abweichung, mit der sich der Zustand
+  nach einer Periode wiederholen muss. `tstab` rechnet vor der Suche eine Zeit
+  lang normal, was bei stark nichtlinearem Anlauf hilft.
+- Start wie bei `tran` (Arbeitspunkt oder `"uic": true`).
+
+Die Periode muss bekannt sein. Für selbstschwingende Schaltungen (Oszillatoren)
+ist die Analyse nicht gedacht, ebenso wenig für Zustände, die erst nach einem
+Schaltvorgang mit Gedächtnis erreicht werden (Hysterese, diskrete Variablen):
+Solche Größen werden von der Extrapolation nicht erfasst.
+
+### Empfindlichkeiten
+
+Die Analyse `sens` beantwortet die Frage, welche Parameter ein Ergebnis
+bestimmen. Sie ändert jeden Parameter um ±`delta` (relativ, Standard 1e-3),
+wiederholt die eingebettete Analyse und bildet den Differenzenquotienten:
+
+```jsonc
+{ "type": "sens", "parameters": ["R1", "R2", "C"],
+  "analysis": { "type": "ac", "sweep": "dec", "points": 100, "fstart": 1, "fstop": "100k",
+                "measure": { "fc": { "f3db": "v(out)" } } } }
+```
+
+- Betrachtet werden die Messgrößen der Analyse, bei `op` ihre Ausgänge.
+- Ohne `parameters` werden alle Einträge von `parameters` variiert.
+- Ausgegeben wird die normierte Empfindlichkeit: um wie viel Prozent sich das
+  Ergebnis ändert, wenn der Parameter um ein Prozent wächst. Die Tabelle steht
+  in `<Name>.sens.csv`; die Zusammenfassung (`--summary`) enthält zusätzlich
+  die absoluten Ableitungen.
+- Messgrößen, die aus abgetasteten Kurven stammen (Grenzfrequenzen,
+  Durchgangszeiten), sind nur so genau wie das Raster. Dann ein größeres
+  `delta` (z. B. 0.02) oder ein feineres Raster wählen.
+
+Der Aufwand sind zwei Rechnungen je Parameter.
 
 ### Fourier-Analyse
 

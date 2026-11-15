@@ -39,6 +39,7 @@ struct Sweep {
     // Measurements of all runs, for statistics.
     std::vector<std::string> measureNames;
     std::vector<std::vector<double>> measureValues;
+    bool writeMeasures = true;  // false: only collect them (sensitivities)
     // Fit: the curve of one output is captured here instead of being measured.
     std::string capture;
     std::vector<double> captureX, captureY;
@@ -143,7 +144,7 @@ public:
     // Name the curve file has or would have (other results are stored next to it).
     std::string fileName(Context& c, const json& a) const {
         if (!path_.empty()) return path_;
-        const std::string tag = a.value("name", std::string("tran"));
+        const std::string tag = a.value("name", a.value("type", std::string("tran")));
         return (std::filesystem::path(c.cfg.outDir) / (c.cfg.stem + "." + tag + ".csv")).string();
     }
 
@@ -190,16 +191,17 @@ public:
 
         if (c.sweep) {  // table: one row per run
             Sweep& sw = *c.sweep;
-            if (!sw.measureCsv) {
-                std::vector<std::string> header = sw.columns;
-                for (const MeasureSpec& spec : specs_) {
-                    header.push_back(spec.name);
-                    sw.measureNames.push_back(spec.name);
-                }
+            if (sw.measureNames.empty()) {
+                for (const MeasureSpec& spec : specs_) sw.measureNames.push_back(spec.name);
                 sw.measureValues.resize(specs_.size());
-                sw.measureCsv = std::make_unique<CsvWriter>(sw.measurePath, header);
             }
             for (size_t k = 0; k < results.size(); ++k) sw.measureValues[k].push_back(results[k]);
+            if (!sw.writeMeasures) return;
+            if (!sw.measureCsv) {
+                std::vector<std::string> header = sw.columns;
+                header.insert(header.end(), sw.measureNames.begin(), sw.measureNames.end());
+                sw.measureCsv = std::make_unique<CsvWriter>(sw.measurePath, header);
+            }
             results.insert(results.begin(), sw.values.begin(), sw.values.end());
             sw.measureCsv->row(results);
             return;
@@ -318,6 +320,13 @@ void runOp(Context& c, const json& a) {
         std::vector<double> row;
         for (const Probe& p : probes) row.push_back(p.value(x));
         table.row(row);
+        // The outputs are the quantities a study of the operating point looks at.
+        Sweep& sw = *c.sweep;
+        if (sw.measureNames.empty()) {
+            sw.measureNames = labels(probes);
+            sw.measureValues.resize(probes.size());
+        }
+        for (size_t k = 0; k < row.size(); ++k) sw.measureValues[k].push_back(row[k]);
         return;
     }
     c.log << "[op] converged after " << info.iterations << " iterations (" << info.strategy
@@ -396,29 +405,56 @@ IntegrationMethod parseMethod(const std::string& m) {
     throw std::runtime_error("tran: unknown method \"" + m + "\" (gear2, bdf, trap, be)");
 }
 
-void runTran(Context& c, const json& a) {
-    checkKeys(a, "tran",
-              {"type", "name", "outputs", "tstop", "tstep", "hmax", "hmin", "hinit", "method",
-               "uic", "output_step", "max_events", "max_order", "measure", "save", "fourier"},
-              c.log);
+// Options of a time integration over tstop, from the keys shared by "tran" and "pss".
+TransientOptions transientOptions(Context& c, const json& a, const char* where, double tstop) {
     const SimOptions& so = c.nl.options;
     TransientOptions to;
-    to.tstop = num(c, a, "tstop", "tran");
-    if (!(to.tstop > 0.0)) throw std::runtime_error("tran: tstop must be > 0");
+    to.tstop = tstop;
     // tstep is the resolution the user wants to see: no step is longer.
-    const double tstep = num(c, a, "tstep", "tran", 0.0);
-    to.hmax = num(c, a, "hmax", "tran", tstep > 0.0 ? std::min(tstep, to.tstop / 50.0) : 0.0);
-    to.hmin = num(c, a, "hmin", "tran", 0.0);
-    to.hinit = num(c, a, "hinit", "tran", 0.0);
+    const double tstep = num(c, a, "tstep", where, 0.0);
+    to.hmax = num(c, a, "hmax", where, tstep > 0.0 ? std::min(tstep, to.tstop / 50.0) : 0.0);
+    to.hmin = num(c, a, "hmin", where, 0.0);
+    to.hinit = num(c, a, "hinit", where, 0.0);
     to.method = parseMethod(a.value("method", std::string("bdf")));
-    to.outputStep = num(c, a, "output_step", "tran", 0.0);
-    to.maxEvents = static_cast<int>(num(c, a, "max_events", "tran", to.maxEvents));
-    to.maxOrder = static_cast<int>(num(c, a, "max_order", "tran", to.maxOrder));
+    to.outputStep = num(c, a, "output_step", where, 0.0);
+    to.maxEvents = static_cast<int>(num(c, a, "max_events", where, to.maxEvents));
+    to.maxOrder = static_cast<int>(num(c, a, "max_order", where, to.maxOrder));
     to.reltol = so.reltol;
     to.trtol = so.trtol;
     to.peakFloor = so.lteFloor;
     to.newton.maxIter = so.maxIterTran;
     to.newton.reltol = so.reltol;
+    return to;
+}
+
+// State at t = 0: the operating point with prescribed states held, or the
+// initial conditions ("uic"); q0 is set in the second case only.
+Vector initialPoint(Context& c, bool uic, Vector& q0) {
+    Circuit& ckt = c.ckt();
+    Vector x0;
+    if (uic) {
+        ckt.initialState(x0, q0);
+    } else {
+        ckt.setInitialPointMode(true);
+        try {
+            x0 = solveOperatingPoint(ckt, c.nl.options);
+        } catch (...) {
+            ckt.setInitialPointMode(false);
+            throw;
+        }
+        ckt.setInitialPointMode(false);
+    }
+    return x0;
+}
+
+void runTran(Context& c, const json& a) {
+    checkKeys(a, "tran",
+              {"type", "name", "outputs", "tstop", "tstep", "hmax", "hmin", "hinit", "method",
+               "uic", "output_step", "max_events", "max_order", "measure", "save", "fourier"},
+              c.log);
+    const double tstop = num(c, a, "tstop", "tran");
+    if (!(tstop > 0.0)) throw std::runtime_error("tran: tstop must be > 0");
+    const TransientOptions to = transientOptions(c, a, "tran", tstop);
     const bool uic = a.value("uic", false);
 
     const auto probes = probesFor(c, a);
@@ -432,15 +468,8 @@ void runTran(Context& c, const json& a) {
     ckt.setTransientMode(true);
     TransientStats stats;
     try {
-        Vector x0, q0;
-        if (uic) {
-            ckt.initialState(x0, q0);
-        } else {
-            // Initial point: DC solution with the prescribed states held.
-            ckt.setInitialPointMode(true);
-            x0 = solveOperatingPoint(ckt, so);
-            ckt.setInitialPointMode(false);
-        }
+        Vector q0;
+        const Vector x0 = initialPoint(c, uic, q0);
         std::vector<double> row;
         stats = runTransient(ckt, x0, uic ? &q0 : nullptr, to, [&](double t, const Vector& x) {
             row.clear();
@@ -450,7 +479,6 @@ void runTran(Context& c, const json& a) {
             fourierBlock.sample(t, x);
         });
     } catch (...) {
-        ckt.setInitialPointMode(false);
         ckt.setTransientMode(false);
         throw;
     }
@@ -471,6 +499,180 @@ void runTran(Context& c, const json& a) {
                          {"newton_iterations", stats.newtonIterations},
                          {"events", stats.events},
                          {"max_order", stats.maxOrder}};
+    }
+    measures.report(c, e);
+    fourierBlock.report(c, table.fileName(c, a), e);
+}
+
+// {"type": "pss", "period": "10u", "tstab": 0, "periods": 1, "tol": 1e-4, ...}
+// Periodic steady state of a circuit driven with a known period. Looks for a
+// state x with x = P(x), where P integrates over one period ("shooting"). The
+// fixed point is found by Anderson acceleration, which uses the last few
+// results of P to extrapolate; for a circuit whose slow parts are nearly
+// linear this needs about as many periods as there are slow modes, instead of
+// waiting for them to die out.
+void runPss(Context& c, const json& a) {
+    checkKeys(a, "pss",
+              {"type", "name", "outputs", "period", "tstab", "periods", "max_iterations", "tol",
+               "tstep", "hmax", "hmin", "hinit", "method", "uic", "output_step", "max_events",
+               "max_order", "measure", "save", "fourier"},
+              c.log);
+    const double period = num(c, a, "period", "pss");
+    if (!(period > 0.0)) throw std::runtime_error("pss: \"period\" must be > 0");
+    const int outPeriods = std::max(1, static_cast<int>(num(c, a, "periods", "pss", 1)));
+    const int maxIterations = static_cast<int>(num(c, a, "max_iterations", "pss", 60));
+    const double tol = num(c, a, "tol", "pss", 1e-4);
+    const double tstab = num(c, a, "tstab", "pss", 0.0);
+    const TransientOptions to = transientOptions(c, a, "pss", period);
+    const bool uic = a.value("uic", false);
+
+    const auto probes = probesFor(c, a);
+    std::vector<std::string> header{"time"};
+    for (const Probe& p : probes) header.push_back(p.label);
+    Table table(c, a, "pss", header);
+    Measures measures(c, a);
+    FourierBlock fourierBlock(c, a);
+
+    Circuit& ckt = c.ckt();
+    const int n = ckt.size();
+    ckt.setTransientMode(true);
+    int simulated = 0, iterations = 0;
+    long steps = 0;
+    double residual = 0.0;
+    bool converged = false;
+    try {
+        Evaluation ev;
+        // Integrate from the state xs over `span`; returns the final state.
+        auto advance = [&](const Vector& xs, double span, const StepCallback& onStep) {
+            TransientOptions o = to;
+            o.tstop = span;
+            if (!onStep) o.outputStep = 0.0;
+            ckt.evaluate(0.0, xs, LimitMode::Off, ev);
+            const Vector qs = ev.q;  // prescribing the charges makes the solver settle the rest
+            Vector last = xs;
+            const TransientStats st = runTransient(ckt, xs, &qs, o, [&](double t, const Vector& xx) {
+                last = xx;
+                if (onStep) onStep(t, xx);
+            });
+            steps += st.accepted;
+            return last;
+        };
+
+        Vector q0;
+        Vector x = initialPoint(c, uic, q0);
+        for (int k = 0; k < static_cast<int>(std::ceil(tstab / period - 1e-9)); ++k, ++simulated)
+            x = advance(x, period, nullptr);
+
+        // The continuous states: unknowns a charge depends on, without discrete ones.
+        ckt.evaluate(0.0, x, LimitMode::Off, ev);
+        std::vector<int> state;
+        {
+            std::vector<char> mark(n, 0);
+            for (const Triplet& t : ev.C)
+                if (t.value() != 0.0) mark[t.col()] = 1;
+            for (int i = 0; i < n; ++i)
+                if (mark[i] && !ckt.isDiscrete(i)) state.push_back(i);
+        }
+        const auto m = static_cast<Eigen::Index>(state.size());
+
+        // Fixed-point iteration x = P(x) with Anderson acceleration. f = P(x) - x
+        // alone does not tell how far the steady state is: a slow mode changes
+        // little per period however far it still has to go. The extrapolation
+        // step estimates the remaining distance, so both have to be small.
+        // No more secants than states: with fewer states the newest ones decide.
+        const int depth = static_cast<int>(std::min<Eigen::Index>(6, std::max<Eigen::Index>(m, 1)));
+        std::vector<Eigen::VectorXd> histF, histG;  // f and P(x) of the last iterations, newest last
+        Eigen::VectorXd f(m), gm(m), w(m);
+        double best = std::numeric_limits<double>::infinity();
+        for (; iterations < maxIterations && !converged;) {
+            const Vector g = advance(x, period, nullptr);
+            ++simulated;
+            ++iterations;
+            for (Eigen::Index k = 0; k < m; ++k) {
+                const int i = state[static_cast<size_t>(k)];
+                w[k] = 1.0 / (tol * std::max(std::abs(g[i]), std::abs(x[i])) + ckt.absTol(i));
+                f[k] = g[i] - x[i];
+                gm[k] = g[i];
+            }
+            const double change = m > 0 ? f.cwiseProduct(w).cwiseAbs().maxCoeff() : 0.0;
+            if (change > 10.0 * best) {  // the extrapolation went astray: start afresh
+                histF.clear();
+                histG.clear();
+            }
+            best = std::min(best, change);
+            histF.push_back(f);
+            histG.push_back(gm);
+            if (static_cast<int>(histF.size()) > depth + 1) {
+                histF.erase(histF.begin());
+                histG.erase(histG.begin());
+            }
+            // Anderson step: x_next = g - dG * gamma with gamma = argmin |f - dF * gamma|.
+            const auto cols = static_cast<Eigen::Index>(histF.size()) - 1;
+            Eigen::VectorXd next = gm;
+            if (cols > 0 && m > 0) {
+                Eigen::MatrixXd dF(m, cols), dG(m, cols);
+                for (Eigen::Index j = 0; j < cols; ++j) {
+                    dF.col(j) = histF[static_cast<size_t>(j + 1)] - histF[static_cast<size_t>(j)];
+                    dG.col(j) = histG[static_cast<size_t>(j + 1)] - histG[static_cast<size_t>(j)];
+                }
+                const Eigen::VectorXd gamma =
+                    (w.asDiagonal() * dF).colPivHouseholderQr().solve(f.cwiseProduct(w));
+                next = gm - dG * gamma;
+                if (!next.allFinite()) next = gm;
+            }
+            const double ahead = m > 0 ? (next - gm).cwiseProduct(w).cwiseAbs().maxCoeff() : 0.0;
+            residual = std::max(change, ahead);
+            x = g;
+            if (m == 0 || (cols > 0 && residual <= 1.0)) {
+                converged = true;
+                break;
+            }
+            for (Eigen::Index k = 0; k < m; ++k) x[state[static_cast<size_t>(k)]] = next[k];
+        }
+        if (!converged) {
+            std::ostringstream os;
+            os << "pss: no periodic steady state after " << iterations
+               << " iterations (the change over one period is still " << residual
+               << " times the tolerance). Is \"period\" the period of all sources?";
+            throw std::runtime_error(os.str());
+        }
+
+        // The iteration restarts the time in every period, so it cannot notice
+        // sources with another period: compare them one period apart.
+        {
+            Evaluation later;
+            for (double phase : {0.0, 0.31, 0.73}) {
+                ckt.evaluate(phase * period, x, LimitMode::Off, ev);
+                ckt.evaluate((phase + 1.0) * period, x, LimitMode::Off, later);
+                const double scale = std::max(ev.f.cwiseAbs().maxCoeff(), later.f.cwiseAbs().maxCoeff());
+                if ((ev.f - later.f).cwiseAbs().maxCoeff() > 1e-6 * scale)
+                    throw std::runtime_error("pss: the sources do not repeat after \"period\" = " +
+                                             std::to_string(period) + " s");
+            }
+        }
+
+        // The result: one or more periods from the steady state.
+        std::vector<double> row;
+        advance(x, outPeriods * period, [&](double t, const Vector& xx) {
+            row.clear();
+            for (const Probe& p : probes) row.push_back(p.value(xx, t));
+            table.row(t, row);
+            measures.sample(t, [&](const Probe& p) { return p.value(xx, t); });
+            fourierBlock.sample(t, xx);
+        });
+    } catch (...) {
+        ckt.setTransientMode(false);
+        throw;
+    }
+    ckt.setTransientMode(false);
+    c.log << "[pss] period " << period << " s: steady state after " << iterations
+          << " iterations (" << simulated << " periods simulated, " << steps << " steps)"
+          << table.arrow() << '\n';
+    json* e = c.entry(a, "pss");
+    if (e) {
+        (*e)["file"] = table.file();
+        (*e)["iterations"] = iterations;
+        (*e)["periods_simulated"] = simulated;
     }
     measures.report(c, e);
     fourierBlock.report(c, table.fileName(c, a), e);
@@ -604,9 +806,10 @@ void runOne(Context& c, const json& a, const std::string& type) {
     else if (type == "tran") runTran(c, a);
     else if (type == "ac") runAcSweep(c, a);
     else if (type == "noise") runNoiseAnalysis(c, a);
+    else if (type == "pss") runPss(c, a);
     else
         throw std::runtime_error("analyses: unknown type \"" + type +
-                                 "\" (op, dc, tran, ac, noise)");
+                                 "\" (op, dc, tran, pss, ac, noise, fit, sens)");
 }
 
 void runOne(Context& c, const json& a, const std::string& type);
@@ -1058,6 +1261,94 @@ void runFit(Context& c, const json& a) {
     }
 }
 
+// {"type": "sens", "analysis": {...}, "parameters": ["R1", "C"], "delta": 1e-3}
+// Sensitivities of the measurements of an analysis (for "op": of its outputs)
+// with respect to parameters, by central differences: every parameter is
+// changed by +-delta (relative) and the analysis repeated.
+void runSensitivity(Context& c, const json& a) {
+    checkKeys(a, "sens", {"type", "name", "analysis", "parameters", "delta"}, c.log);
+    if (!a.contains("analysis") || !a["analysis"].is_object() || !a["analysis"].contains("type"))
+        throw std::runtime_error("sens: needs \"analysis\": {\"type\": ..., ...}");
+    json inner = a["analysis"];
+    const std::string innerType = inner["type"].get<std::string>();
+    if (innerType != "op" && !inner.contains("measure"))
+        throw std::runtime_error("sens: the analysis needs \"measure\" (the sensitivities are those "
+                                 "of its measurements)");
+    inner["save"] = false;
+    const double delta = num(c, a, "delta", "sens", 1e-3);
+    std::vector<std::string> params;
+    if (a.contains("parameters")) {
+        for (const json& p : a["parameters"])
+            params.push_back(definedParameter(c, p.get<std::string>(), "sens"));
+    } else {
+        for (const auto& [name, v] : c.ckt().parameters) params.push_back(name);
+    }
+    if (params.empty()) throw std::runtime_error("sens: the netlist defines no parameters");
+
+    Sweep sweep;
+    sweep.writeMeasures = false;
+    auto quantities = [&](const std::vector<std::pair<std::string, double>>& changed) {
+        try {
+            runWith(c, sweep, inner, innerType, changed);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("sens" + (changed.empty() ? std::string() : ", " + describe(changed)) +
+                                     ": " + e.what());
+        }
+        std::vector<double> q;
+        for (const auto& column : sweep.measureValues) q.push_back(column.back());
+        return q;
+    };
+    const std::vector<double> nominal = quantities({});
+    const std::vector<std::string> names = sweep.measureNames;
+
+    const std::string path = outputPath(c, a, "sens");
+    std::ofstream csv(path);
+    if (!csv) throw std::runtime_error("cannot write '" + path + "'");
+    csv.precision(10);
+    csv << "parameter";
+    for (const std::string& n : names) csv << ',' << (n.find(',') == std::string::npos ? n : '"' + n + '"');
+    csv << '\n';
+
+    json* e = c.entry(a, "sens");
+    if (e) {
+        (*e)["file"] = path;
+        for (size_t k = 0; k < names.size(); ++k) (*e)["nominal"][names[k]] = number(nominal[k]);
+    }
+    c.log << "[sens] " << params.size() << (params.size() == 1 ? " parameter, " : " parameters, ")
+          << names.size() << (names.size() == 1 ? " quantity" : " quantities") << "; normalized sensitivities (% change per % change) -> " << path << '\n';
+    size_t wp = 9, wq = 12;
+    for (const std::string& p : params) wp = std::max(wp, p.size());
+    for (const std::string& n : names) wq = std::max(wq, n.size());
+    c.log << "  " << std::left << std::setw(static_cast<int>(wp)) << "";
+    for (const std::string& n : names) c.log << "  " << std::right << std::setw(static_cast<int>(wq)) << n;
+    c.log << '\n';
+    for (const std::string& p : params) {
+        const double p0 = c.ckt().parameters.at(p);
+        if (p0 == 0.0) {
+            c.log << "  " << std::left << std::setw(static_cast<int>(wp)) << p << "  (is 0, skipped)\n";
+            continue;
+        }
+        const double h = delta * std::abs(p0);
+        const std::vector<double> up = quantities({{p, p0 + h}}), down = quantities({{p, p0 - h}});
+        csv << p;
+        c.log << "  " << std::left << std::setw(static_cast<int>(wp)) << p;
+        for (size_t k = 0; k < names.size(); ++k) {
+            const double absolute = (up[k] - down[k]) / (2.0 * h);
+            const double normalized = absolute * p0 / nominal[k] + 0.0;  // no "-0"
+            csv << ',' << normalized;
+            c.log << "  " << std::right << std::setw(static_cast<int>(wq)) << std::setprecision(4)
+                  << normalized;
+            if (e) {
+                (*e)["normalized"][p][names[k]] = number(normalized);
+                (*e)["absolute"][p][names[k]] = number(absolute);
+            }
+        }
+        csv << '\n';
+        c.log << '\n';
+    }
+    c.log << std::left;
+}
+
 }  // namespace
 
 void runAnalyses(Netlist& nl, const RunConfig& cfg, std::ostream& log) {
@@ -1069,6 +1360,7 @@ void runAnalyses(Netlist& nl, const RunConfig& cfg, std::ostream& log) {
             throw std::runtime_error("analyses: each entry needs a \"type\"");
         const std::string type = a["type"].get<std::string>();
         if (type == "fit") runFit(c, a);
+        else if (type == "sens") runSensitivity(c, a);
         else if (a.contains("monte_carlo")) runMonteCarlo(c, a, type);
         else if (a.contains("param_sweep")) runParamSweep(c, a, type);
         else runOne(c, a, type);
