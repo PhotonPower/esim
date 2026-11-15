@@ -15,6 +15,7 @@
 
 #include "app/Measure.hpp"
 #include "app/Runner.hpp"
+#include "circuit/devices/Bsim3.hpp"
 #include "circuit/Analysis.hpp"
 #include "circuit/Device.hpp"
 #include "circuit/devices/Sources.hpp"
@@ -2604,6 +2605,116 @@ void testParallelEvaluation() {
     checkTrue(s0.accepted > 20, "parallel evaluation: the comparison covers a real simulation");
 }
 
+void testBsim3() {
+    // The drain current itself is compared with a second implementation in
+    // tests/test_bsim3.py; here: the device inside circuits.
+    const std::string nmodel = R"json("level": "bsim3", "tox": 4.1e-9, "xj": 1e-7, "nch": 2.3549e17, "vth0": 0.3694,
+        "k1": 0.5789, "k2": 1.11e-3, "k3": 1e-3, "dvt0": 1.295, "dvt1": 0.342, "dvt2": 0.0396, "u0": 293.2,
+        "ua": -1.219e-9, "ub": 2.326e-18, "uc": 7.06e-11, "vsat": 1.676e5, "a0": 2, "ags": 0.476, "keta": -0.0139,
+        "a1": 1.09e-3, "a2": 0.33, "rdsw": 105.6, "prwg": 0.5, "prwb": -0.2, "lint": 1.716e-8, "voff": -0.0948,
+        "nfactor": 2.186, "eta0": 2.665e-3, "etab": 6.03e-5, "dsub": 0.0442, "pclm": 1.746, "pdiblc1": 0.3258,
+        "pdiblc2": 2.7e-3, "pdiblcb": -0.1, "drout": 0.9787, "pscbe1": 4.49e10, "pscbe2": 3.67e-8,
+        "cgdo": 8.58e-10, "cgso": 8.58e-10, "cj": 9.47e-4, "pb": 0.8, "mj": 0.3726, "cjsw": 1.9e-10)json";
+    const std::string pmodel = R"json("level": "bsim3", "tox": 4.1e-9, "xj": 1e-7, "nch": 4.1589e17, "vth0": -0.3823,
+        "k1": 0.5722, "k2": 0.022, "k3": 0.1577, "dvt0": 0.6235, "dvt1": 0.2479, "dvt2": 0.1, "u0": 109.5,
+        "ua": 1.316e-9, "ub": 1e-21, "uc": -1e-10, "vsat": 1.055e5, "a0": 1.58, "ags": 0.3115, "keta": 0.0299,
+        "a1": 0.3887, "a2": 0.401, "rdsw": 199.2, "prwg": 0.5, "prwb": -0.4947, "lint": 2.94e-8, "voff": -0.0936,
+        "nfactor": 2, "eta0": 3.5e-4, "etab": -4.8e-4, "pclm": 0.964, "pdiblc1": 3.03e-3, "pdiblcb": -1e-3,
+        "pscbe1": 8e10, "pscbe2": 8.27e-10, "cgdo": 6.3e-10, "cgso": 6.3e-10, "cj": 1.18e-3, "pb": 0.85,
+        "mj": 0.412, "cjsw": 2.4e-10)json";
+    const std::string models = "\"models\": {\"n18\": {\"type\": \"nmos\", " + nmodel + "}, \"p18\": {\"type\": \"pmos\", " +
+                               pmodel + "}}";
+
+    // Derivatives: conductances and capacitances against finite differences.
+    for (const std::string& kind : {std::string("n18"), std::string("p18")}) {
+        Netlist nl = parseNetlistText("{" + models + R"json(, "components": [
+            {"type": "R", "nodes": ["a", "0"], "value": 1000}, {"type": "R", "nodes": ["b", "0"], "value": 1000},
+            {"type": "R", "nodes": ["c", "0"], "value": 1000}, {"type": "R", "nodes": ["d", "0"], "value": 1000},
+            {"type": "M", "name": "X", "nodes": ["a", "b", "c", "d"], "model": ")json" + kind +
+                                      R"json(", "w": "2u", "l": "0.18u", "ad": "1p", "as": "1p", "pd": "3u", "ps": "3u"}]})json");
+        Circuit& ckt = *nl.circuit;
+        unsigned seed = 4711;
+        for (int trial = 0; trial < 10; ++trial) {
+            Vector x(ckt.size());
+            for (int i = 0; i < ckt.size(); ++i) {
+                seed = seed * 1664525u + 1013904223u;
+                x[i] = 1.8 * ((seed >> 8) / 16777216.0);
+            }
+            // bulk below all terminals of the n-channel, above those of the p-channel
+            x[ckt.findNode("d")] = kind == "n18" ? -0.5 * x[ckt.findNode("d")] : 1.8 + 0.5 * x[ckt.findNode("d")];
+            checkJacobian(ckt, x, "bsim3 " + kind + ", bias point " + std::to_string(trial));
+        }
+    }
+
+    // Inverter: transfer curve from rail to rail, switching near half the supply.
+    Netlist inv = parseNetlistText("{" + models + R"json(, "components": [
+        {"type": "V", "name": "VDD", "nodes": ["vdd", "0"], "dc": 1.8},
+        {"type": "V", "name": "VIN", "nodes": ["in", "0"], "dc": 0},
+        {"type": "M", "name": "MP", "nodes": ["out", "in", "vdd", "vdd"], "model": "p18", "w": "2u", "l": "0.18u"},
+        {"type": "M", "name": "MN", "nodes": ["out", "in", "0", "0"], "model": "n18", "w": "1u", "l": "0.18u"}]})json");
+    double vm = 0.0, previous = 0.0;
+    auto* vin = dynamic_cast<IndependentSource*>(inv.circuit->findDevice("VIN"));
+    Vector xi;
+    for (int k = 0; k <= 180; ++k) {
+        vin->setDc(0.01 * k);
+        xi = solveOperatingPoint(*inv.circuit, inv.options, xi.size() ? &xi : nullptr);
+        const double out = probe(*inv.circuit, xi, "v(out)");
+        if (k == 0) checkNear(out, 1.8, 1e-4, "bsim3 inverter: output high");
+        if (k > 0 && previous > 0.9 && out <= 0.9) vm = 0.01 * k;
+        previous = out;
+    }
+    checkNear(previous, 0.0, 1e-4, "bsim3 inverter: output low");
+    checkTrue(vm > 0.6 && vm < 1.1, "bsim3 inverter: switches near half the supply");
+
+    // Ring oscillator of five inverters: it starts and runs at a plausible frequency.
+    std::string ring = "{" + models + R"json(, "ic": {"n1": 1.8, "n3": 1.8}, "components": [
+        {"type": "V", "name": "VDD", "nodes": ["vdd", "0"], "dc": 1.8})json";
+    for (int k = 1; k <= 5; ++k) {
+        const std::string in = "n" + std::to_string(k), out = "n" + std::to_string(k % 5 + 1);
+        ring += R"json(, {"type": "M", "nodes": [")json" + out + "\", \"" + in +
+                R"json(", "vdd", "vdd"], "model": "p18", "w": "2u", "l": "0.18u", "ad": "1p", "pd": "3u"})json";
+        ring += R"json(, {"type": "M", "nodes": [")json" + out + "\", \"" + in +
+                R"json(", "0", "0"], "model": "n18", "w": "1u", "l": "0.18u", "ad": "0.5p", "pd": "2u"})json";
+        ring += R"json(, {"type": "C", "nodes": [")json" + out + R"json(", "0"], "value": "5f"})json";
+    }
+    ring += "]}";
+    Netlist osc = parseNetlistText(ring);
+    TransientStats st;
+    const Trace tr = transient(osc, 2e-9, IntegrationMethod::Bdf, true, &st);
+    int rising = 0;
+    double first = 0.0, last = 0.0;
+    for (size_t k = 1; k < tr.t.size(); ++k) {
+        const double a = probe(*osc.circuit, tr.x[k - 1], "v(n3)"), b = probe(*osc.circuit, tr.x[k], "v(n3)");
+        if (a < 0.9 && b >= 0.9) {
+            const double tc = tr.t[k - 1] + (0.9 - a) / (b - a) * (tr.t[k] - tr.t[k - 1]);
+            if (rising++ == 0) first = tc;
+            last = tc;
+        }
+    }
+    const double period = rising > 1 ? (last - first) / (rising - 1) : 0.0;
+    checkTrue(rising >= 3, "bsim3 ring oscillator: oscillates");
+    checkTrue(period > 50e-12 && period < 600e-12, "bsim3 ring oscillator: period of a 0.18 um ring");
+    std::cout << "    bsim3 ring oscillator: period " << period * 1e12 << " ps, " << st.accepted << " steps, "
+              << st.newtonFailures << " Newton failures\n";
+
+    // A SPICE model card of level 49, and a parameter the model does not know.
+    Netlist card = parseNetlistText(R"json({
+        "models": {"nch": ".model nch NMOS (LEVEL=49 VERSION=3.1 TOX=4.1E-9 VTH0=0.37 U0=290 NCH=2.35E17 K1=0.58 K2=1E-3 RDSW=105 CAPMOD=2)"},
+        "components": [
+            {"type": "V", "name": "VD", "nodes": ["d", "0"], "dc": 1.8},
+            {"type": "V", "name": "VG", "nodes": ["g", "0"], "dc": 1.8},
+            {"type": "M", "name": "M1", "nodes": ["d", "g", "0", "0"], "model": "nch", "w": "1u", "l": "0.18u"}]})json");
+    const Vector xc = solveOperatingPoint(*card.circuit, card.options);
+    const double ion = -probe(*card.circuit, xc, "i(VD)");
+    checkTrue(dynamic_cast<const Bsim3*>(card.circuit->findDevice("M1")) != nullptr, "bsim3: SPICE level 49 selects the model");
+    checkTrue(ion > 2e-4 && ion < 1.5e-3, "bsim3: on-current of the imported model");
+    Netlist odd = parseNetlistText(R"json({"components": [
+        {"type": "V", "name": "VD", "nodes": ["d", "0"], "dc": 1},
+        {"type": "nmos", "name": "M1", "nodes": ["d", "d", "0", "0"], "level": "bsim3", "w": "1u", "l": "1u", "foo": 1, "capmod": 2}]})json");
+    const auto unknown = dynamic_cast<const Bsim3*>(odd.circuit->findDevice("M1"))->unknownParameters();
+    checkTrue(unknown.size() == 1 && unknown[0] == "foo", "bsim3: unknown parameters are found, accepted ones are not reported");
+}
+
 void testUniformOutput() {
     Netlist nl = parseNetlistText(R"json({
         "options": {"reltol": 1e-6},
@@ -2846,6 +2957,7 @@ int main() {
         {"jacobian reuse and parallel runs", testSpeedFeatures},
         {"index reduction", testIndexReduction},
         {"parallel evaluation", testParallelEvaluation},
+        {"bsim3", testBsim3},
         {"uniform output", testUniformOutput},
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},

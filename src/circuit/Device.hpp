@@ -172,6 +172,9 @@ public:
 
     // Write a prescribed initial condition ("ic") into the start vector.
     virtual void applyIc(Vector& /*x0*/) const {}
+    // A device that fixes v(p) - v(n) = v at the start of a time integration
+    // (a voltage source), see Circuit::initialState().
+    virtual bool startConstraint(int& /*p*/, int& /*n*/, double& /*v*/) const { return false; }
 
     // Write start values for the Newton iteration of a DC solution.
     virtual void applyGuess(Vector& /*x*/) const {}

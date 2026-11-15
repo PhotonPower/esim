@@ -91,9 +91,36 @@ Vector Circuit::initialGuess() const {
 void Circuit::initialState(Vector& x0, Vector& q0) {
     x0 = Vector::Zero(size());
     for (const auto& d : devices_) d->applyIc(x0);
+    std::vector<char> known(static_cast<size_t>(size()), 0);
     for (const auto& [name, value] : ic) {
         const int idx = findNode(name);
-        if (idx >= 0) x0[idx] = value;
+        if (idx >= 0) {
+            x0[idx] = value;
+            known[static_cast<size_t>(idx)] = 1;
+        }
+    }
+    // Nodes held by voltage sources start at the voltage the sources give
+    // them, not at 0: a supply that jumped from 0 to its value within the
+    // first step would be a shock nobody asked for. The voltages are passed
+    // on from ground (and from the given initial conditions) through chains
+    // of sources.
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto& d : devices_) {
+            int p, n;
+            double v;
+            if (!d->startConstraint(p, n, v)) continue;
+            const bool kp = p < 0 || known[static_cast<size_t>(p)], kn = n < 0 || known[static_cast<size_t>(n)];
+            if (kp == kn) continue;
+            if (kn) {
+                x0[p] = (n < 0 ? 0.0 : x0[n]) + v;
+                known[static_cast<size_t>(p)] = 1;
+            } else {
+                x0[n] = (p < 0 ? 0.0 : x0[p]) - v;
+                known[static_cast<size_t>(n)] = 1;
+            }
+            changed = true;
+        }
     }
     Evaluation ev;
     useIc_ = true;

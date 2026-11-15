@@ -165,7 +165,7 @@ def element(line, models, switch_models, line_models):
     if kind == "M":
         comp = {"type": "M", "name": name, "nodes": [node(0), node(1), node(2), node(3)],
                 "model": node(4)}
-        for key in ("w", "l"):
+        for key in ("w", "l", "ad", "as", "pd", "ps", "m"):
             if key in named:
                 comp[key] = named[key]
         return comp

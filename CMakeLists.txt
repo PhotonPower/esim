@@ -69,6 +69,7 @@ add_library(esimcircuit
   src/circuit/devices/Bjt.cpp
   src/circuit/devices/Mosfet.cpp
   src/circuit/devices/Jfet.cpp
+  src/circuit/devices/Bsim3.cpp
   src/circuit/devices/TransmissionLine.cpp
   src/circuit/devices/Equations.cpp
   src/circuit/devices/Behavioral.cpp
@@ -105,6 +106,9 @@ if(ESIM_BUILD_TESTS)
     add_test(NAME python_interface
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/python/test_esim.py)
+    add_test(NAME bsim3_model
+      COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
+              ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_bsim3.py)
     add_test(NAME spice_import
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/test_spice2json.py)

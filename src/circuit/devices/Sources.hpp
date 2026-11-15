@@ -34,6 +34,7 @@ protected:
     // Transient analysis uses the waveform. DC analyses use the DC value and
     // fall back to the waveform at t = 0.
     double value(const StampContext& ctx) const;
+    double startValue() const;  // at t = 0 of a time integration
     std::complex<double> ac() const { return ac_; }
 
     int p_, n_;
@@ -54,6 +55,12 @@ public:
     void stampAc(Eigen::VectorXcd& rhs) const override;
     void stampUnit(Eigen::VectorXcd& rhs) const override { rhs[br_] += 1.0; }
     int branch() const override { return br_; }
+    bool startConstraint(int& p, int& n, double& v) const override {
+        p = p_;
+        n = n_;
+        v = startValue();
+        return true;
+    }
 
 private:
     int br_ = -1;

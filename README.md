@@ -73,6 +73,7 @@ Beispiele in [`examples/`](examples):
 | `dead_time_control.json` | Regelkreis mit Totzeit (`delay`) |
 | `heat_rod.json` | Wärmeleitung als Vektor von Gleichungen (Linienmethode) |
 | `pendulum_index3.json` | Pendel mit Lagebedingung (Index 3), automatisch reduziert |
+| `ring_oscillator_bsim3.json` | Ringoszillator mit BSIM3-Transistoren (0,18 µm), Modellkarten im SPICE-Format |
 | `saturating_inductor.json` | nichtlineare Induktivität über ihren Fluss, eigene Funktion |
 
 ### Ergebnisse plotten
@@ -528,7 +529,7 @@ Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibun
 | `ideal_diode` | ideale Diode | Anode, Kathode | `vf`, `ron`, `roff` |
 | `D`, `diode` | Diode | Anode, Kathode | `is` `n` `rs` `cj0` `vj` `m` `fc` `tt` `bv` `ibv` `eg` `xti` `kf` `af` |
 | `Q`, `npn`, `pnp` | Bipolartransistor | C, B, E | `is` `bf` `br` `nf` `nr` `vaf` `var` `ikf` `ikr` `ise` `ne` `isc` `nc` `rb` `rc` `re` `cje` `vje` `mje` `cjc` `vjc` `mjc` `tf` `tr` `fc` `eg` `xti` `xtb` `kf` `af` |
-| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` `kf` `af`; mit `"level": "ekv"` zusätzlich `theta` `ucrit` |
+| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` `kf` `af`; mit `"level": "ekv"` zusätzlich `theta` `ucrit`; mit `"level": "bsim3"` die Parameter von BSIM3v3 und `w` `l` `ad` `as` `pd` `ps` `m` |
 
 Verhaltensquelle `B`:
 
@@ -616,6 +617,37 @@ Modellumfang:
   es nicht. Wo Level 1 unterhalb der Schwelle exakt 0 liefert (Leckströme,
   Schaltungen im Unterschwellbetrieb, Analogschalter nahe 0 V), ist es die
   bessere Wahl; `examples/mosfet_subthreshold.json` vergleicht beide.
+- **MOSFET mit `"level": "bsim3"`** (SPICE-Level 8, 49 und 53): der
+  Drainstrom nach BSIM3v3.3, dem Kurzkanalmodell, für das Halbleiterhersteller
+  Parametersätze veröffentlichen. Umgesetzt sind Schwellspannung mit Kurz- und
+  Schmalkanaleffekten und DIBL, Unterschwellstrom, die drei
+  Beweglichkeitsmodelle, Geschwindigkeitssättigung, Bahnwiderstände,
+  Kanallängenmodulation, DIBL und SCBE im Ausgangsleitwert, Poly-Verarmung,
+  Substratstrom, Temperaturabhängigkeit und die Größenabhängigkeit aller
+  Parameter über ihre L-, W- und P-Varianten. Modellkarten lassen sich als
+  SPICE-Zeile einfügen; lange Karten als Liste ihrer Zeilen:
+
+  ```jsonc
+  "models": { "n18": [".model n18 NMOS (LEVEL=49 TOX=4.1E-9 VTH0=0.369",
+                      "+ K1=0.579 U0=293 VSAT=1.68E5 ...)"] }
+  ```
+
+  Geprüft ist der Drainstrom gegen eine zweite, getrennt geschriebene
+  Umsetzung derselben Modellgleichungen in Python (`tests/bsim3_reference.py`):
+  16 Parametersätze (n- und p-Kanal, −40 bis 125 °C, alle Zweige des Modells)
+  mit je 720 Arbeitspunkten stimmen auf 5·10⁻¹⁰ überein. Ein Vergleich mit
+  einem anderen Simulator (ngspice) steht aus.
+
+  Nicht nach BSIM3 gerechnet werden die **Ladungen** des Kanals: Sie folgen
+  dem Langkanalmodell von Level 1 mit der BSIM3-Schwellspannung statt den
+  Kapazitätsmodellen `capmod` 0 bis 3. Schaltzeiten haben damit die richtige
+  Größenordnung, entsprechen aber nicht denen des Originalmodells. Überlapp-
+  und Sperrschichtkapazitäten (`cgso`, `cgdo`, `cgbo`, `cj`, `cjsw`, `cjswg`
+  mit `ad`, `as`, `pd`, `ps`) sind enthalten. Es fehlen außerdem die
+  BSIM3-Rauschmodelle (es gelten die Formeln von Level 1), nicht-quasistatische
+  Effekte und die Auswahl zwischen mehreren Modellkarten nach `lmin`/`lmax`.
+  Parameter, die deshalb ohne Wirkung bleiben, werden still akzeptiert;
+  unbekannte werden gemeldet. Beispiel: `examples/ring_oscillator_bsim3.json`.
 - **Leitung** (`T`): ideale, verlustlose Leitung mit Wellenwiderstand `z0` und
   Laufzeit `td`. In der Zeitsimulation wird die Vorgeschichte der Wellen an
   beiden Toren gespeichert; kein Schritt ist länger als `td`, und Flanken
@@ -719,7 +751,9 @@ Transientenanalyse:
 - `"uic": true` überspringt diese Anfangslösung und startet von den
   Anfangsbedingungen: `ic` an Kondensatoren und Spulen,
   `"ic": {"knoten": spannung}` auf oberster Ebene, die Startwerte der
-  Variablen; alles andere ist 0.
+  Variablen. Knoten, die Spannungsquellen von Masse aus festlegen
+  (Versorgungen, auch über Strommesser hinweg), starten auf deren Spannung;
+  alles andere ist 0.
 - Die Schrittweite wird automatisch gewählt. `tstep` ist die gewünschte
   Auflösung: kein Schritt wird länger (Standard: `tstop/50`).
 - `method` wählt das Verfahren:
@@ -1013,7 +1047,7 @@ src/circuit/   das simulierte System als DaeSystem               -> Bibliothek e
   Device.hpp       Basisklasse und StampContext
   Symbols.hpp      Namen in Ausdrücken -> Unbekannte der Schaltung
   IndexReduction   Ableiten von Zwangsbedingungen bei Index über 2
-  devices/         R, C, L, Kopplung, Quellen, Diode, BJT, MOSFET, JFET,
+  devices/         R, C, L, Kopplung, Quellen, Diode, BJT, MOSFET, Bsim3, JFET,
                    TransmissionLine, Equations (Gleichungsblock),
                    Behavioral (B-Quelle), Switching (Schalter, ideale Diode)
   Analysis         Arbeitspunkt, AC-Analyse
@@ -1142,7 +1176,8 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   verwenden.
 - **Schaltungen**: Die Halbleitermodelle entsprechen den
   klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET), dazu ein
-  EKV-artiges MOSFET-Modell. Industrielle Kurzkanal-Modelle (BSIM) fehlen.
+  EKV-artiges MOSFET-Modell und der Drainstrom von BSIM3v3 (dessen
+  Kapazitätsmodelle nicht; BSIM4 und neuere Modelle fehlen).
 - **Große Schaltungen**: Getestet mit bis zu 40 000 Knoten. Ab 1000 Bauteilen
   werden die Bauteile auf mehreren Kernen ausgewertet und die Matrix parallel
   aufgebaut; die Matrixzerlegung bleibt seriell und bestimmt dann die

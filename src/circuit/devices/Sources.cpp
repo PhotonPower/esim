@@ -42,7 +42,12 @@ double IndependentSource::value(const StampContext& ctx) const {
     return v * ctx.srcScale;
 }
 
+double IndependentSource::startValue() const {
+    return wave_ ? wave_->value(0.0) : (dc_.has ? dc_.value : 0.0);
+}
+
 // --- VoltageSource ---------------------------------------------------------
+
 
 void VoltageSource::setup(Circuit& ckt) {
     br_ = ckt.addUnknown("i(" + name() + ")", UnknownKind::Current, false);

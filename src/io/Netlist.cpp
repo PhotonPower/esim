@@ -20,6 +20,7 @@
 #include "circuit/devices/Diode.hpp"
 #include "circuit/devices/Equations.hpp"
 #include "circuit/IndexReduction.hpp"
+#include "circuit/devices/Bsim3.hpp"
 #include "core/StructuralIndex.hpp"
 #include "circuit/devices/Jfet.hpp"
 #include "circuit/devices/TransmissionLine.hpp"
@@ -89,6 +90,11 @@ public:
     }
 
     bool has(const std::string& k) const { return j_.contains(k); }
+    std::vector<std::string> keys() const {
+        std::vector<std::string> out;
+        for (const auto& [k, v] : j_.items()) out.push_back(k);
+        return out;
+    }
 
     const json& raw(const std::string& k) {
         if (!has(k)) throw std::runtime_error(where_ + ": missing parameter \"" + k + "\"");
@@ -636,6 +642,30 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
         }
         case 'm': {
             needNodes(3, 4, "[drain, gate, source] or [drain, gate, source, bulk]");
+            // "level": 1 (Shichman-Hodges, the default), "ekv", or "bsim3"
+            // (also the SPICE level numbers 8, 49 and 53 of BSIM3v3).
+            bool ekvLevel = false, bsim3Level = false;
+            if (p.has("level")) {
+                const json& level = p.raw("level");
+                const std::string text = level.is_string() ? lower(level.get<std::string>()) : "";
+                const double number = level.is_number() ? level.get<double>() : 0.0;
+                if (text == "ekv") ekvLevel = true;
+                else if (text == "bsim3" || number == 8.0 || number == 49.0 || number == 53.0) bsim3Level = true;
+                else if (number != 1.0)
+                    throw std::runtime_error(p.where() + ": \"level\" must be 1, \"ekv\" or \"bsim3\"");
+            }
+            if (bsim3Level) {
+                // All numeric entries are parameters of the model or the instance.
+                std::map<std::string, double> params;
+                for (const std::string& key : p.keys()) {
+                    if (key == "type" || key == "name" || key == "nodes" || key == "model" || key == "level") continue;
+                    params[key] = p.num(key);
+                }
+                const int pol = polarity(type, modelType, "nmos", "pmos", p.where());
+                const int bulk = n.size() == 4 ? n[3] : n[2];
+                ckt.add(std::make_unique<Bsim3>(name, n[0], n[1], n[2], bulk, pol, std::move(params)));
+                break;
+            }
             MosfetParams m;
             m.vto = p.num("vto", m.vto);
             m.kp = p.num("kp", m.kp);
@@ -659,12 +689,7 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             m.af = p.num("af", m.af);
             m.theta = p.num("theta", m.theta);
             m.ucrit = p.num("ucrit", m.ucrit);
-            if (p.has("level")) {  // 1 (Shichman-Hodges) or "ekv"
-                const json& level = p.raw("level");
-                if (level.is_string() && lower(level.get<std::string>()) == "ekv") m.ekv = true;
-                else if (!(level.is_number() && level.get<double>() == 1.0))
-                    throw std::runtime_error(p.where() + ": \"level\" must be 1 or \"ekv\"");
-            }
+            m.ekv = ekvLevel;
             if (!m.ekv && (m.theta != 0.0 || m.ucrit != 0.0))
                 warn() << p.where() << ": theta and ucrit only act with \"level\": \"ekv\"\n";
             const int pol = polarity(type, modelType, "nmos", "pmos", p.where());
@@ -1209,12 +1234,25 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
 
     json out = json::object();
     out["type"] = it->second.first;
+    // MOS levels 8, 49 and 53 are BSIM3v3: all parameters go to that model.
+    bool bsim3 = false;
+    for (size_t k = 3; k + 2 < tok.size(); k += 3)
+        if (lower(tok[k]) == "level" && tok[k + 1] == "=") {
+            const double level = parseSpiceValue(tok[k + 2], where + ", level");
+            bsim3 = (type == "nmos" || type == "pmos") && (level == 8.0 || level == 49.0 || level == 53.0);
+        }
+    if (bsim3) out["level"] = "bsim3";
     std::string ignored;
     for (size_t k = 3; k < tok.size(); k += 3) {
         if (k + 2 >= tok.size() || tok[k + 1] != "=")
             throw std::runtime_error(where + ": expected KEY=VALUE near '" + tok[k] + "'");
         std::string key = lower(tok[k]);
+        if (bsim3 && key == "version") continue;  // a version number like 3.3.0 is not a value
         const double value = parseSpiceValue(tok[k + 2], where + ", " + key);
+        if (bsim3) {
+            if (key != "level") out[key] = value;
+            continue;
+        }
         if (key == "cjo") key = "cj0";
         if (key == "level") {
             if (value != 1.0)
@@ -1316,6 +1354,16 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
                 b.models[name] = parseSpiceModel(name, m.get<std::string>());
                 continue;
             }
+            if (isModels && m.is_array()) {  // a long ".model" card, one string per line
+                std::string card;
+                for (const json& line : m) {
+                    if (!line.is_string())
+                        throw std::runtime_error("models, \"" + name + "\": expected the lines of a .model card");
+                    card += line.get<std::string>() + "\n";
+                }
+                b.models[name] = parseSpiceModel(name, card);
+                continue;
+            }
             if (!m.is_object())
                 throw std::runtime_error(std::string(section) + ", \"" + name +
                                          "\": expected an object");
@@ -1350,6 +1398,18 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
         ckt.nodeset = parseNodeValues(root["nodeset"], "nodeset", &ckt.parameters);
     if (root.contains("ic")) ckt.ic = parseNodeValues(root["ic"], "ic", &ckt.parameters);
     nl.circuit->finalize();
+    // BSIM3 knows its parameters only after it has been set up.
+    {
+        std::set<std::string> unknown;
+        for (const auto& d : ckt.devices())
+            if (const auto* m = dynamic_cast<const Bsim3*>(d.get()))
+                for (const std::string& key : m->unknownParameters()) unknown.insert(key);
+        if (!unknown.empty()) {
+            std::string list;
+            for (const std::string& key : unknown) list += (list.empty() ? "" : ", ") + key;
+            warn() << "BSIM3 parameters without effect here: " << list << '\n';
+        }
+    }
     for (int i = 0; i < ckt.size(); ++i) {
         std::string label = ckt.unknownName(i);
         if (label.size() > 3 && label[1] == '(' && label.back() == ')')
