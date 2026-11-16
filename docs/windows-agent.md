@@ -31,15 +31,23 @@ Ordner mit `ngspice_con.exe` in den PATH nehmen.
 
 ## 2. Code holen
 
-Entweder aus einem Git-Bundle, das vom Mac kommt:
+Das Repository ist privat auf GitHub: https://github.com/PhotonPower/esim.
+Einmal bei GitHub anmelden (der Git Credential Manager kommt mit Git für
+Windows; alternativ `winget install --id GitHub.cli -e` und `gh auth login`),
+dann:
 
-    git clone esim.bundle esim
+    git clone https://github.com/PhotonPower/esim.git
     cd esim
-
-oder aus einem Repository, falls eines eingerichtet ist. Gearbeitet wird auf
-einem eigenen Zweig:
-
     git checkout -b windows
+
+Gearbeitet wird auf dem Zweig `windows`, nicht auf `main`.
+
+Ohne Zugang zu GitHub geht es auch mit einem Git-Bundle vom Mac:
+`git clone esim.bundle esim`.
+
+Bei jedem Push baut GitHub Actions (`.github/workflows/build.yml`) außerdem
+auf Windows (MSVC) und macOS und führt die Tests aus; die Ergebnisse stehen
+unter „Actions“ im Repository (`gh run list`, `gh run view --log-failed`).
 
 ## 3. Bauen, testen, ausliefern
 
@@ -98,9 +106,13 @@ Mit `dist\esim-editor.exe`:
   geht.
 - Was unter Windows geändert wird, darf macOS und Linux nicht brechen.
 - Jede Korrektur mit Test, wo möglich; die Testgruppen müssen grün bleiben.
-- Commits auf dem Zweig `windows`. Zurück zum Mac als Bundle:
+- Commits auf dem Zweig `windows`, hochladen mit
 
-      git bundle create windows.bundle main..windows
+      git push -u origin windows
+
+  Nicht auf `main` pushen; der Zweig wird auf dem Mac geprüft und
+  übernommen. Ohne GitHub-Zugang zurück als Bundle:
+  `git bundle create windows.bundle main..windows`.
 
 ## 7. Bericht
 
