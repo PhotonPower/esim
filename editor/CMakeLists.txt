@@ -15,7 +15,13 @@ qt_add_executable(esim-editor MACOSX_BUNDLE WIN32
   PlotWidget.cpp
   ResultData.cpp
   Format.cpp
-  Theme.cpp)
+  Theme.cpp
+  JsonSpan.cpp
+  Schematic.cpp
+  Symbols.cpp
+  SchematicView.cpp
+  PropertyPanel.cpp
+  PartPalette.cpp)
 
 target_link_libraries(esim-editor PRIVATE esimcircuit Qt6::Widgets Qt6::Concurrent)
 target_compile_options(esim-editor PRIVATE ${ESIM_WARNINGS})
@@ -36,11 +42,26 @@ target_compile_definitions(esim-editor PRIVATE ESIM_SOURCE_DIR="${PROJECT_SOURCE
 
 # Tests of the parts without a window (check of the input, curves).
 if(ESIM_BUILD_TESTS)
-  add_executable(editor_tests tests/editor_tests.cpp Checker.cpp ResultData.cpp Format.cpp Theme.cpp)
+  add_executable(editor_tests tests/editor_tests.cpp Checker.cpp ResultData.cpp Format.cpp Theme.cpp
+    JsonSpan.cpp Schematic.cpp Symbols.cpp)
   target_include_directories(editor_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(editor_tests PRIVATE esimcircuit Qt6::Widgets Qt6::Concurrent)
   target_compile_options(editor_tests PRIVATE ${ESIM_WARNINGS})
   target_compile_definitions(editor_tests PRIVATE ESIM_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
   add_test(NAME editor COMMAND editor_tests)
   set_tests_properties(editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # The schematic in the main window, driven by mouse and keyboard events.
+  find_package(Qt6 COMPONENTS Test QUIET)
+  if(Qt6Test_FOUND)
+    get_target_property(EDITOR_SOURCES esim-editor SOURCES)
+    list(REMOVE_ITEM EDITOR_SOURCES main.cpp)
+    add_executable(editor_gui_tests tests/gui_tests.cpp ${EDITOR_SOURCES})
+    target_include_directories(editor_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(editor_gui_tests PRIVATE esimcircuit Qt6::Widgets Qt6::Concurrent Qt6::Test)
+    target_compile_options(editor_gui_tests PRIVATE ${ESIM_WARNINGS})
+    target_compile_definitions(editor_gui_tests PRIVATE ESIM_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME editor_gui COMMAND editor_gui_tests)
+    set_tests_properties(editor_gui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  endif()
 endif()

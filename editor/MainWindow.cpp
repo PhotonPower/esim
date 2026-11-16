@@ -17,14 +17,20 @@
 #include <QProgressBar>
 #include <QSaveFile>
 #include <QSettings>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QTextBlock>
 #include <QTimer>
 #include <QToolBar>
 
 #include "CodeEditor.hpp"
+#include "JsonSpan.hpp"
+#include "PartPalette.hpp"
 #include "PlotWidget.hpp"
+#include "PropertyPanel.hpp"
 #include "ResultsPanel.hpp"
+#include "SchematicView.hpp"
+#include "Symbols.hpp"
 #include "SimulationRun.hpp"
 #include "Theme.hpp"
 
@@ -37,7 +43,7 @@ const char* kTemplate = R"json({
 
   "components": [
     { "type": "V", "name": "V1", "nodes": ["in", "0"],
-      "wave": { "type": "pulse", "v1": 0, "v2": 1, "td": "1m", "tr": "1u", "tf": "1u", "pw": "5m", "per": "10m" } },
+      "wave": { "type": "pulse", "v1": 0, "v2": 1, "delay": "1m", "rise": "1u", "fall": "1u", "width": "5m", "period": "10m" } },
     { "type": "R", "name": "R1", "nodes": ["in", "out"], "value": "1k" },
     { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "1u" }
   ],
@@ -47,7 +53,27 @@ const char* kTemplate = R"json({
     { "type": "tran", "tstop": "20m" }
   ],
 
-  "outputs": ["v(in)", "v(out)"]
+  "outputs": ["v(in)", "v(out)"],
+
+  "schematic": {
+    "components": {
+      "V1": { "at": [0, 0] },
+      "R1": { "at": [4, -2], "rot": 270 },
+      "C1": { "at": [8, 0] }
+    },
+    "wires": [
+      [[0, -2], [2, -2]],
+      [[6, -2], [10, -2]]
+    ],
+    "labels": [
+      { "name": "in", "at": [1, -2], "rot": 270 },
+      { "name": "out", "at": [10, -2] }
+    ],
+    "grounds": [
+      { "at": [0, 2] },
+      { "at": [8, 2] }
+    ]
+  }
 }
 )json";
 
@@ -97,11 +123,21 @@ QIcon runIcon(bool stop) {
 
 MainWindow::MainWindow() {
     editor_ = new CodeEditor;
-    setCentralWidget(editor_);
+    schematic_ = new SchematicView;
+    split_ = new QSplitter(Qt::Horizontal);
+    split_->addWidget(schematic_);
+    split_->addWidget(editor_);
+    split_->setStretchFactor(0, 3);
+    split_->setStretchFactor(1, 2);
+    split_->setChildrenCollapsible(false);
+    setCentralWidget(split_);
     run_ = new SimulationRun(this);
     checkTimer_ = new QTimer(this);
     checkTimer_->setSingleShot(true);
     checkTimer_->setInterval(400);
+    schematicTimer_ = new QTimer(this);
+    schematicTimer_->setSingleShot(true);
+    schematicTimer_->setInterval(150);
 
     createDocks();
     createActions();
@@ -118,7 +154,30 @@ MainWindow::MainWindow() {
     connect(editor_->document(), &QTextDocument::contentsChanged, this, [this]() {
         setWindowModified(editor_->document()->isModified());
         scheduleCheck();
+        if (!writing_) schematicTimer_->start();
     });
+    connect(schematicTimer_, &QTimer::timeout, this, &MainWindow::refreshSchematic);
+    connect(editor_, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::textCursorMoved);
+    connect(schematic_, &SchematicView::edited, this, &MainWindow::applySchematic);
+    connect(schematic_, &SchematicView::selectionChanged, this, &MainWindow::schematicSelectionChanged);
+    connect(schematic_, &SchematicView::componentActivated, this, [this](const QString&) {
+        propsDock_->show();
+        propsDock_->raise();
+        props_->focusFirstField();
+    });
+    connect(schematic_, &SchematicView::probe, this, &MainWindow::probe);
+    connect(schematic_, &SchematicView::partChooserRequested, this, [this]() {
+        paletteDock_->show();
+        paletteDock_->raise();
+        palette_->focusSearch();
+    });
+    connect(palette_, &PartPalette::partChosen, this, &MainWindow::choosePart);
+    connect(props_, &PropertyPanel::memberChanged, this, [this](int index, const QString& key, const QString& json) {
+        applyText(setComponentMember(editor_->toPlainText(), index, key, json));
+        refreshSchematic();
+    });
+    connect(props_, &PropertyPanel::renameRequested, this, &MainWindow::renameComponent);
+    connect(props_, &PropertyPanel::showInText, this, [this](int index) { revealInText(index, true); });
     connect(editor_->document(), &QTextDocument::modificationChanged, this, &QWidget::setWindowModified);
     connect(checkTimer_, &QTimer::timeout, this, [this]() {
         checker_.check(editor_->toPlainText(), file_.isEmpty() ? QDir::currentPath() : QFileInfo(file_).absolutePath());
@@ -136,7 +195,10 @@ MainWindow::MainWindow() {
 
     QSettings settings;
     restoreGeometry(settings.value("window/geometry").toByteArray());
-    if (!restoreState(settings.value("window/state").toByteArray())) resize(1280, 860);
+    if (!restoreState(settings.value("window/state").toByteArray())) resize(1440, 900);
+    if (!split_->restoreState(settings.value("window/split").toByteArray())) split_->setSizes({600, 420});
+    showPlan_->setChecked(settings.value("window/showPlan", true).toBool());
+    showText_->setChecked(settings.value("window/showText", true).toBool());
     updateRecentMenu();
     newFile();
 }
@@ -144,6 +206,19 @@ MainWindow::MainWindow() {
 // --- menus and docks --------------------------------------------------------
 
 void MainWindow::createDocks() {
+    palette_ = new PartPalette;
+    paletteDock_ = new QDockWidget(tr("Bauteile"), this);
+    paletteDock_->setObjectName("parts");
+    paletteDock_->setWidget(palette_);
+    addDockWidget(Qt::LeftDockWidgetArea, paletteDock_);
+    props_ = new PropertyPanel;
+    propsDock_ = new QDockWidget(tr("Eigenschaften"), this);
+    propsDock_->setObjectName("properties");
+    propsDock_->setWidget(props_);
+    addDockWidget(Qt::LeftDockWidgetArea, propsDock_);
+    splitDockWidget(paletteDock_, propsDock_, Qt::Vertical);
+    resizeDocks({paletteDock_}, {240}, Qt::Horizontal);
+
     results_ = new ResultsPanel;
     resultsDock_ = new QDockWidget(tr("Ergebnisse"), this);
     resultsDock_->setObjectName("results");
@@ -172,7 +247,7 @@ void MainWindow::createDocks() {
     tabifyDockWidget(resultsDock_, logDock_);
     tabifyDockWidget(logDock_, problemsDock_);
     resultsDock_->raise();
-    resizeDocks({resultsDock_}, {420}, Qt::Vertical);
+    resizeDocks({resultsDock_}, {340}, Qt::Vertical);
 }
 
 void MainWindow::createActions() {
@@ -212,6 +287,24 @@ void MainWindow::createActions() {
     stopAction_->setEnabled(false);
 
     QMenu* view = menuBar()->addMenu(tr("&Ansicht"));
+    showPlan_ = view->addAction(tr("Schaltplan"));
+    showText_ = view->addAction(tr("Text"));
+    for (QAction* a : {showPlan_, showText_}) {
+        a->setCheckable(true);
+        a->setChecked(true);
+    }
+    connect(showPlan_, &QAction::toggled, this, [this](bool on) {
+        if (!on && !showText_->isChecked()) showText_->setChecked(true);  // one of both stays
+        schematic_->setVisible(on);
+    });
+    connect(showText_, &QAction::toggled, this, [this](bool on) {
+        if (!on && !showPlan_->isChecked()) showPlan_->setChecked(true);
+        editor_->setVisible(on);
+    });
+    view->addAction(tr("Schaltplan einpassen"), this, [this]() { schematic_->fitAll(); });
+    view->addSeparator();
+    view->addAction(paletteDock_->toggleViewAction());
+    view->addAction(propsDock_->toggleViewAction());
     view->addAction(resultsDock_->toggleViewAction());
     view->addAction(logDock_->toggleViewAction());
     view->addAction(problemsDock_->toggleViewAction());
@@ -278,7 +371,15 @@ void MainWindow::newFile() {
     editor_->setPlainText(QString::fromUtf8(kTemplate));
     editor_->document()->setModified(false);
     setCurrentFile(QString());
+    loaded();
+}
+
+void MainWindow::loaded() {
     results_->clear();
+    schematic_->setOperatingPoint({});
+    schematic_->resetView();
+    schematic_->selectComponents({});
+    refreshSchematic();
     scheduleCheck();
 }
 
@@ -300,9 +401,8 @@ bool MainWindow::openFile(const QString& path) {
     editor_->setPlainText(QString::fromUtf8(f.readAll()));
     editor_->document()->setModified(false);
     setCurrentFile(QFileInfo(path).absoluteFilePath());
-    results_->clear();
     log_->clear();
-    scheduleCheck();
+    loaded();
     return true;
 }
 
@@ -369,6 +469,9 @@ void MainWindow::closeEvent(QCloseEvent* e) {
     QSettings settings;
     settings.setValue("window/geometry", saveGeometry());
     settings.setValue("window/state", saveState());
+    settings.setValue("window/split", split_->saveState());
+    settings.setValue("window/showPlan", showPlan_->isChecked());
+    settings.setValue("window/showText", showText_->isChecked());
     e->accept();
 }
 
@@ -399,10 +502,18 @@ void MainWindow::finishAutomation(bool ok) {
 void MainWindow::scheduleCheck() { checkTimer_->start(); }
 
 void MainWindow::showCheck(const CheckResult& r) {
-    editor_->setDiagnostics(r.diagnostics);
+    lastCheck_ = r;
+    updateProblems();
+}
+
+void MainWindow::updateProblems() {
+    const CheckResult& r = lastCheck_;
+    QVector<Diagnostic> all = r.diagnostics;
+    all += schematicDiagnostics_;
+    editor_->setDiagnostics(all);
     problems_->clear();
     int errors = 0, warnings = 0;
-    for (const Diagnostic& d : r.diagnostics) {
+    for (const Diagnostic& d : all) {
         const bool error = d.severity == Diagnostic::Error;
         (error ? errors : warnings)++;
         QString text = d.message;
@@ -487,6 +598,175 @@ void MainWindow::simulationFinished(bool ok, bool stopped) {
         return;
     }
     status_->setText(tr("Simulation fertig in %1 s").arg(seconds));
+    schematic_->setOperatingPoint(results_->operatingPoint());
     resultsDock_->show();
     resultsDock_->raise();
+}
+
+// --- schematic and text -------------------------------------------------------
+
+void MainWindow::refreshSchematic() {
+    schematicTimer_->stop();
+    const QString text = editor_->toPlainText();
+    Schematic s;
+    if (!readSchematic(text, s)) {
+        schematic_->setStale(true);
+        return;
+    }
+    schematic_->setStale(false);
+    schematic_->setSchematic(s);
+    palette_->setSubcircuits(s.subcircuits);
+    props_->setModelNames(s.modelTypes.keys());
+
+    // where drawing and text disagree
+    schematicDiagnostics_.clear();
+    const Connectivity& c = schematic_->connectivity();
+    for (const auto& [k, pin] : c.conflicts) {
+        const SComponent& comp = s.components[k];
+        Diagnostic d;
+        d.severity = Diagnostic::Warning;
+        d.line = editor_->document()->findBlock(comp.begin).blockNumber();
+        d.message = tr("Schaltplan: %1, Anschluss %2 liegt im Plan an „%3“, im Text an „%4“")
+                        .arg(comp.name, symbolOf(comp).pins.value(pin).name, c.pinNodes[k][pin], comp.nodes[pin]);
+        schematicDiagnostics_ << d;
+    }
+    for (const QString& w : c.warnings) {
+        Diagnostic d;
+        d.severity = Diagnostic::Warning;
+        d.message = tr("Schaltplan: %1").arg(w);
+        schematicDiagnostics_ << d;
+    }
+    updateProblems();
+    showProperties();
+}
+
+void MainWindow::applyText(const QString& text) {
+    const QString old = editor_->toPlainText();
+    if (text == old) return;
+    // replace only the part that differs: cursor, scroll position and the
+    // undo history of the rest stay
+    const int n = int(std::min(old.size(), text.size()));
+    int prefix = 0;
+    while (prefix < n && old[prefix] == text[prefix]) ++prefix;
+    int suffix = 0;
+    while (suffix < n - prefix && old[old.size() - 1 - suffix] == text[text.size() - 1 - suffix]) ++suffix;
+    writing_ = true;
+    QTextCursor c(editor_->document());
+    c.beginEditBlock();
+    c.setPosition(prefix);
+    c.setPosition(int(old.size()) - suffix, QTextCursor::KeepAnchor);
+    c.insertText(text.mid(prefix, text.size() - prefix - suffix));
+    c.endEditBlock();
+    writing_ = false;
+}
+
+void MainWindow::applySchematic(const Schematic& after) {
+    applyText(writeSchematic(editor_->toPlainText(), after));
+    refreshSchematic();
+}
+
+void MainWindow::showProperties() {
+    const QStringList names = schematic_->selectedComponents();
+    const Schematic& s = schematic_->schematic();
+    const int k = names.size() == 1 ? s.find(names.first()) : -1;
+    if (k >= 0) {
+        if (!props_->editing()) props_->showComponent(editor_->toPlainText(), &s.components[k]);
+        editor_->setHighlight(s.components[k].begin, s.components[k].end);
+        return;
+    }
+    editor_->setHighlight(-1, -1);
+    if (props_->editing()) return;
+    props_->showComponent(QString(), nullptr,
+                          names.isEmpty() ? tr("Ein Bauteil im Plan oder im Text auswählen.")
+                                          : tr("%n Bauteile ausgewählt.", "", int(names.size())));
+}
+
+void MainWindow::revealInText(int index, bool focus) {
+    for (const SComponent& c : schematic_->schematic().components) {
+        if (c.index != index || c.begin < 0) continue;
+        syncingCursor_ = true;
+        QTextCursor cur(editor_->document());
+        cur.setPosition(std::min(c.begin, editor_->document()->characterCount() - 1));
+        editor_->setTextCursor(cur);
+        editor_->ensureCursorVisible();
+        syncingCursor_ = false;
+        if (focus) {
+            showText_->setChecked(true);
+            editor_->setFocus();
+        }
+        return;
+    }
+}
+
+void MainWindow::schematicSelectionChanged(const QStringList& names) {
+    showProperties();
+    if (names.size() != 1) return;
+    const Schematic& s = schematic_->schematic();
+    const int k = s.find(names.first());
+    if (k >= 0) revealInText(s.components[k].index, false);
+}
+
+void MainWindow::textCursorMoved() {
+    // only when the user moves through the text, and the drawing is up to date
+    if (syncingCursor_ || writing_ || !editor_->hasFocus() || schematicTimer_->isActive()) return;
+    const int pos = editor_->textCursor().position();
+    for (const SComponent& c : schematic_->schematic().components) {
+        if (c.begin < 0 || pos < c.begin || pos > c.end) continue;
+        if (schematic_->selectedComponents() != QStringList{c.name}) {
+            schematic_->selectComponents({c.name});
+            showProperties();
+        }
+        return;
+    }
+}
+
+void MainWindow::choosePart(const QString& id) {
+    showPlan_->setChecked(true);
+    const Schematic& s = schematic_->schematic();
+    if (id == "wire") schematic_->startWire();
+    else if (id == "ground") schematic_->startGround();
+    else if (id == "label") schematic_->startLabel();
+    else if (id.startsWith("sub:")) schematic_->startPlacing(makeSubcircuit(id.mid(4), s));
+    else
+        for (const PartTemplate& t : partTemplates())
+            if (t.id == id) schematic_->startPlacing(makeComponent(t, s));
+}
+
+void MainWindow::renameComponent(int index, const QString& name) {
+    Schematic after = schematic_->schematic();
+    int k = -1;
+    for (int i = 0; i < after.components.size(); ++i) {
+        if (after.components[i].index == index) k = i;
+        else if (after.components[i].name.compare(name, Qt::CaseInsensitive) == 0) {
+            status_->setText(tr("Den Namen „%1“ trägt schon ein anderes Bauteil").arg(name));
+            showProperties();
+            return;
+        }
+    }
+    if (k < 0) return;
+    if (!after.hasSection) {
+        // no drawing in the file yet: only the name changes
+        applyText(setComponentMember(editor_->toPlainText(), index, "name", jsonQuote(name)));
+        schematic_->selectComponents({});
+        refreshSchematic();
+    } else {
+        after.components[k].name = name;
+        applySchematic(after);
+    }
+    schematic_->selectComponents({name});
+    showProperties();
+}
+
+void MainWindow::probe(const QString& quantity) {
+    if (results_->empty()) {
+        status_->setText(tr("Für Kurven zuerst simulieren (%1)").arg(runAction_->shortcut().toString(QKeySequence::NativeText)));
+        return;
+    }
+    if (results_->probe(quantity)) {
+        resultsDock_->show();
+        resultsDock_->raise();
+        status_->setText(tr("%1 gezeigt").arg(quantity));
+    } else {
+        status_->setText(tr("%1 ist in keiner Analyse gespeichert – unter \"outputs\" eintragen").arg(quantity));
+    }
 }

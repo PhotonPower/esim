@@ -140,6 +140,22 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
     open build/editor/esim-editor.app                       # macOS
     build/editor/esim-editor.app/Contents/MacOS/esim-editor examples/rc_lowpass.json
 
+- Schaltplan und Text nebeneinander, beide bearbeitbar. Der Text bleibt
+  maßgeblich: Der Plan steht unter `"schematic"` in derselben Datei (der
+  Simulator überliest ihn), und jede Änderung im Plan wird als kleine
+  Textänderung geschrieben – Kommentare und Aufbau der Datei bleiben, ⌘Z
+  wirkt auf beides. Knotennamen ergeben sich aus Leitungen, Netzlabels und
+  Masse. Dateien ohne Plan werden automatisch angeordnet, mit einem Label
+  an jedem Anschluss.
+- Plan: Bauteile aus der Liste „Bauteile“ (oder Taste A) platzieren;
+  R dreht, X spiegelt, ⌫ löscht, ⌘D verdoppelt, Pfeiltasten verschieben;
+  W zeichnet Leitungen (enden an Anschluss oder Leitung), G setzt Masse,
+  N ein Netzlabel; Rechtsklick öffnet ein Menü. Leitungen an verschobenen
+  Bauteilen gehen mit. Die Auswahl im Plan markiert das Bauteil im Text
+  und umgekehrt; „Eigenschaften“ zeigt seine Werte als Formular.
+  Nach einer Simulation stehen die Spannungen des Arbeitspunkts an den
+  Labels; ⌥-Klick auf eine Leitung oder ein Bauteil zeigt Spannung oder
+  Strom als Kurve.
 - Texteditor mit Hervorhebung, Zeilennummern und Einrückung; die Eingabe wird
   beim Tippen mit dem Parser des Simulators geprüft, Fehler und Warnungen
   stehen an ihrer Zeile und in der Liste „Probleme“.
@@ -151,7 +167,7 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
   Rechteck, Doppelklick zeigt alles; das Fadenkreuz zeigt die Werte.
   Frequenzgänge erscheinen als Betrag in dB und Phase, Sweeps mit einer
   Farbstufe je Lauf.
-- Ein Schaltplaneditor folgt; Planung in [`docs/editor.md`](docs/editor.md).
+- Konzept, Stand und nächste Schritte: [`docs/editor.md`](docs/editor.md).
 
 Der Editor bringt das Programm `esim` in seinem Paket mit.
 `esim-editor datei.json --run --snapshot bild.png` rechnet und speichert das

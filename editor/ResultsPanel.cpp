@@ -284,3 +284,52 @@ void ResultsPanel::fillValues(const QJsonObject& entry) {
     fillTable(values_, rows);
     values_->setVisible(!rows.isEmpty());
 }
+
+namespace {
+
+// the quantities of a CSV file, from its first line
+bool fileHas(const QString& path, const QString& quantity) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+    const QStringList header = QString::fromUtf8(f.readLine()).trimmed().split(',');
+    for (const QString& h : header)
+        if (h.compare(quantity, Qt::CaseInsensitive) == 0 || h.compare("mag(" + quantity + ")", Qt::CaseInsensitive) == 0)
+            return true;
+    return false;
+}
+
+}  // namespace
+
+bool ResultsPanel::probe(const QString& quantity) {
+    const auto tick = [&]() {
+        for (int k = 0; k < quantities_->count(); ++k) {
+            QListWidgetItem* item = quantities_->item(k);
+            if (item->text().compare(quantity, Qt::CaseInsensitive) != 0) continue;
+            item->setHidden(false);
+            item->setCheckState(Qt::Checked);  // itemChanged updates the plot
+            quantities_->scrollToItem(item);
+            return true;
+        }
+        return false;
+    };
+    if (tick()) return true;
+    for (int row = 0; row < analyses_->count(); ++row) {
+        const QString file = analyses_->item(row)->data(FileRole).toString();
+        if (row == analyses_->currentRow() || file.isEmpty() || !fileHas(file, quantity)) continue;
+        analyses_->setCurrentRow(row);
+        return tick();
+    }
+    return false;
+}
+
+QHash<QString, double> ResultsPanel::operatingPoint() const {
+    QHash<QString, double> out;
+    for (const QJsonValue& v : entries_) {
+        const QJsonObject e = v.toObject();
+        if (e.value("type").toString() != "op" || e.contains("sweep")) continue;
+        const QJsonObject values = e.value("values").toObject();
+        for (auto it = values.begin(); it != values.end(); ++it)
+            if (it->isDouble()) out.insert(it.key(), it->toDouble());
+    }
+    return out;
+}

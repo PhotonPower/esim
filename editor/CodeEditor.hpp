@@ -26,6 +26,9 @@ public:
     void goToLine(int line, int column = -1);
     void toggleComment();
     void updateColors();
+    // Marks the text range [begin, end) (the component selected in the
+    // schematic); -1: none.
+    void setHighlight(int begin, int end);
 
 protected:
     void resizeEvent(QResizeEvent* e) override;
@@ -44,4 +47,5 @@ private:
     QWidget* gutter_;
     JsonHighlighter* highlighter_;
     QVector<Diagnostic> diagnostics_;
+    int highlightBegin_ = -1, highlightEnd_ = -1;
 };

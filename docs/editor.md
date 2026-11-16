@@ -20,6 +20,8 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
 | Rechnen | esim als eigener Prozess (`QProcess`, `--summary`, `--progress`) | Absturz oder Endlosschleife trifft nicht den Editor; Abbruch = Prozess beenden |
 | Prüfen beim Tippen | im Editor-Prozess mit `esimcircuit` (Thread, entprellt) | Fehler sofort, ohne Start |
 | Dateiformat | Schaltplan unter `"schematic"` in derselben JSON-Datei | eine Datei, `esim datei.json` läuft weiter; der Simulator ignoriert den Schlüssel |
+| Plan und Text | der Text ist maßgeblich; der Plan schreibt gezielte Textänderungen | Kommentare bleiben, eine Undo-Geschichte für beides |
+| Zeichenfläche | eigenes Widget statt `QGraphicsView` | der Plan wird nach jeder Textänderung neu aufgebaut; Treffer, Raster und Leitungsführung sind einfacher selbst gemacht |
 | Farben | validierte 8-Farben-Palette, eigene Stufen für hell und dunkel; Sweeps als Blauskala | unterscheidbar auch bei Farbfehlsichtigkeit |
 
 ## Stand
@@ -41,19 +43,59 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
 - Tests: `editor_tests` (alle Beispiele bestehen die Prüfung, Fehlerorte,
   Kurvenaufbereitung, SI-Formatierung).
 
-## Nächste Schritte
+**Schritt 2 (Schaltplan)** – erledigt:
+- Plan (`SchematicView`, eigene Zeichenfläche) links, Text rechts; beide
+  bearbeitbar, Ansicht → Schaltplan/Text blendet eines aus.
+- Symbole für alle Bauteiltypen (R, C, L, V mit DC/Sinus/Puls, I, D, ideale
+  Diode, NPN/PNP, N/P-MOSFET mit 3 oder 4 Anschlüssen, N/P-JFET, E, G, F, H,
+  B, Schalter mit 2 oder 4 Anschlüssen, Leitung, Kopplung, Teilschaltungen
+  als Kasten mit ihren Ports).
+- Platzieren, Drehen, Spiegeln, Verschieben (Leitungen an den Anschlüssen
+  gehen mit und bleiben rechtwinklig), Verdoppeln, Löschen, Leitungen mit
+  Knick, Masse, Netzlabels, Rechteckauswahl, Kontextmenü.
+- Netzliste aus dem Plan: Knoten aus Labels, Masse wird `"0"`, sonst behält
+  ein Netz den Namen, den seine Anschlüsse im Text hatten (Ausgaben wie
+  `v(out)` bleiben gültig), neue Netze heißen `n1`, `n2`, …
+- Plan und Text abgleichen: Auswahl im Plan markiert das Bauteil im Text,
+  der Textcursor wählt es im Plan; Eigenschaften als Formular.
+- Nach der Simulation: Spannungen des Arbeitspunkts an den Labels und in
+  den Tooltips; ⌥-Klick zeigt v(Netz) oder i(Bauteil) als Kurve.
+- Tests: Lesen und gezieltes Ändern von JSONC (`JsonSpan`), Plan → Text →
+  Plan für alle Beispiele, Netzbildung, Bedienung mit Maus und Tastatur im
+  echten Hauptfenster (`editor_gui_tests`).
 
-**Schritt 2: Schaltplan**
-- Zeichenfläche (`QGraphicsView`): Raster, Zoom, Verschieben, Auswahl,
-  Undo/Redo (`QUndoStack`).
-- Symbole für alle Bauteiltypen; platzieren, drehen, spiegeln; Leitungen mit
-  rechtwinkligem Verlauf; Massesymbol (`"0"`), Netzlabels.
-- Eigenschaften des gewählten Bauteils als Formular (Werte mit SI-Präfixen).
-- Netzliste aus dem Plan erzeugen: Knotennamen aus Labels, sonst automatisch.
-- Plan und Text abgleichen: Auswahl im Plan markiert das Bauteil im Text und umgekehrt.
-- Knoten oder Bauteil anklicken, um Spannung oder Strom zu sehen (nach einer Simulation).
-- Format unter `"schematic"`: je Bauteilname Position, Drehung, Spiegelung;
-  Leitungen als Punktfolgen; Labels.
+### Wie Plan und Text zusammenhängen
+
+Der Text ist maßgeblich. Nach jeder Textänderung (entprellt) liest der Plan
+die Datei neu: Bauteile und Knoten aus `"components"`, Lage, Leitungen,
+Labels und Masse aus `"schematic"`. Eine Änderung im Plan erzeugt einen
+neuen Plan-Zustand; daraus werden nur die betroffenen Stellen des Texts
+ersetzt (`writeSchematic`: Name und `"nodes"` geänderter Bauteile, der
+Abschnitt `"schematic"`, gelöschte und neue Bauteile). Der Text wird als
+eine Änderung eingespielt (nur der Bereich, der sich unterscheidet), also
+ein Schritt in der gemeinsamen Undo-Geschichte. So bleiben Kommentare,
+Reihenfolge und Formatierung erhalten – der offene Punkt aus Schritt 1 ist
+damit gelöst.
+
+Format:
+
+    "schematic": {
+      "components": { "R1": { "at": [4, -2], "rot": 270, "mirror": true } },
+      "wires":   [ [[0, -2], [2, -2]] ],
+      "labels":  [ { "name": "out", "at": [10, -2], "rot": 0 } ],
+      "grounds": [ { "at": [0, 2] } ]
+    }
+
+Rasterkoordinaten (ganze Zahlen, y nach unten), Drehung im Uhrzeigersinn.
+Ein Punkt auf einer Leitung verbindet (T-Abzweig, Punkt wird gezeichnet),
+zwei Leitungen, die sich nur kreuzen, nicht.
+
+Widersprechen sich Plan und Text (der Text verbindet einen Anschluss mit
+einem anderen Knoten, als die Leitung im Plan), steht eine Warnung in
+„Probleme“ und ein roter Ring am Anschluss. Die nächste Änderung im Plan
+schreibt die Knoten des Plans.
+
+## Nächste Schritte
 
 **Schritt 3**
 - Subcircuits als Symbole mit Hierarchie, Modellbibliothek (SPICE-Karten),
@@ -65,7 +107,8 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
 
 ## Offene Punkte
 
-- Speichert der Editor eine handgeschriebene Datei, bleiben ihre Kommentare
-  im Text erhalten, solange nur der Text bearbeitet wird. Sobald der
-  Schaltplan die Datei schreibt, ist zu klären, wie Kommentare überleben
-  (gezieltes Ersetzen der betroffenen Abschnitte statt Neuschreiben).
+- Teilschaltungen haben noch keinen eigenen Plan (ihre Bauteile stehen nur
+  im Text); Schritt 3.
+- Kopieren und Einfügen zwischen Dateien, Beschriftungen frei verschieben.
+- Die Bedienung ist mit simulierten Ereignissen getestet; Rückmeldungen
+  aus der echten Benutzung fehlen noch.

@@ -26,6 +26,12 @@ public:
     bool load(const QString& summaryPath, QString& error);
     void clear();
     PlotWidget* plot() const { return plot_; }
+    bool empty() const { return entries_.isEmpty(); }
+    // Ticks a quantity ("v(out)", "i(R1)") in the shown analysis, or in the
+    // first other analysis that has it; false if none has.
+    bool probe(const QString& quantity);
+    // Values of the operating point analyses ("v(out)" -> 2.5).
+    QHash<QString, double> operatingPoint() const;
 
 private:
     void showAnalysis(int row);

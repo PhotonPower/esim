@@ -6,8 +6,11 @@
 #include <memory>
 
 #include "Checker.hpp"
+#include "Schematic.hpp"
 
 class CodeEditor;
+class PartPalette;
+class PropertyPanel;
 class QAction;
 class QDockWidget;
 class QLabel;
@@ -15,12 +18,17 @@ class QListWidget;
 class QMenu;
 class QPlainTextEdit;
 class QProgressBar;
+class QSplitter;
 class QTimer;
 class ResultsPanel;
+class SchematicView;
 class SimulationRun;
 
-// One input file: the text in the middle, results, log and problems in
-// docks around it. Simulation runs save the file first (as development
+// One input file, shown twice side by side: as schematic and as text. The
+// text is the reference; the schematic reads it after every change and
+// writes its own changes into it as small edits, so both share one undo
+// history. Parts and properties are docked on the left; results, log and
+// problems below. Simulation runs save the file first (as development
 // environments do) and keep their results in a temporary directory.
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -47,15 +55,33 @@ private:
     void setCurrentFile(const QString& path);
     void updateRecentMenu();
     void fillExamplesMenu();
+    void loaded();  // after new or open
 
     void scheduleCheck();
     void showCheck(const CheckResult& r);
+    void updateProblems();
     void runSimulation();
     void stopSimulation();
     void appendLog(const QString& text, int kind);
     void simulationFinished(bool ok, bool stopped);
 
+    // schematic <-> text
+    void refreshSchematic();
+    void applyText(const QString& text);
+    void applySchematic(const Schematic& after);
+    void schematicSelectionChanged(const QStringList& names);
+    void textCursorMoved();
+    void showProperties();
+    void revealInText(int index, bool focus);
+    void choosePart(const QString& id);
+    void renameComponent(int index, const QString& name);
+    void probe(const QString& quantity);
+
     CodeEditor* editor_;
+    SchematicView* schematic_;
+    QSplitter* split_;
+    PartPalette* palette_;
+    PropertyPanel* props_;
     ResultsPanel* results_;
     QPlainTextEdit* log_;
     QListWidget* problems_;
@@ -65,12 +91,21 @@ private:
     QMenu* examplesMenu_;
     QAction* runAction_;
     QAction* stopAction_;
+    QAction* showPlan_;
+    QAction* showText_;
+    QDockWidget* paletteDock_;
+    QDockWidget* propsDock_;
     QDockWidget* resultsDock_;
     QDockWidget* logDock_;
     QDockWidget* problemsDock_;
 
     Checker checker_;
+    CheckResult lastCheck_;
+    QVector<Diagnostic> schematicDiagnostics_;
     QTimer* checkTimer_;
+    QTimer* schematicTimer_;
+    bool writing_ = false;         // the schematic writes into the text
+    bool syncingCursor_ = false;   // the text cursor is moved to a component
     SimulationRun* run_;
     std::unique_ptr<QTemporaryDir> outDir_;
     QString file_;

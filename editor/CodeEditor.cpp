@@ -97,6 +97,13 @@ void CodeEditor::setDiagnostics(const QVector<Diagnostic>& diagnostics) {
     gutter_->update();
 }
 
+void CodeEditor::setHighlight(int begin, int end) {
+    if (begin == highlightBegin_ && end == highlightEnd_) return;
+    highlightBegin_ = begin;
+    highlightEnd_ = end;
+    updateSelections();
+}
+
 void CodeEditor::updateSelections() {
     QList<QTextEdit::ExtraSelection> list;
     QTextEdit::ExtraSelection line;
@@ -106,6 +113,17 @@ void CodeEditor::updateSelections() {
     line.cursor = textCursor();
     line.cursor.clearSelection();
     list << line;
+    if (highlightBegin_ >= 0 && highlightEnd_ > highlightBegin_ && highlightEnd_ <= document()->characterCount()) {
+        // the component selected in the schematic
+        QTextEdit::ExtraSelection h;
+        QColor c = Theme::series(0);
+        c.setAlpha(Theme::dark() ? 60 : 40);
+        h.format.setBackground(c);
+        h.cursor = QTextCursor(document());
+        h.cursor.setPosition(highlightBegin_);
+        h.cursor.setPosition(highlightEnd_, QTextCursor::KeepAnchor);
+        list << h;
+    }
     for (const Diagnostic& d : diagnostics_) {
         if (d.line < 0) continue;
         const QTextBlock block = document()->findBlockByNumber(d.line);
