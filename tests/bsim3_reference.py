@@ -1,4 +1,4 @@
-"""BSIM3v3.3 drain current in plain Python, as a second implementation.
+"""BSIM3v3.3 drain current and charges in plain Python, as a second implementation.
 
 Written separately from src/circuit/devices/Bsim3.cpp (scalar arithmetic, no
 derivatives, another structure) from the same model equations of the BSIM
@@ -7,9 +7,11 @@ simulator at many bias points and compares the two; a slip in either
 transcription shows up as a difference.
 
     ids, isub = drain_current(params, "nmos", vgs, vds, vbs, temp=27.0)
+    qd, qg, qs, qb = terminal_charges(params, "nmos", vd, vg, vs, vb, temp=27.0)
 
-params: model and instance parameters by their lower-case names; voltages in
-the n-channel frame with vds >= 0 (for a p-channel: all voltages negated).
+params: model and instance parameters by their lower-case names. The drain
+current takes voltages in the n-channel frame with vds >= 0 (for a p-channel:
+all voltages negated); the charges take the terminal voltages as they are.
 """
 
 import math
@@ -161,6 +163,56 @@ class Prepared:
         e = math.exp(-0.5 * drout * self.leff / lt0)
         self.theta_rout = bin_("pdibl1", 0.39) * (e + 2.0 * e * e) + bin_("pdibl2", 0.0086)
 
+        # --- charges ---
+        self.capmod = int(get("capmod", 3))
+        self.xpart = get("xpart", 0.0)
+        dlc, dwc = get("dlc", get("lint", 0.0)), get("dwc", get("wint", 0.0))
+        tl, tw = length ** get("lln", 1.0), width ** get("lwn", 1.0)
+        dlc_eff = dlc + get("llc", get("ll", 0.0)) / tl + get("lwc", get("lw", 0.0)) / tw + get("lwlc", get("lwl", 0.0)) / (tl * tw)
+        tl, tw = length ** get("wln", 1.0), width ** get("wwn", 1.0)
+        dwc_eff = dwc + get("wlc", get("wl", 0.0)) / tl + get("wwc", get("ww", 0.0)) / tw + get("wwlc", get("wwl", 0.0)) / (tl * tw)
+        self.leff_cv = length + get("xl", 0.0) - 2.0 * dlc_eff
+        self.weff_cv = width + get("xw", 0.0) - 2.0 * dwc_eff
+        self.cox_wl = self.cox * self.leff_cv * self.weff_cv
+        self.abulk_cv_factor = 1.0 + (bin_("clc", 0.1e-6) / self.leff_cv) ** bin_("cle", 0.6)
+        self.vfbcv = bin_("vfbcv", -1.0)
+        self.noff = bin_("noff", 1.0)
+        self.voffcv = bin_("voffcv", 0.0)
+        self.moin = bin_("moin", 15.0)
+        self.acde = bin_("acde", 1.0) / (npeak / 2e16) ** 0.25
+        self.ldeb = math.sqrt(EPSSI * vtm0 / (Q * npeak * 1e6)) / 3.0
+        self.ckappa = bin_("ckappa", 0.6)
+        # vfbzb: threshold voltage at zero bias, without phi and the body effect
+        root = self.factor1 * math.sqrt(self.xdep0)
+        vth_zero = (self.vth0
+                    - p_dvt(bin_("dvt0w", 0.0), bin_("dvt1w", 5.3e6) * self.weff * self.leff / root, self.vbi - self.phi)
+                    - p_dvt(bin_("dvt0", 2.2), bin_("dvt1", 0.53) * self.leff / root, self.vbi - self.phi)
+                    + bin_("k3", 80.0) * self.tox * self.phi / (self.weff + bin_("w0", 2.5e-6))
+                    + self.k1ox * (math.sqrt(1.0 + bin_("nlx", 1.74e-7) / self.leff) - 1.0) * self.sqrt_phi
+                    + (bin_("kt1", -0.11) + bin_("kt1l", 0.0) / self.leff) * self.temp_ratio)
+        self.vfbzb = vth_zero - self.phi - self.k1 * self.sqrt_phi
+        # overlaps, per transistor
+        cf = bin_("cf", 2.0 * EPSOX / math.pi * math.log(1.0 + 0.4e-6 / self.tox))
+        self.cgsl, self.cgdl = bin_("cgsl", 0.0), bin_("cgdl", 0.0)
+
+        def overlap(key, cgl):
+            if key in raw:
+                return raw[key]
+            if "dlc" in raw and dlc > 0.0:
+                return dlc * self.cox - cgl
+            return 0.6 * get("xj", 0.15e-6) * self.cox
+
+        self.cgso = (overlap("cgso", get("cgsl", 0.0)) + cf) * self.weff_cv
+        self.cgdo = (overlap("cgdo", get("cgdl", 0.0)) + cf) * self.weff_cv
+        self.cgbo = get("cgbo", 2.0 * dwc * self.cox) * self.leff_cv
+
+
+def p_dvt(dvt0, x, v0):
+    """Threshold shift dvt0 (e^-x/2 + 2 e^-x) v0 of short and narrow channels."""
+    t = -0.5 * x
+    e = math.exp(t) if t > -EXP_THRESHOLD else MIN_EXP
+    return dvt0 * (e + 2.0 * e * e) * v0
+
 
 def _keep_positive(t):
     """1 + t, bent so that it stays positive (the model's guard against bad parameters)."""
@@ -175,6 +227,12 @@ def _short(t):
 def drain_current(params, kind, vgs, vds, vbs, temp=27.0, prepared=None):
     """Drain current and substrate current for vds >= 0 in the n-channel frame."""
     p = prepared or Prepared(params, kind, temp)
+    ids, isub, _ = _channel(p, vgs, vds, vbs)
+    return ids * p.mult, isub * p.mult
+
+
+def _channel(p, vgs, vds, vbs):
+    """ids, isub and the quantities the charges need, for one transistor."""
     vtm, cox, leff = p.vtm, p.cox, p.leff
 
     # effective body bias
@@ -182,9 +240,11 @@ def drain_current(params, kind, vgs, vds, vbs, temp=27.0, prepared=None):
     vbseff = p.vbsc + 0.5 * (a + math.sqrt(a * a - 0.004 * p.vbsc))
     vbseff = max(vbseff, vbs)
     if vbseff > 0.0:
+        phis = p.phi * p.phi / (p.phi + vbseff)
         sqrt_phis = p.sqrt_phi * p.phi / (p.phi + 0.5 * vbseff)
     else:
-        sqrt_phis = math.sqrt(p.phi - vbseff)
+        phis = p.phi - vbseff
+        sqrt_phis = math.sqrt(phis)
     xdep = p.xdep0 * sqrt_phis / p.sqrt_phi
 
     # threshold voltage
@@ -237,11 +297,13 @@ def drain_current(params, kind, vgs, vds, vbs, temp=27.0, prepared=None):
     # bulk charge factor
     half = 0.5 * p.k1ox / sqrt_phis
     lfrac = leff / (leff + 2.0 * math.sqrt(p.xj * xdep))
-    abulk = 1.0 + half * (p.a0 * lfrac + p.b0 / (p.weff + p.b1)) - half * p.ags * p.a0 * lfrac ** 3 * vgsteff
-    if abulk < 0.1:
-        abulk = (0.2 - abulk) / (3.0 - 20.0 * abulk)
+    abulk0 = 1.0 + half * (p.a0 * lfrac + p.b0 / (p.weff + p.b1))
+    abulk = abulk0 - half * p.ags * p.a0 * lfrac ** 3 * vgsteff
+    abulk0, abulk = (a if a >= 0.1 else (0.2 - a) / (3.0 - 20.0 * a) for a in (abulk0, abulk))
     t = p.keta * vbseff
-    abulk *= 1.0 / (1.0 + t) if t >= -0.9 else (17.0 + 20.0 * t) / (0.8 + t)
+    keta_factor = 1.0 / (1.0 + t) if t >= -0.9 else (17.0 + 20.0 * t) / (0.8 + t)
+    abulk *= keta_factor
+    abulk0 *= keta_factor
 
     # mobility
     if p.mobmod == 1:
@@ -322,4 +384,185 @@ def drain_current(params, kind, vgs, vds, vbs, temp=27.0, prepared=None):
         isub = alpha / leff * diff * math.exp(-p.beta0 / diff) * idsa
     else:
         isub = alpha / leff * MIN_EXP * diff * idsa
-    return ids * p.mult, isub * p.mult
+    bias = dict(vbs=vbs, vbseff=vbseff, phis=phis, sqrt_phis=sqrt_phis, vth=vth, vgs_eff=vgs_eff, vgst=vgst,
+                n=n, abulk0=abulk0)
+    return ids, isub, bias
+
+
+# ---------------------------------------------------------------- charges ---
+
+def _partition_linear(xpart, c, vg, ad, qinv):
+    """Source charge of capMod 1 to 3 below saturation (ad = Abulk * Vds)."""
+    if xpart == 0.5:
+        return -0.5 * qinv
+    d = vg - 0.5 * ad + 1e-20
+    if xpart > 0.5:
+        return -c * (vg / 2.0 + ad / 4.0 - ad * ad / (24.0 * d))
+    return -c * (vg ** 3 - 4.0 / 3.0 * vg * vg * ad + 2.0 / 3.0 * vg * ad * ad - 2.0 / 15.0 * ad ** 3) / (2.0 * d * d)
+
+
+def _smooth_min(vdsat, vds, delta):
+    """Vds below vdsat, vdsat above (the model's smoothing with delta)."""
+    if vds == 0.0:
+        return 0.0
+    v4 = vdsat - vds - delta
+    return vdsat - 0.5 * (v4 + math.sqrt(v4 * v4 + 4.0 * delta * vdsat))
+
+
+def _qsub(p, c, vgs_eff, vfbeff, vbseff, vgsteff):
+    """Accumulation and depletion charge of capMod 2 and 3 (oxide capacitance c)."""
+    qacc = c * (vfbeff - p.vfbzb)
+    x = vgs_eff - vfbeff - vbseff - vgsteff
+    if p.k1ox == 0.0:
+        qdep = 0.0
+    elif x < 0.0:
+        qdep = c * x
+    else:
+        qdep = c * p.k1ox * (math.sqrt(0.25 * p.k1ox ** 2 + x) - 0.5 * p.k1ox)
+    return qacc, qdep
+
+
+def _cap0(p, vds, b):
+    """capMod 0: (qg, qd, qs, qb)."""
+    c = p.cox_wl
+    vb = b["vbs"] if b["vbseff"] < 0.0 else p.phi - b["phis"]
+    vg = b["vgs_eff"]
+    vgst = vg - (p.vfbcv + p.phi + p.k1ox * b["sqrt_phis"])
+    above_fb = vg - vb - p.vfbcv
+    if above_fb <= 0.0:
+        return c * above_fb, 0.0, 0.0, -c * above_fb
+    if vgst <= 0.0:
+        qg = c * p.k1ox * (math.sqrt(0.25 * p.k1ox ** 2 + above_fb) - 0.5 * p.k1ox)
+        return qg, 0.0, 0.0, -qg
+    a = b["abulk0"] * p.abulk_cv_factor
+    vdsat = vgst / a
+    if vds >= vdsat:
+        qg = c * (vg - p.vfbcv - p.phi - vdsat / 3.0)
+        qinv = -2.0 / 3.0 * c * vgst
+        share = 0.0 if p.xpart > 0.5 else (0.4 if p.xpart < 0.5 else 0.5)
+        qd, qb = share * qinv, -qg - qinv
+    else:
+        u = 2.0 * vdsat - vds
+        w = vds * vds / (3.0 * u)
+        k = 0.25 * c * a
+        qg = c * (vg - p.vfbcv - p.phi - 0.5 * vds + 0.5 * w)
+        if p.xpart > 0.5:
+            qd = k * (2.0 * vds - u - 3.0 * w)
+            qb = -qg - qd - k * (w - u - 2.0 * vds)
+        elif p.xpart < 0.5:
+            qd = k * (vds - u - vds / (3.0 * u * u) * (8.0 * vdsat ** 2 - 6.0 * vdsat * vds + 1.2 * vds ** 2))
+            qb = -qg + 2.0 * k * (u + w)
+        else:
+            qd = -k * (u + w)
+            qb = -qg - 2.0 * qd
+    return qg, qd, -(qg + qd + qb), qb
+
+
+def _cap123(p, vds, b):
+    """capMod 1, 2 and 3: (qg, qd, qs, qb)."""
+    c = p.cox_wl
+    vg_eff = b["vgs_eff"]
+    vb = b["vbseff"] if b["vbseff"] < 0.0 else p.phi - b["phis"]
+    nvt = p.vtm * p.noff * b["n"]
+    x = (b["vgst"] - p.voffcv) / nvt
+    if x > EXP_THRESHOLD:
+        vgt = b["vgst"] - p.voffcv
+    elif x < -EXP_THRESHOLD:
+        vgt = nvt * math.log(1.0 + MIN_EXP)
+    else:
+        vgt = nvt * math.log1p(math.exp(x))
+    a = b["abulk0"] * p.abulk_cv_factor
+
+    if p.capmod == 1:
+        y = vg_eff - vb - p.vfbzb - vgt
+        qdep = c * y if y <= 0.0 else c * p.k1ox * (math.sqrt(0.25 * p.k1ox ** 2 + y) - 0.5 * p.k1ox)
+        vdsat = vgt / a
+        if vdsat < vds:
+            qg_ch, qb_ch = c * (vgt - vdsat / 3.0), c * (vdsat - vgt) / 3.0
+            qs = -c * vgt * {True: 2.0 / 3.0, False: 0.4}[p.xpart > 0.5] if p.xpart != 0.5 else -c * vgt / 3.0
+        else:
+            ad = a * vds
+            r = ad * vds / (12.0 * (vgt - 0.5 * ad + 1e-20))
+            qg_ch, qb_ch = c * (vgt - 0.5 * vds + r), c * (1.0 - a) * (0.5 * vds - r)
+            qs = _partition_linear(p.xpart, c, vgt, ad, qg_ch + qb_ch)
+        qg, qb = qg_ch + qdep, qb_ch - qdep
+        return qg, -(qg + qb + qs), qs, qb
+
+    def vfb_effective():
+        v3 = p.vfbzb - vg_eff + vb - 0.02
+        return p.vfbzb - 0.5 * (v3 + math.sqrt(v3 * v3 + 0.08 * abs(p.vfbzb)))
+
+    if p.capmod == 2:
+        qacc, qdep = _qsub(p, c, vg_eff, vfb_effective(), vb, vgt)
+        vdse = _smooth_min(vgt / a, vds, 0.02)
+        ad = a * vdse
+        r = ad * vdse / (12.0 * (vgt - 0.5 * ad + 1e-20))
+        qg_ch, qb_ch = c * (vgt - 0.5 * vdse + r), c * (1.0 - a) * (0.5 * vdse - r)
+        qs = _partition_linear(p.xpart, c, vgt, ad, qg_ch + qb_ch)
+        qg, qb = qg_ch + qacc + qdep, qb_ch - qacc - qdep
+        return qg, -(qg + qb + qs), qs, qb
+
+    # capMod 3: charge centroids
+    def with_centroid(tcen):
+        ccen = EPSSI / tcen
+        return c * ccen / (p.cox + ccen)
+
+    t = p.acde * (vg_eff - vb - p.vfbzb) / (1e8 * p.tox)
+    tcen = p.ldeb * (MIN_EXP if t <= -EXP_THRESHOLD else MAX_EXP if t >= EXP_THRESHOLD else math.exp(t))
+    link = 1e-3 * p.tox
+    v3 = p.ldeb - tcen - link
+    tcen = p.ldeb - 0.5 * (v3 + math.sqrt(v3 * v3 + 4.0 * link * p.ldeb))
+    qacc, qdep = _qsub(p, with_centroid(tcen), vg_eff, vfb_effective(), vb, vgt)
+
+    if p.k1ox <= 0.0:
+        dphi = p.vtm * math.log(1.0 + (p.sqrt_phi + vgt) * vgt / (0.25 * p.moin * p.vtm))
+    else:
+        dphi = p.vtm * math.log(1.0 + (2.0 * p.k1ox * p.sqrt_phi + vgt) * vgt / (p.moin * p.vtm * p.k1ox ** 2))
+    extra = 4.0 * (b["vth"] - p.vfbzb - p.phi)
+    field = (vgt + (extra if extra >= 0.0 else 1e-20)) / (2e8 * p.tox)
+    cinv = with_centroid(1.9e-9 / (1.0 + field ** 0.7))
+
+    vg = vgt - dphi
+    vdse = _smooth_min(vg / a, vds, 0.02)
+    ad = a * vdse
+    d12 = 12.0 * (vg - 0.5 * ad + 1e-20)
+    qinv = cinv * (vg - 0.5 * ad + ad * ad / d12)
+    qb_ch = cinv * (1.0 - a) * vdse * (0.5 - ad / d12)
+    qs = _partition_linear(p.xpart, cinv, vg, ad, qinv)
+    qg, qb = qinv - qb_ch + qacc + qdep, qb_ch - qacc - qdep
+    return qg, -(qg + qb + qs), qs, qb
+
+
+def _overlap(p, v, cgo, cgl):
+    """Charge of a gate overlap at gate voltage v against the terminal below."""
+    if p.capmod == 0:
+        return cgo * v
+    cl = p.weff_cv * cgl
+    if p.capmod == 1:
+        if v >= 0.0:
+            return (cgo + cl) * v
+        return cgo * v - 0.5 * cl * p.ckappa * (math.sqrt(1.0 - 4.0 * v / p.ckappa) - 1.0)
+    t0 = v + 0.02
+    t2 = 0.5 * (t0 - math.sqrt(t0 * t0 + 0.08))
+    return (cgo + cl) * v - cl * (t2 + 0.5 * p.ckappa * (math.sqrt(1.0 - 4.0 * t2 / p.ckappa) - 1.0))
+
+
+def terminal_charges(params, kind, vd, vg, vs, vb, temp=27.0, prepared=None):
+    """Charges of drain, gate, source and bulk at the given terminal voltages:
+    intrinsic charges and overlaps, without the junctions."""
+    p = prepared or Prepared(params, kind, temp)
+    sign = 1.0 if kind == "nmos" else -1.0
+    vd, vg, vs, vb = (sign * v for v in (vd, vg, vs, vb))
+    reverse = vd < vs
+    dr, so = (vs, vd) if reverse else (vd, vs)  # the terminals acting as drain and source
+    qg = qd = qs = qb = 0.0
+    if p.xpart >= 0.0:
+        _, _, bias = _channel(p, vg - so, dr - so, vb - so)
+        qg, qd, qs, qb = (_cap0 if p.capmod == 0 else _cap123)(p, dr - so, bias)
+        if reverse:
+            qd, qs = qs, qd
+    ogs = _overlap(p, vg - vs, p.cgso, p.cgsl)
+    ogd = _overlap(p, vg - vd, p.cgdo, p.cgdl)
+    ogb = p.cgbo * (vg - vb)
+    m = p.mult
+    return tuple(sign * m * q for q in (qd - ogd, qg + ogs + ogd + ogb, qs - ogs, qb - ogb))

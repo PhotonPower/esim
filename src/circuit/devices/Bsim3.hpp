@@ -29,18 +29,18 @@ namespace esim {
 //   substrate    alpha0 alpha1 beta0 (impact ionization current)
 //   temperature  tnom ute kt1 kt1l kt2 ua1 ub1 uc1 at prt
 //   junctions    js jsw nj xti cj cjsw cjswg mj mjsw mjswg pb pbsw pbswg
-//   overlap      cgso cgdo cgbo (defaults from xj, dlc, dwc as in the model)
+//   charges      capmod 0 to 3 (default 3), xpart (0: 40/60, 0.5: 50/50,
+//                1: 0/100 partition, < 0: no intrinsic charges), vfbcv clc cle
+//                noff voffcv acde moin, dlc dwc llc lwc lwlc wlc wwc wwlc
+//   overlap      cgso cgdo cgbo cf, and bias dependent with capmod 1 to 3:
+//                cgsl cgdl ckappa (defaults from xj, dlc, dwc as in the model)
 //   instance     w l ad as pd ps m
 //
-// Not the BSIM3 equations: the intrinsic charges. They follow the
-// long-channel model of the level 1 transistor (charge conserving, 40 : 60
-// partition in saturation) with the threshold voltage of BSIM3, instead of
-// the capMod 0 to 3 formulations with their own parameters (cgsl, cgdl,
-// ckappa, clc, cle, noff, voffcv, acde, moin, elm, xpart). Delays of logic
-// gates are therefore of the right size but not those of the original model.
-// Also absent: non-quasi-static effects, the BSIM3 noise models (the level 1
-// formulas are used), the acm geometry options, and the selection among
-// several model cards by lmin / lmax / wmin / wmax.
+// The charges are those of BSIM3v3.2 and later: capMod 1 and 2 take the
+// flat-band voltage vfbzb that follows from vth0, whatever `version` says.
+// Absent: non-quasi-static effects (nqsmod, elm), the BSIM3 noise models (the
+// level 1 formulas are used), the acm geometry options, and the selection
+// among several model cards by lmin / lmax / wmin / wmax.
 class Bsim3 final : public Device {
 public:
     // polarity: +1 nmos, -1 pmos. params: model and instance parameters by
@@ -55,9 +55,20 @@ public:
     void stamp(StampContext& ctx) override;
     void noiseSources(std::vector<NoiseSource>& out) const override;
 
-    // Drain current and substrate current for vds >= 0 in the n-channel frame
-    // (also used by the tests to compare against the reference).
-    Dual drainCurrent(const Dual& vgs, const Dual& vds, const Dual& vbs, Dual& isub, Dual& vgst) const;
+    // Quantities of the drain current calculation that the charges use.
+    struct Bias {
+        Dual vbseff, phis, sqrtPhis, vth, vgsEff, vgst, n, abulk0;
+    };
+    // Drain current and substrate current for vds >= 0 in the n-channel frame.
+    Dual drainCurrent(const Dual& vgs, const Dual& vds, const Dual& vbs, Dual& isub, Bias& bias) const;
+
+    // Intrinsic charges of the channel for vds >= 0 in the n-channel frame,
+    // for one transistor (without the multiplier m), from the drain current's
+    // intermediate quantities at the same bias.
+    struct Charges {
+        Dual g, d, s, b;
+    };
+    Charges intrinsicCharges(const Dual& vds, const Dual& vbs, const Bias& bias) const;
 
     // Size- and temperature-dependent quantities, see prepare().
     struct Prepared {
@@ -73,6 +84,10 @@ public:
         double dwg, dwb, b0, b1, alpha0, alpha1, beta0;
         int mobMod;
         double tox;
+        // charges
+        int capMod;
+        double xpart, leffCV, weffCV, coxWL, abulkCVfactor, vfbzb, vfbcv;
+        double noff, voffcv, ldeb, acde, moin, cgsl, cgdl, ckappa;
     };
     const Prepared& prepared() const { return p_; }
 
@@ -86,6 +101,7 @@ private:
     double value(const std::string& key, double fallback) const;
     void prepare(double temp, double tnom);
     void addJunction(StampContext& ctx, Local& m, PnJunction& j, int to, const double cz[3]);
+    Dual overlapCharge(const Dual& v, double cgo, double cgl) const;
 
     int d_, g_, s_, b_;
     double pol_;
@@ -93,8 +109,7 @@ private:
     mutable std::map<std::string, bool> used_;
     Prepared p_{};
     double mult_ = 1.0;           // instance multiplier m
-    double coxWL_ = 0.0;          // gate oxide capacitance of the channel [F]
-    double cgso_ = 0.0, cgdo_ = 0.0, cgbo_ = 0.0;  // overlap capacitances [F]
+    double cgso_ = 0.0, cgdo_ = 0.0, cgbo_ = 0.0;  // overlap capacitances of one transistor [F]
     double czs_[3] = {}, czd_[3] = {};             // junction capacitances: bottom, sidewall, gate side
     double pbJ_[3] = {1.0, 1.0, 1.0}, mjJ_[3] = {0.5, 0.33, 0.33};
     PnJunction jbs_, jbd_;

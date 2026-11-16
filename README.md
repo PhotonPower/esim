@@ -624,7 +624,17 @@ Modellumfang:
   Beweglichkeitsmodelle, Geschwindigkeitssättigung, Bahnwiderstände,
   Kanallängenmodulation, DIBL und SCBE im Ausgangsleitwert, Poly-Verarmung,
   Substratstrom, Temperaturabhängigkeit und die Größenabhängigkeit aller
-  Parameter über ihre L-, W- und P-Varianten. Modellkarten lassen sich als
+  Parameter über ihre L-, W- und P-Varianten. Die Ladungen folgen den
+  Kapazitätsmodellen von BSIM3 (`capmod` 0 bis 3, Standard 3): 0 stückweise
+  mit eigener Flachbandspannung `vfbcv`, 1 und 2 mit `vfbzb` aus der
+  Schwellspannung (2 mit glatten Übergängen), 3 das Charge-Thickness-Modell,
+  bei dem Inversions- und Akkumulationsschicht einen Abstand vom Oxid haben
+  (`acde`, `moin`). Die Aufteilung der Kanalladung auf Drain und Source wählt
+  `xpart` (0: 40/60, 0,5: 50/50, 1: 0/100, negativ: keine Kanalladung). Dazu
+  `noff`, `voffcv`, `clc`, `cle`, `dlc`, `dwc` mit `llc` … `wwlc` und die
+  spannungsabhängigen Überlappkapazitäten `cgsl`, `cgdl`, `ckappa` (ab
+  `capmod` 1). Es gelten die Gleichungen ab BSIM3v3.2: capMod 1 und 2 nehmen
+  `vfbzb`, auch wenn die Karte `VERSION=3.1` angibt. Modellkarten lassen sich als
   SPICE-Zeile einfügen; lange Karten als Liste ihrer Zeilen:
 
   ```jsonc
@@ -632,20 +642,19 @@ Modellumfang:
                       "+ K1=0.579 U0=293 VSAT=1.68E5 ...)"] }
   ```
 
-  Geprüft ist der Drainstrom gegen eine zweite, getrennt geschriebene
-  Umsetzung derselben Modellgleichungen in Python (`tests/bsim3_reference.py`):
-  16 Parametersätze (n- und p-Kanal, −40 bis 125 °C, alle Zweige des Modells)
-  mit je 720 Arbeitspunkten stimmen auf 5·10⁻¹⁰ überein. Ein Vergleich mit
-  einem anderen Simulator (ngspice) steht aus.
+  Geprüft sind Drainstrom und Ladungen gegen eine zweite, getrennt
+  geschriebene Umsetzung derselben Modellgleichungen in Python
+  (`tests/bsim3_reference.py`): beim Drainstrom 16 Parametersätze (n- und
+  p-Kanal, −40 bis 125 °C, alle Zweige des Modells) mit je 720 Arbeitspunkten,
+  Übereinstimmung auf 5·10⁻⁹; bei den Klemmenladungen 25 Parametersätze (alle
+  `capmod` und `xpart`, Überlapp, Vertauschung von Drain und Source) mit je 630
+  Arbeitspunkten, Übereinstimmung auf 10⁻⁸. Ein Vergleich mit einem anderen
+  Simulator (ngspice) steht aus.
 
-  Nicht nach BSIM3 gerechnet werden die **Ladungen** des Kanals: Sie folgen
-  dem Langkanalmodell von Level 1 mit der BSIM3-Schwellspannung statt den
-  Kapazitätsmodellen `capmod` 0 bis 3. Schaltzeiten haben damit die richtige
-  Größenordnung, entsprechen aber nicht denen des Originalmodells. Überlapp-
-  und Sperrschichtkapazitäten (`cgso`, `cgdo`, `cgbo`, `cj`, `cjsw`, `cjswg`
-  mit `ad`, `as`, `pd`, `ps`) sind enthalten. Es fehlen außerdem die
-  BSIM3-Rauschmodelle (es gelten die Formeln von Level 1), nicht-quasistatische
-  Effekte und die Auswahl zwischen mehreren Modellkarten nach `lmin`/`lmax`.
+  Sperrschichtkapazitäten (`cj`, `cjsw`, `cjswg` mit `ad`, `as`, `pd`, `ps`)
+  sind enthalten. Es fehlen die BSIM3-Rauschmodelle (es gelten die Formeln von
+  Level 1), nicht-quasistatische Effekte (`nqsmod`, `elm`) und die Auswahl
+  zwischen mehreren Modellkarten nach `lmin`/`lmax`.
   Parameter, die deshalb ohne Wirkung bleiben, werden still akzeptiert;
   unbekannte werden gemeldet. Beispiel: `examples/ring_oscillator_bsim3.json`.
 - **Leitung** (`T`): ideale, verlustlose Leitung mit Wellenwiderstand `z0` und
@@ -1176,8 +1185,8 @@ zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
   verwenden.
 - **Schaltungen**: Die Halbleitermodelle entsprechen den
   klassischen SPICE-Modellen (Gummel-Poon, MOS Level 1, JFET), dazu ein
-  EKV-artiges MOSFET-Modell und der Drainstrom von BSIM3v3 (dessen
-  Kapazitätsmodelle nicht; BSIM4 und neuere Modelle fehlen).
+  EKV-artiges MOSFET-Modell und BSIM3v3 (ohne dessen Rauschmodelle und
+  nicht-quasistatische Effekte; BSIM4 und neuere Modelle fehlen).
 - **Große Schaltungen**: Getestet mit bis zu 40 000 Knoten. Ab 1000 Bauteilen
   werden die Bauteile auf mehreren Kernen ausgewertet und die Matrix parallel
   aufgebaut; die Matrixzerlegung bleibt seriell und bestimmt dann die

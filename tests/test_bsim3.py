@@ -1,11 +1,18 @@
 """BSIM3 drain current of the simulator against the Python implementation
-(tests/bsim3_reference.py) at 720 bias points for each of 16 parameter sets.
+(tests/bsim3_reference.py) at 720 bias points for each of 16 parameter sets,
+and the terminal charges (capMod 0 to 3, all partitions, overlaps) at 630
+points for each of 25 parameter sets.
 
 Run with:  python3 tests/test_bsim3.py
+(the charges need the helper program bsim3_charges of the build, found
+through BSIM3_CHARGES_BIN or in build/)
 """
 
+import json
 import os
+import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, os.path.join(ROOT, "python"))
@@ -97,6 +104,63 @@ for label, kind, params, temp in CASES:
     failures += not ok
     print(f"  {'ok  ' if ok else 'FAIL'} {label:28s} largest relative difference {worst:.1e}"
           + ("" if ok else f" at vgs, vds, vbs = {where[:3]}: simulator {where[3]:.9g}, python {where[4]:.9g}"))
+
+# --- Charges: intrinsic and overlap, at given terminal voltages -------------
+CHARGES_BIN = os.environ.get("BSIM3_CHARGES_BIN", os.path.join(ROOT, "build", "bsim3_charges"))
+OVERLAP = dict(cgsl=3e-10, cgdl=3e-10, ckappa=0.8)
+CHARGE_CASES = [(f"capmod {c}, xpart {x}", "nmos", dict(N18, capmod=c, xpart=x, **OVERLAP), 27)
+                for c in range(4) for x in (0, 0.5, 1)]
+CHARGE_CASES += [
+    ("capmod 3, defaults", "nmos", dict(w=10e-6, l=0.5e-6), 27),
+    ("capmod 2, defaults", "nmos", dict(w=10e-6, l=0.5e-6, capmod=2), 27),
+    ("capmod 3, pmos", "pmos", dict(P18, **OVERLAP), 27),
+    ("capmod 2, pmos, xpart 1", "pmos", dict(P18, capmod=2, xpart=1), 27),
+    ("capmod 0, pmos", "pmos", dict(P18, capmod=0, vfbcv=-0.9), 27),
+    ("capmod 3, 125 C", "nmos", N18, 125),
+    ("capmod 3, noff voffcv acde moin", "nmos", dict(N18, noff=1.5, voffcv=-0.05, acde=0.6, moin=20), 27),
+    ("capmod 1, noff voffcv", "nmos", dict(N18, capmod=1, noff=0.8, voffcv=0.03), 27),
+    ("capmod 2, clc cle dlc dwc", "nmos", dict(N18, capmod=2, clc=2e-7, cle=0.4, dlc=3e-8, dwc=1e-8, llc=-1e-16), 27),
+    ("capmod 3, poly depletion", "nmos", dict(N18, ngate=5e19), 27),
+    ("capmod 3, k1 from the doping", "nmos", dict(w=5e-6, l=0.35e-6, tox=7e-9, nch=2e17, nsub=5e16, vth0=0.55), 27),
+    ("capmod 3, m = 3, binned cgsl", "nmos", dict(N18, m=3, cgsl=2e-10, lcgsl=1e-11, cgdl=1e-10, wckappa=0.1), 27),
+    ("xpart < 0: overlaps only", "nmos", dict(N18, xpart=-1, **OVERLAP), 27),
+]
+BIAS = [(vd, vg, vs, vb) for vs in (0.0, 0.4) for vd in (-0.3, 0.0, 0.02, 0.1, 0.4, 0.8, 1.8)
+        for vg in [round(-1.5 + 0.25 * k, 4) for k in range(15)] for vb in (0.0, -0.6, 0.3)]
+
+for label, kind, params, temp in CHARGE_CASES:
+    sign = 1.0 if kind == "nmos" else -1.0
+    device = {"type": kind, "name": "M1", "nodes": ["d", "g", "s", "b"], "level": "bsim3"}
+    device.update(params)
+    bias = [[sign * v for v in point] for point in BIAS]
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        # the resistor only gives the circuit its ground node; it holds no charge
+        ground = {"type": "R", "name": "R0", "nodes": ["s", "0"], "value": 1e12}
+        json.dump({"netlist": {"options": {"temp": temp}, "components": [device, ground]}, "bias": bias}, f)
+    try:
+        run = subprocess.run([CHARGES_BIN, f.name], capture_output=True, text=True)
+    finally:
+        os.unlink(f.name)
+    if run.returncode != 0:
+        sys.exit(f"{CHARGES_BIN}: {run.stderr.strip()}")
+    out = run.stdout
+    simulated = [tuple(map(float, line.split())) for line in out.splitlines()]
+    prepared = ref.Prepared(params, kind, temp)
+    scale = prepared.cox_wl * prepared.mult  # charge of the channel at 1 V
+    worst, where = 0.0, None
+    for point, sim in zip(bias, simulated):
+        expected = ref.terminal_charges(params, kind, *point, prepared=prepared)
+        for k in range(4):
+            error = abs(sim[k] - expected[k]) / (abs(expected[k]) + 1e-6 * scale)
+            if error > worst:
+                worst, where = error, (point, "dgsb"[k], sim[k], expected[k])
+        if abs(sum(sim)) > 1e-12 * scale:
+            worst, where = float("inf"), (point, "sum", sum(sim), 0.0)
+    # near-zero charges are differences of larger ones (overlaps against the channel)
+    ok = worst < 1e-7 and len(simulated) == len(BIAS)
+    failures += not ok
+    print(f"  {'ok  ' if ok else 'FAIL'} {label:32s} charges, largest relative difference {worst:.1e}"
+          + ("" if ok else f" at vd, vg, vs, vb = {where[0]}, q{where[1]}: simulator {where[2]:.9g}, python {where[3]:.9g}"))
 
 print("bsim3:", "ok" if failures == 0 else f"{failures} failures")
 sys.exit(1 if failures else 0)

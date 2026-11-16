@@ -19,20 +19,19 @@ constexpr double kMaxExp = 5.834617425e14;
 constexpr double kMinExp = 1.713908431e-15;
 constexpr double kExpThreshold = 34.0;
 constexpr double kPiB = 3.141592654;
+constexpr double kDelta1 = 0.02;  // smoothing of the overlap charges
+constexpr double kDelta3 = 0.02;  // flat-band voltage in accumulation
+constexpr double kDelta4 = 0.02;  // drain voltage of the charges
 
 // Parameters of BSIM3 that are accepted without effect here: options, the
-// capacitance and noise models that are not implemented, limits of model bins.
+// non-quasi-static and noise models that are not implemented, limits of model
+// bins, parameters of other simulators' variants.
 const std::set<std::string>& harmless() {
     static const std::set<std::string> names = {
-        "capmod", "noimod", "version", "paramchk", "lmin", "lmax", "wmin", "wmax", "tcj",
-        "tcjsw", "tcjswg", "tpb", "tpbsw", "tpbswg", "elm", "cgsl", "cgdl", "ckappa", "clc",
-        "cle", "noff", "voffcv", "acde", "moin", "llc", "lwc", "lwlc", "wlc", "wwc", "wwlc",
-        "rsh", "hdif", "nqsmod", "acnqsmod", "xpart", "noia", "noib", "noic", "em", "ef",
-        "lref", "wref", "acm", "vfbcv", "ijth", "wmlt", "lmlt", "nrd", "nrs", "geo", "level",
-        "lcgsl", "wcgsl", "pcgsl", "lcgdl", "wcgdl", "pcgdl", "lckappa", "wckappa", "pckappa",
-        "lcf", "wcf", "pcf", "lclc", "wclc", "pclc", "lcle", "wcle", "pcle", "lvfbcv", "wvfbcv",
-        "pvfbcv", "lacde", "wacde", "pacde", "lmoin", "wmoin", "pmoin", "lnoff", "wnoff",
-        "pnoff", "lvoffcv", "wvoffcv", "pvoffcv", "lelm", "welm", "pelm", "tox1", "dtoxcv"};
+        "noimod", "version", "paramchk", "lmin", "lmax", "wmin", "wmax", "tcj", "tcjsw",
+        "tcjswg", "tpb", "tpbsw", "tpbswg", "elm", "rsh", "hdif", "nqsmod", "acnqsmod", "noia",
+        "noib", "noic", "em", "ef", "lref", "wref", "acm", "ijth", "wmlt", "lmlt", "nrd", "nrs",
+        "geo", "level", "lelm", "welm", "pelm", "tox1", "dtoxcv"};
     return names;
 }
 
@@ -239,14 +238,57 @@ void Bsim3::prepare(double Temp, double Tnom) {
     e = std::exp(-0.5 * drout * p.leff / lt0);
     p.thetaRout = pdibl1 * (e + 2.0 * e * e) + pdibl2;
 
-    // Capacitances: channel, overlaps (with the defaults of the model), junctions.
-    coxWL_ = p.cox * p.weff * p.leff * mult_;
+    // Charges: channel length and width of the capacitance model.
+    p.capMod = static_cast<int>(value("capmod", 3));
+    if (p.capMod < 0 || p.capMod > 3) throw std::runtime_error(who + "capmod must be 0, 1, 2 or 3");
+    p.xpart = value("xpart", 0.0);
     const double dlc = value("dlc", value("lint", 0.0)), dwc = value("dwc", value("wint", 0.0));
-    const double cf = value("cf", 2.0 * kEpsOx / kPiB * std::log(1.0 + 0.4e-6 / p.tox));
-    const double overlap = (given("dlc") && dlc > 0.0) ? dlc * p.cox : 0.6 * p.xj * p.cox;
-    cgso_ = (value("cgso", overlap) + cf) * p.weff * mult_;
-    cgdo_ = (value("cgdo", overlap) + cf) * p.weff * mult_;
-    cgbo_ = value("cgbo", 2.0 * dwc * p.cox) * p.leff * mult_;
+    const double dlcEff = dlc + value("llc", value("ll", 0.0)) / t0 + value("lwc", value("lw", 0.0)) / t1 +
+                          value("lwlc", value("lwl", 0.0)) / (t0 * t1);
+    const double dwcEff = dwc + value("wlc", value("wl", 0.0)) / t2 + value("wwc", value("ww", 0.0)) / t3 +
+                          value("wwlc", value("wwl", 0.0)) / (t2 * t3);
+    p.leffCV = L + value("xl", 0.0) - 2.0 * dlcEff;
+    p.weffCV = W + value("xw", 0.0) - 2.0 * dwcEff;
+    if (!(p.leffCV > 0.0) || !(p.weffCV > 0.0))
+        throw std::runtime_error(who + "channel length or width of the capacitance model <= 0 (dlc, dwc)");
+    p.coxWL = p.cox * p.weffCV * p.leffCV;
+    p.abulkCVfactor = 1.0 + std::pow(bin("clc", 0.1e-6) / p.leffCV, bin("cle", 0.6));
+    p.vfbcv = bin("vfbcv", -1.0);
+    p.noff = bin("noff", 1.0);
+    p.voffcv = bin("voffcv", 0.0);
+    p.moin = bin("moin", 15.0);
+    p.acde = bin("acde", 1.0) * std::pow(npeak / 2.0e16, -0.25);
+    p.ldeb = std::sqrt(kEpsSi * Vtm0 / (kCharge * npeak * 1.0e6)) / 3.0;
+    p.cgsl = bin("cgsl", 0.0);
+    p.cgdl = bin("cgdl", 0.0);
+    p.ckappa = bin("ckappa", 0.6);
+    if (p.capMod > 0 && !(p.ckappa > 0.0)) throw std::runtime_error(who + "ckappa must be > 0");
+
+    // Flat-band voltage of capMod 1 to 3: the threshold voltage at vbs = vds = 0
+    // less phi and the body effect.
+    {
+        const double sqrtXdep0 = std::sqrt(p.xdep0), V0 = p.vbi - p.phi;
+        const auto shortChannel = [](double t) {
+            const double e = t > -kExpThreshold ? std::exp(t) : kMinExp;
+            return e * (1.0 + 2.0 * e);
+        };
+        const double narrow = p.dvt0w * shortChannel(-0.5 * p.dvt1w * p.weff * p.leff / (p.factor1 * sqrtXdep0)) * V0;
+        const double shortc = p.dvt0 * shortChannel(-0.5 * p.dvt1 * p.leff / (p.factor1 * sqrtXdep0)) * V0;
+        const double width = p.tox * p.phi / (p.weff + p.w0);
+        const double lateral = p.k1ox * (std::sqrt(1.0 + p.nlx / p.leff) - 1.0) * p.sqrtPhi +
+                               (p.kt1 + p.kt1l / p.leff) * dT;
+        p.vfbzb = p.vth0 - narrow - shortc + p.k3 * width + lateral - p.phi - p.k1 * p.sqrtPhi;
+    }
+
+    // Overlaps, with the defaults of the model.
+    const double cf = bin("cf", 2.0 * kEpsOx / kPiB * std::log(1.0 + 0.4e-6 / p.tox));
+    const double xjModel = value("xj", 0.15e-6);
+    const auto overlap = [&](double cgl) {
+        return (given("dlc") && dlc > 0.0) ? dlc * p.cox - cgl : 0.6 * xjModel * p.cox;
+    };
+    cgso_ = (value("cgso", overlap(value("cgsl", 0.0))) + cf) * p.weffCV;
+    cgdo_ = (value("cgdo", overlap(value("cgdl", 0.0))) + cf) * p.weffCV;
+    cgbo_ = value("cgbo", 2.0 * dwc * p.cox) * p.leffCV;
 
     const double cj = value("cj", 5.0e-4), cjsw = value("cjsw", 5.0e-10), cjswg = value("cjswg", cjsw);
     pbJ_[0] = value("pb", 1.0);
@@ -288,7 +330,7 @@ void Bsim3::prepare(double Temp, double Tnom) {
 // their names follow the model equations: effective body bias, threshold
 // voltage, subthreshold slope, effective gate drive, bulk charge factor,
 // mobility, saturation voltage, effective drain voltage, output resistance.
-Dual Bsim3::drainCurrent(const Dual& Vgs, const Dual& Vds, const Dual& Vbs, Dual& Isub, Dual& VgstOut) const {
+Dual Bsim3::drainCurrent(const Dual& Vgs, const Dual& Vds, const Dual& Vbs, Dual& Isub, Bias& bias) const {
     const Prepared& p = p_;
     const double Leff = p.leff, Vtm = p.vtm, cox = p.cox;
 
@@ -350,7 +392,6 @@ Dual Bsim3::drainCurrent(const Dual& Vgs, const Dual& Vds, const Dual& Vbs, Dual
         Vgs_eff = Vgs - (1.12 - 0.5 * (T7 + T6));
     }
     const Dual Vgst = Vgs_eff - Vth;
-    VgstOut = Vgst;
 
     // Effective gate drive: Vgst above threshold, exponential below.
     const Dual T10 = 2.0 * n * Vtm;
@@ -384,6 +425,7 @@ Dual Bsim3::drainCurrent(const Dual& Vgs, const Dual& Vds, const Dual& Vbs, Dual
     Dual T2 = p.keta * Vbseff;
     T0 = T2.v >= -0.9 ? 1.0 / (1.0 + T2) : (17.0 + 20.0 * T2) / (0.8 + T2);
     Abulk = Abulk * T0;
+    bias = {Vbseff, Phis, sqrtPhis, Vth, Vgs_eff, Vgst, n, Abulk0 * T0};
 
     // Mobility.
     if (p.mobMod == 1) {
@@ -487,6 +529,232 @@ Dual Bsim3::drainCurrent(const Dual& Vgs, const Dual& Vds, const Dual& Vbs, Dual
     return Ids;
 }
 
+// Charge of an overlap capacitance at gate voltage v against the terminal
+// below it. capMod 0, and the bulk overlap (cgl < 0): linear. capMod 1 to 3: in
+// accumulation of the lightly doped drain or source extension the capacitance
+// cgl falls off with ckappa; capMod 1 switches at v = 0, 2 and 3 smoothly.
+Dual Bsim3::overlapCharge(const Dual& v, double cgo, double cgl) const {
+    const Prepared& p = p_;
+    if (p.capMod == 0 || cgl < 0.0) return cgo * v;
+    const double cl = p.weffCV * cgl;
+    if (p.capMod == 1) {
+        if (v.v >= 0.0) return (cl + cgo) * v;
+        return cgo * v - 0.5 * cl * p.ckappa * (sqrt(1.0 - 4.0 * v / p.ckappa) - 1.0);
+    }
+    const Dual T0 = v + kDelta1;
+    const Dual T2 = 0.5 * (T0 - sqrt(T0 * T0 + 4.0 * kDelta1));
+    const Dual T4 = sqrt(1.0 - 4.0 * T2 / p.ckappa);
+    return (cgo + cl) * v - cl * (T2 + 0.5 * p.ckappa * (T4 - 1.0));
+}
+
+namespace {
+
+// Source charge in the linear region of capMod 1 to 3 for the partitions
+// 0/100 and 40/60. C: oxide capacitance of the channel, Vg: gate drive, T0:
+// Abulk times the drain voltage.
+Dual sourceChargeLinear(double xpart, const Dual& C, const Dual& Vg, const Dual& T0) {
+    const Dual T1 = Vg - 0.5 * T0 + 1.0e-20;
+    if (xpart > 0.5) return -C * (0.5 * Vg + 0.25 * T0 - T0 * T0 / (24.0 * T1));
+    const Dual T3 = Vg * (2.0 * T0 * T0 / 3.0 + Vg * (Vg - 4.0 * T0 / 3.0)) - 2.0 * T0 * T0 * T0 / 15.0;
+    return -0.5 * C / (T1 * T1) * T3;
+}
+
+}  // namespace
+
+// Intrinsic charges of BSIM3v3.3. capMod 0: piecewise, with its own
+// threshold voltage (vfbcv) and a hard switch from linear to saturation.
+// capMod 1 to 3 share the gate drive Vgsteff of the charges (noff, voffcv) and
+// Abulk of the drain current (scaled by clc, cle). 1: depletion charge with
+// vfbzb, hard switch at Vdsat. 2: accumulation and depletion charge and the
+// drain voltage smoothed. 3 (charge thickness model): the inversion and
+// accumulation layers lie at a finite distance from the oxide (Tcen), the
+// surface potential grows with the gate drive (DeltaPhi).
+Bsim3::Charges Bsim3::intrinsicCharges(const Dual& Vds, const Dual& Vbs, const Bias& b) const {
+    const Prepared& p = p_;
+    Charges q;
+    if (p.xpart < 0.0) return q;  // no intrinsic charges at all
+    const double CoxWL = p.coxWL;
+    const Dual& Vgs_eff = b.vgsEff;
+    const Dual AbulkCV = b.abulk0 * p.abulkCVfactor;
+    // share of the drain in the inversion charge in saturation
+    const double satShare = p.xpart > 0.5 ? 0.0 : (p.xpart < 0.5 ? 0.4 : 0.5);
+
+    if (p.capMod == 0) {
+        const Dual Vbseff = b.vbseff.v < 0.0 ? Vbs : p.phi - b.phis;
+        const double Vfb = p.vfbcv;
+        const Dual Vth = Vfb + p.phi + p.k1ox * b.sqrtPhis;
+        const Dual Vgst = Vgs_eff - Vth;
+        const Dual Arg1 = Vgs_eff - Vbseff - Vfb;
+        if (Arg1.v <= 0.0) {  // accumulation
+            q.g = CoxWL * Arg1;
+            q.b = -q.g;
+        } else if (Vgst.v <= 0.0) {  // depletion
+            const double T1 = 0.5 * p.k1ox;
+            q.g = CoxWL * p.k1ox * (sqrt(T1 * T1 + Arg1) - T1);
+            q.b = -q.g;
+        } else {
+            const Dual Vdsat = Vgst / AbulkCV;
+            if (Vds.v >= Vdsat.v) {  // saturation
+                q.g = CoxWL * (Vgs_eff - Vfb - p.phi - Vdsat / 3.0);
+                const Dual T2 = -2.0 / 3.0 * CoxWL * Vgst;
+                q.b = -(q.g + T2);
+                q.d = satShare * T2;
+            } else {  // linear region
+                const Dual Alphaz = Vgst / Vdsat;
+                const Dual T1 = 2.0 * Vdsat - Vds;
+                const Dual T2 = Vds / (3.0 * T1);
+                const Dual T3 = T2 * Vds;
+                const Dual T4 = 0.25 * CoxWL * Alphaz;
+                q.g = CoxWL * (Vgs_eff - Vfb - p.phi - 0.5 * (Vds - T3));
+                if (p.xpart > 0.5) {
+                    q.d = T4 * (2.0 * Vds - T1 - 3.0 * T3);
+                    q.b = -(q.g + q.d + T4 * (T3 - T1 - 2.0 * Vds));
+                } else if (p.xpart < 0.5) {
+                    const Dual T6 = 8.0 * Vdsat * Vdsat - 6.0 * Vdsat * Vds + 1.2 * Vds * Vds;
+                    q.d = T4 * (Vds - T1 - T2 / T1 * T6);
+                    q.b = -(q.g - 2.0 * T4 * (T1 + T3));
+                } else {
+                    q.d = -T4 * (T1 + T3);
+                    q.b = -(q.g + 2.0 * q.d);
+                }
+            }
+        }
+        q.s = -(q.g + q.b + q.d);
+        return q;
+    }
+
+    const Dual VbseffCV = b.vbseff.v < 0.0 ? b.vbseff : p.phi - b.phis;
+
+    // Gate drive of the charges: its own subthreshold slope and offset.
+    const Dual nVt = p.vtm * p.noff * b.n;
+    const Dual VgstNVt = (b.vgst - p.voffcv) / nVt;
+    Dual Vgsteff;
+    if (VgstNVt.v > kExpThreshold) Vgsteff = b.vgst - p.voffcv;
+    else if (VgstNVt.v < -kExpThreshold) Vgsteff = nVt * std::log(1.0 + kMinExp);
+    else Vgsteff = nVt * softplus(VgstNVt);
+
+    // Effective drain voltage of capMod 2 and 3: VdsatCV above saturation.
+    const auto smoothDrain = [&](const Dual& VdsatCV) {
+        const Dual V4 = VdsatCV - Vds - kDelta4;
+        Dual VdseffCV = VdsatCV - 0.5 * (V4 + sqrt(V4 * V4 + 4.0 * kDelta4 * VdsatCV));
+        if (Vds.v == 0.0) {  // exactly zero there, with the slope along vds kept
+            VdseffCV.v = 0.0;
+            VdseffCV.d[0] = VdseffCV.d[2] = 0.0;
+        }
+        return VdseffCV;
+    };
+    // Accumulation (Qac0) and depletion (Qsub0) charges of capMod 2 and 3,
+    // with the oxide capacitance C of the channel.
+    const auto bulkCharges = [&](const Dual& C, const Dual& Vfbeff, Dual& Qac0, Dual& Qsub0) {
+        Qac0 = C * (Vfbeff - p.vfbzb);
+        const double T0 = 0.5 * p.k1ox;
+        const Dual T3 = Vgs_eff - Vfbeff - VbseffCV - Vgsteff;
+        if (p.k1ox == 0.0) Qsub0 = 0.0;
+        else if (T3.v < 0.0) Qsub0 = C * T3;
+        else Qsub0 = C * p.k1ox * (sqrt(T0 * T0 + T3) - T0);
+    };
+    const auto flatBand = [&]() {  // Vfb smoothly bounded by vgs - vbs
+        const Dual V3 = p.vfbzb - Vgs_eff + VbseffCV - kDelta3;
+        return p.vfbzb - 0.5 * (V3 + sqrt(V3 * V3 + 4.0 * kDelta3 * std::abs(p.vfbzb)));
+    };
+
+    if (p.capMod == 1) {
+        const Dual Arg1 = Vgs_eff - VbseffCV - p.vfbzb - Vgsteff;
+        Dual Qdep;
+        if (Arg1.v <= 0.0) {
+            Qdep = CoxWL * Arg1;
+        } else {
+            const double T0 = 0.5 * p.k1ox;
+            Qdep = CoxWL * p.k1ox * (sqrt(T0 * T0 + Arg1) - T0);
+        }
+        const Dual VdsatCV = Vgsteff / AbulkCV;
+        Dual qg, qb;  // channel parts
+        if (VdsatCV.v < Vds.v) {
+            qg = CoxWL * (Vgsteff - VdsatCV / 3.0);
+            qb = CoxWL / 3.0 * (VdsatCV - Vgsteff);
+            q.s = -(p.xpart > 0.5 ? 2.0 / 3.0 : (p.xpart < 0.5 ? 0.4 : 1.0 / 3.0)) * CoxWL * Vgsteff;
+        } else {
+            const Dual T0 = AbulkCV * Vds;
+            const Dual T3 = T0 * Vds / (12.0 * (Vgsteff - 0.5 * T0 + 1.0e-20));
+            qg = CoxWL * (Vgsteff - 0.5 * Vds + T3);
+            qb = CoxWL * (1.0 - AbulkCV) * (0.5 * Vds - T3);
+            q.s = p.xpart == 0.5 ? -0.5 * (qg + qb) : sourceChargeLinear(p.xpart, CoxWL, Vgsteff, T0);
+        }
+        q.g = Qdep + qg;
+        q.b = qb - Qdep;
+        q.d = -(q.g + q.b + q.s);
+        return q;
+    }
+
+    if (p.capMod == 2) {
+        Dual Qac0, Qsub0;
+        bulkCharges(CoxWL, flatBand(), Qac0, Qsub0);
+        const Dual VdseffCV = smoothDrain(Vgsteff / AbulkCV);
+        const Dual T0 = AbulkCV * VdseffCV;
+        const Dual T3 = T0 * VdseffCV / (12.0 * (Vgsteff - 0.5 * T0 + 1.0e-20));
+        const Dual qg = CoxWL * (Vgsteff - 0.5 * VdseffCV + T3);
+        const Dual qb = CoxWL * (1.0 - AbulkCV) * (0.5 * VdseffCV - T3);
+        q.s = p.xpart == 0.5 ? -0.5 * (qg + qb) : sourceChargeLinear(p.xpart, CoxWL, Vgsteff, T0);
+        q.g = qg + Qac0 + Qsub0;
+        q.b = qb - (Qac0 + Qsub0);
+        q.d = -(q.g + q.b + q.s);
+        return q;
+    }
+
+    // capMod 3. Effective oxide capacitance (series with the charge centroid
+    // at distance Tcen in the silicon) and the channel capacitance with it.
+    const double Cox = p.cox;
+    const auto oxideWithCentroid = [&](const Dual& Tcen) {
+        const Dual Ccen = kEpsSi / Tcen;
+        const Dual Coxeff = Cox * Ccen / (Cox + Ccen);
+        return CoxWL * Coxeff / Cox;
+    };
+
+    // Accumulation and depletion: centroid from the Debye length.
+    const Dual Vfbeff = flatBand();
+    double Tox = 1.0e8 * p.tox;
+    const Dual tmp = (Vgs_eff - VbseffCV - p.vfbzb) / Tox * p.acde;
+    Dual TcenAcc;
+    if (tmp.v <= -kExpThreshold) TcenAcc = p.ldeb * kMinExp;
+    else if (tmp.v >= kExpThreshold) TcenAcc = p.ldeb * kMaxExp;
+    else TcenAcc = p.ldeb * exp(tmp);
+    const double LINK = 1.0e-3 * p.tox;
+    const Dual V3 = p.ldeb - TcenAcc - LINK;
+    TcenAcc = p.ldeb - 0.5 * (V3 + sqrt(V3 * V3 + 4.0 * LINK * p.ldeb));
+    Dual Qac0, Qsub0;
+    bulkCharges(oxideWithCentroid(TcenAcc), Vfbeff, Qac0, Qsub0);
+
+    // Surface potential beyond phi in strong inversion.
+    double Denomi, T0;
+    if (p.k1ox <= 0.0) {
+        Denomi = 0.25 * p.moin * p.vtm;
+        T0 = 0.5 * p.sqrtPhi;
+    } else {
+        Denomi = p.moin * p.vtm * p.k1ox * p.k1ox;
+        T0 = p.k1ox * p.sqrtPhi;
+    }
+    const Dual DeltaPhi = p.vtm * log(1.0 + (2.0 * T0 + Vgsteff) * Vgsteff / Denomi);
+
+    // Inversion: centroid from the vertical field.
+    const Dual T3 = 4.0 * (b.vth - p.vfbzb - p.phi);
+    Tox += Tox;
+    const Dual field = T3.v >= 0.0 ? (Vgsteff + T3) / Tox : (Vgsteff + 1.0e-20) / Tox;
+    const Dual TcenInv = 1.9e-9 / (1.0 + exp(0.7 * log(field)));
+    const Dual CoxWLcen = oxideWithCentroid(TcenInv);
+
+    const Dual Vg = Vgsteff - DeltaPhi;
+    const Dual VdseffCV = smoothDrain(Vg / AbulkCV);
+    const Dual A0 = AbulkCV * VdseffCV;
+    const Dual T2 = 12.0 * (Vg - 0.5 * A0 + 1.0e-20);
+    const Dual qinv = CoxWLcen * (Vg - A0 * (0.5 - A0 / T2));
+    const Dual qb = CoxWLcen * (1.0 - AbulkCV) * (0.5 * VdseffCV - A0 * VdseffCV / T2);
+    q.s = p.xpart == 0.5 ? -0.5 * qinv : sourceChargeLinear(p.xpart, CoxWLcen, Vg, A0);
+    q.g = qinv - qb + Qac0 + Qsub0;
+    q.b = qb - (Qac0 + Qsub0);
+    q.d = -(q.g + q.b + q.s);
+    return q;
+}
+
 void Bsim3::noiseSources(std::vector<NoiseSource>& out) const {
     out.push_back({name(), d_, s_, 4.0 * kT_ * std::max(2.0 / 3.0 * opGm_, opGds_),
                    kf_ * std::pow(std::abs(opId_), af_)});
@@ -542,8 +810,9 @@ void Bsim3::stamp(StampContext& ctx) {
     const Dual vds = Dual::variable(pol_ * (ctx.v(nodeD) - ctx.v(nodeS)), 1);
     const Dual vbs = Dual::variable(pol_ * (ctx.v(b_) - ctx.v(nodeS)), 2);
 
-    Dual isub, vgst;
-    Dual ids = drainCurrent(vgs, vds, vbs, isub, vgst) * mult_;
+    Dual isub;
+    Bias bias;
+    Dual ids = drainCurrent(vgs, vds, vbs, isub, bias) * mult_;
     isub = isub * mult_;
     opId_ = ids.v;
     opGm_ = ids.d[0];
@@ -567,46 +836,33 @@ void Bsim3::stamp(StampContext& ctx) {
     add(D, isub, m.f, m.g, 1.0);
     add(kB, isub, m.f, m.g, -1.0);
 
-    // Intrinsic charges: long-channel model with a = vgs - vth of BSIM3 and
-    // b = max(a - vds, 0); below threshold the gate charges the bulk.
-    if (coxWL_ > 0.0) {
-        const double K = coxWL_;
-        const Dual& a = vgst;
-        Dual qg, qd, qs, qb;
-        if (a.v <= 0.0) {
-            qg = K * a;
-            qb = -K * a;
-        } else {
-            const Dual b = vds.v < a.v ? a - vds : Dual(0.0);
-            const Dual sum = a + b;
-            const Dual qi = -(2.0 / 3.0) * K * (a * a + a * b + b * b) / sum;
-            qd = -(2.0 / 15.0) * K * (2.0 * a * a * a + 4.0 * a * a * b + 6.0 * a * b * b + 3.0 * b * b * b) /
-                 (sum * sum);
-            qs = qi - qd;
-            qg = -qi;
-        }
-        add(kG, qg, m.q, m.c, 1.0);
-        add(D, qd, m.q, m.c, 1.0);
-        add(S, qs, m.q, m.c, 1.0);
-        add(kB, qb, m.q, m.c, 1.0);
-    }
+    // Intrinsic charges, computed in the frame of the drain current: the
+    // drain charge belongs to whichever terminal acts as the drain.
+    const Charges qi = intrinsicCharges(vds, vbs, bias);
+    add(kG, qi.g * mult_, m.q, m.c, 1.0);
+    add(D, qi.d * mult_, m.q, m.c, 1.0);
+    add(S, qi.s * mult_, m.q, m.c, 1.0);
+    add(kB, qi.b * mult_, m.q, m.c, 1.0);
 
     addJunction(ctx, m, jbd_, kD, czd_);
     addJunction(ctx, m, jbs_, kS, czs_);
 
+    // Overlaps of the gate with source, drain (physical terminals, not the
+    // roles they play) and bulk.
     const int node[4] = {d_, g_, s_, b_};
-    const auto linearCap = [&](int a, int b, double c) {
-        const double q = c * (ctx.v(node[a]) - ctx.v(node[b]));
-        m.q[a] += q;
-        m.q[b] -= q;
+    const auto overlap = [&](int a, double cgo, double cgl) {
+        const Dual q = overlapCharge(Dual::variable(pol_ * (ctx.v(g_) - ctx.v(node[a])), 0), cgo, cgl) * mult_;
+        const double c = q.d[0];
+        m.q[kG] += pol_ * q.v;
+        m.q[a] -= pol_ * q.v;
+        m.c[kG][kG] += c;
+        m.c[kG][a] -= c;
+        m.c[a][kG] -= c;
         m.c[a][a] += c;
-        m.c[a][b] -= c;
-        m.c[b][a] -= c;
-        m.c[b][b] += c;
     };
-    linearCap(kG, kS, cgso_);
-    linearCap(kG, kD, cgdo_);
-    linearCap(kG, kB, cgbo_);
+    overlap(kS, cgso_, p_.cgsl);
+    overlap(kD, cgdo_, p_.cgdl);
+    overlap(kB, cgbo_, -1.0);
 
     for (int i = 0; i < 4; ++i) {
         ctx.addF(node[i], m.f[i]);

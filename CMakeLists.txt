@@ -99,6 +99,9 @@ if(ESIM_BUILD_TESTS)
   target_link_libraries(esim_tests PRIVATE esimcircuit)
   target_include_directories(esim_tests PRIVATE examples)
   add_test(NAME esim_tests COMMAND esim_tests)
+  # Charges of a single BSIM3 transistor, for tests/test_bsim3.py.
+  add_executable(bsim3_charges tests/bsim3_charges.cpp)
+  target_link_libraries(bsim3_charges PRIVATE esimcircuit)
 
   # The Python interface (python/esim.py) only needs an interpreter.
   find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -108,6 +111,7 @@ if(ESIM_BUILD_TESTS)
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/python/test_esim.py)
     add_test(NAME bsim3_model
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
+              BSIM3_CHARGES_BIN=$<TARGET_FILE:bsim3_charges>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_bsim3.py)
     add_test(NAME spice_import
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>

@@ -2625,16 +2625,20 @@ void testBsim3() {
     const std::string models = "\"models\": {\"n18\": {\"type\": \"nmos\", " + nmodel + "}, \"p18\": {\"type\": \"pmos\", " +
                                pmodel + "}}";
 
-    // Derivatives: conductances and capacitances against finite differences.
+    // Derivatives: conductances and capacitances against finite differences,
+    // for all charge models and partitions, with bias-dependent overlaps.
+    for (int capmod = 0; capmod <= 3; ++capmod)
     for (const std::string& kind : {std::string("n18"), std::string("p18")}) {
+        const std::string xpart = capmod == 0 ? "0" : (capmod == 1 ? "1" : (capmod == 2 ? "0.5" : "0"));
         Netlist nl = parseNetlistText("{" + models + R"json(, "components": [
             {"type": "R", "nodes": ["a", "0"], "value": 1000}, {"type": "R", "nodes": ["b", "0"], "value": 1000},
             {"type": "R", "nodes": ["c", "0"], "value": 1000}, {"type": "R", "nodes": ["d", "0"], "value": 1000},
             {"type": "M", "name": "X", "nodes": ["a", "b", "c", "d"], "model": ")json" + kind +
-                                      R"json(", "w": "2u", "l": "0.18u", "ad": "1p", "as": "1p", "pd": "3u", "ps": "3u"}]})json");
+                                      R"json(", "w": "2u", "l": "0.18u", "ad": "1p", "as": "1p", "pd": "3u", "ps": "3u",
+             "cgsl": 3e-10, "cgdl": 3e-10, "capmod": )json" + std::to_string(capmod) + ", \"xpart\": " + xpart + "}]}");
         Circuit& ckt = *nl.circuit;
-        unsigned seed = 4711;
-        for (int trial = 0; trial < 10; ++trial) {
+        unsigned seed = 4711 + capmod;
+        for (int trial = 0; trial < 6; ++trial) {
             Vector x(ckt.size());
             for (int i = 0; i < ckt.size(); ++i) {
                 seed = seed * 1664525u + 1013904223u;
@@ -2642,8 +2646,35 @@ void testBsim3() {
             }
             // bulk below all terminals of the n-channel, above those of the p-channel
             x[ckt.findNode("d")] = kind == "n18" ? -0.5 * x[ckt.findNode("d")] : 1.8 + 0.5 * x[ckt.findNode("d")];
-            checkJacobian(ckt, x, "bsim3 " + kind + ", bias point " + std::to_string(trial));
+            checkJacobian(ckt, x, "bsim3 " + kind + ", capmod " + std::to_string(capmod) + ", bias point " + std::to_string(trial));
         }
+    }
+
+    // Gate capacitance against the gate voltage (vd = vs = vb = 0): the oxide
+    // capacitance in accumulation and inversion, less in depletion, and
+    // somewhat less with capMod 3, whose charges lie away from the oxide.
+    for (int capmod = 0; capmod <= 3; ++capmod) {
+        Netlist nl = parseNetlistText("{" + models + R"json(, "components": [
+            {"type": "V", "name": "VG", "nodes": ["g", "0"], "dc": 0},
+            {"type": "M", "name": "X", "nodes": ["0", "g", "0", "0"], "model": "n18", "w": "2u", "l": "0.18u",
+             "cgso": 0, "cgdo": 0, "cgbo": 0, "cf": 0, "capmod": )json" + std::to_string(capmod) + "}]}");
+        Circuit& ckt = *nl.circuit;
+        const double coxWL = dynamic_cast<const Bsim3*>(ckt.findDevice("X"))->prepared().coxWL;
+        const auto cgg = [&](double vg) {
+            Vector x = Vector::Zero(ckt.size());
+            x[ckt.findNode("g")] = vg;
+            Evaluation ev;
+            ckt.evaluate(0.0, x, LimitMode::Off, ev);
+            double c = 0.0;
+            for (const Triplet& t : ev.C)
+                if (t.row() == ckt.findNode("g") && t.col() == ckt.findNode("g")) c += t.value();
+            return c / coxWL;
+        };
+        const std::string what = "bsim3 capmod " + std::to_string(capmod) + ": gate capacitance ";
+        const double low = capmod == 3 ? 0.85 : 0.95;
+        checkTrue(cgg(-1.5) > low && cgg(-1.5) < 1.01, what + "in accumulation");
+        checkTrue(cgg(0.1) > 0.15 && cgg(0.1) < 0.5, what + "in depletion");
+        checkTrue(cgg(1.8) > low && cgg(1.8) < 1.01, what + "in inversion");
     }
 
     // Inverter: transfer curve from rail to rail, switching near half the supply.
