@@ -1,0 +1,101 @@
+\chapter{Parameterstudien}
+\label{kap:format-studien}
+
+Jede Analyse lässt sich für viele Werte von Parametern wiederholen: als
+Sweep über vorgegebene Werte oder als Monte-Carlo-Analyse mit zufällig
+gestreuten Werten. Die Läufe einer Studie rechnen gleichzeitig auf allen
+Prozessorkernen; die Ergebnisse hängen nicht von der Zahl der Kerne ab.
+
+\section{Parameter-Sweep}
+
+\begin{json}
+"parameters": { "C": "100n" },
+"analyses": [
+  { "type": "tran", "tstop": "8m",
+    "param_sweep": { "param": "C", "values": ["47n", "100n", "220n"] } },
+  { "type": "ac", "fstart": 10, "fstop": "1meg",
+    "param_sweep": { "param": "C", "start": "1n", "stop": "1u", "points": 4, "scale": "log" } }
+]
+\end{json}
+
+\begin{itemize}
+  \item \code{param}: ein Eintrag aus \code{parameters}.
+  \item Werte entweder als Liste \code{values} oder als Bereich
+    \code{start}, \code{stop}, \code{points} mit \code{scale}
+    \code{"lin"} (Standard) oder \code{"log"}.
+  \item Abhängige Parameter (\code{"tau": "R*C"}) und alle Bauteilwerte,
+    die den Parameter verwenden, werden für jeden Wert neu berechnet.
+  \item Alle Läufe stehen in \emph{einer} CSV-Datei, deren erste Spalte der
+    Parameterwert ist. Mit \code{op} entsteht eine Tabelle mit einer Zeile
+    je Wert.
+  \item Mit \code{measure} entsteht zusätzlich
+    \datei{<Name>.<Analyse>.measure.csv} mit einer Zeile je Wert, etwa
+    »Periode über $C$«. Der Editor zeigt sie als Kennlinie
+    (Kapitel~\ref{kap:editor-ergebnisse}).
+\end{itemize}
+
+\subsection*{Verschachtelte Sweeps}
+
+Eine Liste von Sweeps wird verschachtelt (der erste ist der äußere); die
+Tabellen bekommen dann eine Spalte je Parameter:
+
+\begin{json}
+"param_sweep": [ { "param": "R", "values": ["9.9k", "10k", "10.1k"] },
+                 { "param": "C", "start": "9n", "stop": "11n", "points": 3 } ]
+\end{json}
+
+So entsteht etwa ein Ausgangskennlinienfeld: ein DC-Sweep der
+Drain-Spannung, darum ein Parameter-Sweep der Gate-Spannung.
+
+\section{Monte Carlo}
+
+Mit \code{monte_carlo} wird eine Analyse mit zufällig gestreuten
+Parametern wiederholt. Ausgewertet werden ihre Messgrößen:
+
+\begin{json}
+{ "type": "ac", "fstart": 1, "fstop": "100k", "points": 100,
+  "monte_carlo": { "runs": 500, "seed": 1,
+                   "vary": { "R":    { "tol": 0.01 },
+                             "C":    { "tol": 0.10, "dist": "gauss" },
+                             "Voff": { "sigma": "2m" } } },
+  "measure": { "fc": { "f3db": "v(out)" } } }
+\end{json}
+
+\begin{itemize}
+  \item \code{runs}: Zahl der Läufe; \code{seed}: Startwert des
+    Zufallsgenerators. Derselbe \code{seed} liefert dieselben Läufe.
+  \item \code{tol} ist eine relative Toleranz: gleichverteilt in
+    $\pm\mathit{tol}$, mit \code{"dist": "gauss"} normalverteilt mit der
+    Standardabweichung $\mathit{tol}/3$.
+  \item \code{sigma} ist eine absolute Standardabweichung (normalverteilt),
+    passend für Größen um null wie Offsetspannungen.
+  \item Auf der Konsole stehen Mittelwert, Standardabweichung, Minimum und
+    Maximum jeder Messgröße; \datei{<Name>.<Analyse>.measure.csv} enthält je
+    Lauf die gezogenen Parameter und die Messwerte.
+  \item Die Kurven aller Läufe werden nur mit \code{"save": true}
+    gespeichert.
+\end{itemize}
+
+\begin{hinweis}[Toleranzen von Bauteilen]
+  Damit ein Bauteilwert streuen kann, muss er von einem Parameter
+  abhängen: \code{"value": "R"} statt \code{"value": "10k"}. Sollen zwei
+  Widerstände unabhängig streuen, braucht jeder seinen eigenen Parameter.
+\end{hinweis}
+
+\section{Studien kombinieren}
+
+Eine Analyse hat entweder \code{param_sweep} oder \code{monte_carlo}, nicht
+beides; steht beides da, rechnet esim zurzeit nur Monte Carlo. Wer die
+Streuung für mehrere Werte eines Parameters braucht, schreibt je Wert eine
+eigene Analyse mit \code{"name"} (aus Python bequem in einer Schleife).
+Empfindlichkeiten (\code{sens}) und Anpassungen (\code{fit}) enthalten
+selbst eine Analyse, die wiederum Messgrößen haben kann.
+\datei{examples/monte_carlo_filter.json} zeigt Monte Carlo und einen
+verschachtelten Sweep in einer Datei.
+
+\section{Rechenzeit}
+
+Die Läufe einer Studie sind unabhängig und werden auf alle Kerne verteilt.
+\code{esim -j <n>} begrenzt die Zahl der Threads, etwa wenn mehrere
+Simulationen gleichzeitig laufen sollen; aus Python geht das mit
+\code{threads=n}.

@@ -1,0 +1,196 @@
+\chapter{Tastenkürzel}
+\label{kap:tasten}
+
+Auf dem Mac gilt \taste{cmd} statt \taste{Strg}, \taste{alt} (Wahltaste)
+statt \taste{Alt} und die Rückschritttaste statt \taste{Entf}.
+
+\section*{Überall}
+
+\begin{tabularx}{\textwidth}{@{}P{4.5cm}L@{}}
+  \toprule
+  \tasten{Strg}{N} & Neue Datei \\
+  \tasten{Strg}{O} & Öffnen \\
+  \tasten{Strg}{S} / \tasten{Umschalt+Strg}{S} & Sichern / Sichern unter \\
+  \tasten{Strg}{Z} / \tasten{Strg}{Y} & Widerrufen / Wiederholen (Plan und Text) \\
+  \tasten{Strg}{R} & Simulation starten \\
+  \tasten{Strg}{.} & Simulation stoppen \\
+  \tasten{Strg}{L} & Modellbibliothek \\
+  \tasten{Strg}{G} & Auswahl in Teilschaltung umwandeln \\
+  \tasten{Strg}{0} & Kurven: alles zeigen \\
+  \tasten{Strg}{Q} & Beenden \\
+  \bottomrule
+\end{tabularx}
+
+\section*{Im Schaltplan}
+
+\begin{tabularx}{\textwidth}{@{}P{4.5cm}L@{}}
+  \toprule
+  \taste{A} & Bauteil suchen und platzieren \\
+  \taste{W} & Leitung zeichnen \\
+  \taste{G} & Masse \\
+  \taste{N} & Netzlabel \\
+  \taste{P} & Port (nur in Teilschaltungen) \\
+  \taste{R} / \taste{X} & Drehen / Spiegeln (auch beim Platzieren) \\
+  \tasten{Strg}{D} & Verdoppeln \\
+  \taste{Entf} & Löschen; beim Zeichnen einer Leitung: letzte Ecke zurück \\
+  Pfeiltasten & Verschieben (mit \taste{Umschalt} um fünf Raster) \\
+  \taste{F} & Alles zeigen \\
+  \taste{/} & Leitung: zuerst waagrecht oder zuerst senkrecht \\
+  \taste{Esc} & Werkzeug beenden, Auswahl aufheben \\
+  Eingabetaste, Doppelklick & Leitung beenden \\
+  \tasten{Strg}{$\uparrow$} & Zurück zur Hauptschaltung \\
+  \taste{Leertaste} + Ziehen & Ansicht verschieben (auch mittlere Maustaste) \\
+  Mausrad, \taste{Strg} + Rad & Zoomen \\
+  Umschalt-Klick & Zur Auswahl hinzufügen oder entfernen \\
+  Doppelklick & Eigenschaften, Teilschaltung öffnen, Label umbenennen \\
+  \tasten{Alt}{Klick} & Spannung (Leitung) oder Strom (Bauteil) als Kurve \\
+  Rechtsklick & Kontextmenü \\
+  \bottomrule
+\end{tabularx}
+
+\section*{Im Text}
+
+\begin{tabularx}{\textwidth}{@{}P{4.5cm}L@{}}
+  \toprule
+  \tasten{Strg}{/} & Kommentar ein/aus \\
+  \taste{Tab} / \tasten{Umschalt}{Tab} & Einrücken / Ausrücken \\
+  \tasten{Strg}{X}, \tasten{Strg}{C}, \tasten{Strg}{V} & Ausschneiden, Kopieren, Einfügen \\
+  \tasten{Strg}{A} & Alles auswählen \\
+  \bottomrule
+\end{tabularx}
+
+\section*{In den Kurven}
+
+\begin{tabularx}{\textwidth}{@{}P{4.5cm}L@{}}
+  \toprule
+  Mausrad, Spreizen & Zoom in $x$ \\
+  \taste{Strg} + Rad & Zoom in $y$ \\
+  Ziehen & Zoom auf Rechteck \\
+  Doppelklick & Alles zeigen \\
+  Rechtsklick & Alles zeigen, Als Bild speichern \\
+  \bottomrule
+\end{tabularx}
+
+\chapter{Die mitgelieferten Beispiele}
+\label{sec:beispiele}
+
+Alle Beispiele liegen im Ordner \datei{examples/} und im Editor unter
+\menue{Datei}\pfad\menue{Beispiele}.
+
+\begin{longtable}{@{}P{5.5cm}P{8.5cm}@{}}
+  \toprule
+  Datei & Inhalt \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \datei{rc_lowpass.json} & Arbeitspunkt, Frequenzgang, Pulsantwort \\
+  \datei{rlc_ringing.json} & gedämpfte Schwingung aus Anfangsbedingungen \\
+  \datei{bridge_rectifier.json} & Brückengleichrichter mit Z-Diode \\
+  \datei{bjt_amplifier.json} & Emitterschaltung: Arbeitspunkt, AC, Rauschen, Transient, Fourier \\
+  \datei{cmos_inverter.json} & Übertragungskennlinie (DC-Sweep) und Schaltvorgang \\
+  \datei{astable_multivibrator.json} & Kippschwinger mit zwei Transistoren \\
+  \datei{dae_robertson.json} & steifes DAE ohne Schaltung (Reaktionskinetik) \\
+  \datei{vanderpol.json} & nichtlinearer Oszillator als Gleichungssystem \\
+  \datei{ntc_inrush.json} & Schaltung und Gleichungen gekoppelt: Heißleiter mit Eigenerwärmung \\
+  \datei{bouncing_ball.json} & Ereignis mit Zustands-Reset \\
+  \datei{thermostat.json} & Zweipunktregler mit Hysterese (diskrete Variable), Ausgabe auf festem Raster \\
+  \datei{relaxation_oscillator.json} & Schaltung mit Ereignissen (Prinzip des 555), Parameter-Sweep \\
+  \datei{buck_converter.json} & Tiefsetzsteller mit idealem Schalter und idealer Diode, PSS \\
+  \datei{opamp_filter.json} & aktives Filter aus verschachtelten Teilschaltungen, Messgrößen \\
+  \datei{transformer_supply.json} & Transformator (gekoppelte Spulen), Brückengleichrichter, Messgrößen \\
+  \datei{solar_cell.json} & Kennlinie aus einer Tabelle, Punkt maximaler Leistung per DC-Sweep \\
+  \datei{digital_pi_control.json} & abgetasteter PI-Regler (Zeitereignisse) an einer Regelstrecke \\
+  \datei{pendulum.json} & Mechanik mit Zwangsbedingung (DAE vom Index 2) \\
+  \datei{pendulum_index3.json} & Pendel mit Lagebedingung (Index 3), automatisch reduziert \\
+  \datei{monte_carlo_filter.json} & Toleranzanalyse (Monte Carlo) und verschachtelter Sweep \\
+  \datei{fit_diode.json} & Modellparameter an eine gemessene Kennlinie anpassen \\
+  \datei{sensitivity.json} & Empfindlichkeiten von Arbeitspunkt und Verstärkung einer Transistorstufe \\
+  \datei{mosfet_subthreshold.json} & EKV-Modell und Level 1 im Vergleich, Kennlinie über acht Dekaden \\
+  \datei{transmission_line.json} & Reflexionen auf einer fehlangepassten Leitung \\
+  \datei{dead_time_control.json} & Regelkreis mit Totzeit \\
+  \datei{heat_rod.json} & Wärmeleitung als Vektor von Gleichungen (Linienmethode) \\
+  \datei{ring_oscillator_bsim3.json} & Ringoszillator mit BSIM3-Transistoren (0,18\,µm), Modellkarten im SPICE-Format \\
+  \datei{saturating_inductor.json} & nichtlineare Induktivität über ihren Fluss, eigene Funktion \\
+  \datei{spice/amplifier.cir} & SPICE-Netzliste zum Übersetzen mit \datei{spice2json.py} \\
+\end{longtable}
+
+Dazu \datei{docs/handbuch/tiefpass.json}, der RC-Tiefpass aus
+Kapitel~\ref{kap:erste-schritte}.
+
+\chapter{Kurzreferenz der Eingabedatei}
+
+\begin{json}
+{
+  "title": "Name der Schaltung",
+  "parameters": { "R": "1k", "C": "1u", "tau": "R*C" },
+  "functions":  { "clip(x, a)": "max(-a, min(a, x))" },
+  "tables":     { "kl": { "x": [0, 1, 2], "y": [0, 0.8, 1], "interp": "cubic" } },
+  "models": {
+    "D1N": { "type": "diode", "is": "1e-14", "n": 1.05 },
+    "QN":  ".model QN NPN(IS=1e-14 BF=200)"
+  },
+  "subcircuits": {
+    "stufe": {
+      "ports": ["in", "out"], "parameters": { "g": 2 },
+      "components": [
+        { "type": "E", "name": "E1", "nodes": ["out", "0", "in", "0"], "gain": "g" }
+      ]
+    }
+  },
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 0, "ac": 1,
+      "wave": { "type": "pulse", "v1": 0, "v2": 1, "rise": "1u", "fall": "1u",
+                "width": "1m", "period": "2m" } },
+    { "type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R" },
+    { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "C" },
+    { "type": "X", "name": "X1", "subcircuit": "stufe", "nodes": ["out", "y"] }
+  ],
+  "variables": { "z": 0 },
+  "equations": [ "der(z) = v(y) - z/tau" ],
+  "events":    [ { "when": "z > 1", "set": { "z": 0 } } ],
+  "analyses": [
+    { "type": "op" },
+    { "type": "dc", "source": "V1", "start": 0, "stop": 1, "step": 0.01 },
+    { "type": "ac", "sweep": "dec", "points": 20, "fstart": 1, "fstop": "1meg",
+      "measure": { "fc": { "f3db": "v(out)" } } },
+    { "type": "tran", "tstop": "10m", "tstep": "10u",
+      "param_sweep": { "param": "C", "values": ["470n", "1u"] } },
+    { "type": "noise", "output": "v(out)", "input": "V1",
+      "fstart": 1, "fstop": "100k" }
+  ],
+  "outputs": ["v(in)", "v(out)", "v(y)", "z", "i(V1)"],
+  "options": { "reltol": 1e-4, "temp": 27 }
+}
+\end{json}
+
+\chapter{Begriffe}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[AC-Analyse] Kleinsignalanalyse im Frequenzbereich, linearisiert im
+    Arbeitspunkt.
+  \item[Arbeitspunkt] Stationärer Zustand der Schaltung bei Gleichgrößen.
+  \item[BDF] Backward Differentiation Formulas, implizite
+    Mehrschrittverfahren für steife Systeme.
+  \item[DAE] Differential-algebraisches Gleichungssystem:
+    Differentialgleichungen mit algebraischen Nebenbedingungen.
+  \item[Ereignis] Zeitpunkt, an dem sich eine Bedingung, ein Schalter oder
+    eine diskrete Variable ändert; wird exakt bestimmt.
+  \item[Index] Maß dafür, wie oft Bedingungen abgeleitet werden müssen, um
+    eine gewöhnliche Differentialgleichung zu erhalten.
+  \item[Instanz] Eine Verwendung einer Teilschaltung (Bauteil \code{X}).
+  \item[Knoten / Netz] Verbindungspunkt der Schaltung; im Plan alle
+    miteinander verbundenen Anschlüsse.
+  \item[Messgröße] Kennwert, aus einer Kurve berechnet (\code{measure}).
+  \item[Modellkarte] Satz von Modellparametern, in SPICE eine
+    \code{.model}-Zeile.
+  \item[Monte Carlo] Wiederholte Rechnung mit zufällig gestreuten
+    Parametern.
+  \item[Port] Anschluss einer Teilschaltung nach außen.
+  \item[PSS] Periodischer stationärer Zustand: eingeschwungener Verlauf
+    unter periodischer Anregung.
+  \item[Sweep] Wiederholung einer Analyse über eine Reihe von Werten.
+  \item[Teilschaltung] Wiederverwendbarer Schaltungsteil (Subcircuit).
+  \item[Verhaltensquelle] Bauteil, dessen Strom, Spannung, Ladung oder
+    Fluss ein beliebiger Ausdruck ist (\code{B}).
+\end{description}

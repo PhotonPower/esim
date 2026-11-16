@@ -1,0 +1,139 @@
+\chapter{Teilschaltungen}
+\label{kap:format-teilschaltungen}
+
+\section{Definition und Instanz}
+
+Wiederverwendbare Teilschaltungen stehen unter \code{subcircuits} und
+werden mit dem Bauteil \code{X} eingesetzt:
+
+\begin{json}
+"subcircuits": {
+  "divider": {
+    "ports": ["in", "out"],
+    "parameters": { "ratio": 0.5, "rtotal": "10k" },
+    "components": [
+      { "type": "R", "name": "R1", "nodes": ["in", "out"], "value": "(1 - ratio)*rtotal" },
+      { "type": "R", "name": "R2", "nodes": ["out", "0"],  "value": "ratio*rtotal" }
+    ]
+  }
+},
+"components": [
+  { "type": "X", "name": "X1", "subcircuit": "divider", "nodes": ["a", "b"] },
+  { "type": "X", "name": "X2", "subcircuit": "divider", "nodes": ["a", "c"],
+    "parameters": { "ratio": 0.25 } }
+]
+\end{json}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Knoten]
+    Die Namen in \code{ports} stehen für die außen angeschlossenen Knoten,
+    in der Reihenfolge der \code{nodes} der Instanz. Alle anderen Knoten
+    sind lokal. Masse (\code{"0"}) ist überall dieselbe.
+  \item[Parameter]
+    \code{parameters} der Definition enthält Standardwerte; sie dürfen sich
+    auf globale Parameter und aufeinander beziehen. Die Instanz
+    überschreibt einzelne Werte mit \code{"parameters": {...}}.
+  \item[Inhalt]
+    Alle Bauteile, auch weitere Instanzen (Schachtelung bis 20 Ebenen),
+    dazu eigene \code{models}, \code{variables}, \code{equations} und
+    \code{events}. Ein Bauteil mit thermischem Zustand oder eigener
+    Kennlinie lässt sich so als Modell kapseln und mehrfach verwenden.
+  \item[Plan]
+    Der Editor legt den Plan der Teilschaltung unter \code{"schematic"} in
+    ihrer Definition ab.
+\end{description}
+
+\section{Namen von außen}
+
+Was in der Instanz \code{X1} liegt, heißt außen \code{X1.<Name>}, bei
+Schachtelung \code{X1.U.<Name>}:
+
+\begin{itemize}
+  \item Knotenspannungen: \code{v(X1.mid)},
+  \item Ströme: \code{i(X1.V1)},
+  \item Variablen: \code{X1.T},
+  \item Quellen eines DC-Sweeps: \code{"source": "X1.V1"}.
+\end{itemize}
+
+Innerhalb einer Teilschaltung beziehen sich \code{i(...)} und
+\code{control} auf Bauteile derselben Teilschaltung. In der Standardausgabe
+(ohne \code{outputs}) erscheint das Innere von Instanzen nicht; innere
+Größen müssen ausdrücklich unter \code{outputs} stehen.
+
+\section{Teilschaltungen in SPICE}
+\label{sec:spice-subckt}
+
+Modelle der Hersteller lassen sich unverändert einsetzen: Statt eines
+Objekts steht der SPICE-Text, als eine Zeichenkette oder als Liste von
+Zeilen.
+
+\begin{json}
+"subcircuits": {
+  "OPX": [
+    ".SUBCKT OPX inp inn out vp vn",
+    "Rin inp inn 1meg",
+    "Egain mid 0 POLY(1) inp inn 0 1e5",
+    "Rout mid out 10",
+    "Dhi out vp DCLAMP",
+    "Dlo vn out DCLAMP",
+    ".MODEL DCLAMP D(IS=1e-14)",
+    ".ENDS"
+  ]
+},
+"components": [
+  { "type": "X", "name": "U1", "subcircuit": "OPX", "nodes": ["in", "fb", "out", "vp", "vn"] }
+]
+\end{json}
+
+Die Modellbibliothek des Editors erzeugt genau diese Form
+(Kapitel~\ref{kap:editor-bibliothek}).
+
+\subsection*{Was gelesen wird}
+
+\begin{itemize}
+  \item Bauteile \code{R}, \code{C}, \code{L}, \code{K}, \code{V} und
+    \code{I} (DC, AC, SIN, PULSE, PWL), \code{E} und \code{G} (linear,
+    \code{POLY(n)}, \code{VALUE = {...}}, \code{TABLE {...} = (x, y) ...}),
+    \code{F} und \code{H} (linear, \code{POLY(n)}), \code{B} (\code{V=}
+    oder \code{I=}), \code{D}, \code{Q}, \code{M}, \code{J}, \code{S},
+    \code{T} und \code{X}.
+  \item \code{.param}, \code{PARAMS:} an \code{.subckt} und an Instanzen,
+    \code{.model} – auch mit Ausdrücken, ausgewertet mit den Parametern der
+    Teilschaltung.
+  \item Formen von PSpice: Widerstände mit Modell (\code{R1 a b RMOD 1k};
+    \code{R=} im Modell skaliert, \code{T_ABS=-273.15} macht den Widerstand
+    rauschfrei); Schalter mit \code{VSWITCH(RON ROFF VON VOFF)} mit dem
+    stetigen Übergang von PSpice zwischen \code{VOFF} und \code{VON}
+    (intern eine Verhaltensquelle); Schalter mit \code{SW(VT VH)} werden
+    esims Schalter mit Hysterese.
+  \item Ausdrücke in \code{{...}}: Zahlen mit SPICE-Endungen (\code{M} ist
+    Milli, \code{meg} Mega), \code{**}, \code{a ? b : c}, \code{limit},
+    \code{pwr}, \code{pwrs}, \code{uramp}, \code{u}, \code{stp},
+    \code{sgn}.
+\end{itemize}
+
+Modelle und weitere \code{.subckt} im Text gehören zu dieser
+Teilschaltung und heißen intern \code{OPX/NAME}; sie stoßen nicht mit
+Modellen der Datei zusammen. Was der Text nicht definiert, sucht esim in
+der Datei.
+
+\subsection*{Was nicht geht}
+
+Nicht Unterstütztes (z.\,B. \code{LAPLACE}, \code{.include}, unbekannte
+Bauteile) ist ein Fehler, der die Zeile im Text nennt. Ohne Wirkung
+bleiben, mit Warnung, etwa die Fläche von Dioden und der Substratknoten
+von Transistoren.
+
+\subsection*{Erprobt}
+
+\begin{itemize}
+  \item Das Makromodell eines verbreiteten Doppel-Operationsverstärkers
+    (PSpice, 18 Teilschaltungen, 227 Bauteile): DC-Kennlinie und
+    Sprungantwort stimmen mit ngspice im PSpice-Modus überein (DC auf 7
+    Stellen, Zeitverlauf auf 0,3\,mV).
+  \item Ein kleiner P-Kanal-MOSFET als Level-3-Modell eines Herstellers:
+    Kennlinien wie ngspice auf 6 Stellen, Schaltflanke auf 17\,mV bei 5\,V
+    Hub.
+  \item \datei{tests/spice_subckt_ngspice.py} vergleicht eine SPICE-
+    Teilschaltung mit allen Formen dieses Abschnitts gegen ngspice.
+\end{itemize}

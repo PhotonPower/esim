@@ -165,9 +165,9 @@ schreibt die Knoten des Plans.
 
 ## Nächste Schritte
 
-**Schritt 4: Windows 11** – gebaut und getestet (Bericht:
-[`docs/windows-report.md`](windows-report.md)); offen ist die Bedienung von
-Hand (Prüfliste Punkte 3–7) und ein Installer:
+**Schritt 4: Windows 11** – erledigt: gebaut, getestet und von Hand bedient
+(Bericht: [`docs/windows-report.md`](windows-report.md)); offen ist nur ein
+Installer:
 - MSVC: `/utf-8` (Quelltexte mit „Ω“, „„“ …), `/bigobj`, `/permissive-`,
   `NOMINMAX`; kein `M_PI`, keine POSIX-Funktionen; Warte-Befehl des
   Thread-Pools auch für MSVC (`_mm_pause`, `__yield`).

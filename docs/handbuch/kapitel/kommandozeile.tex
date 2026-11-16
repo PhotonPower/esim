@@ -1,0 +1,139 @@
+\chapter{Die Kommandozeile}
+\label{kap:kommandozeile}
+
+\section{Aufruf}
+
+\begin{shell}
+esim <datei.json> [-o <ordner>] [--summary <datei.json>] [-j <n>] [--progress]
+\end{shell}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{3.6cm}L@{}}
+  \toprule
+  Option & Wirkung \\
+  \midrule
+  \code{-o <ordner>} & Ordner für die Ergebnisdateien (Standard: das aktuelle Verzeichnis); wird bei Bedarf angelegt. \\
+  \code{--summary <datei>} & Schreibt eine maschinenlesbare Übersicht aller Ergebnisse als JSON (Abschnitt~\ref{sec:summary}). \\
+  \code{-j <n>}, \code{--threads <n>} & Höchstens $n$ Läufe einer Studie gleichzeitig (Standard: alle Kerne). \\
+  \code{--progress} & Meldet während Transienten und Studien Zeilen \code{progress <Analyse> <Anteil>} auf stderr, höchstens eine je Prozent. \\
+  \code{-h}, \code{--help} & Kurze Hilfe. \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Wo das Programm liegt:
+\begin{itemize}
+  \item nach dem Bauen: \datei{build/esim} (Windows:
+    \texttt{build\textbackslash Release\textbackslash esim.exe}),
+  \item im Programmpaket des Editors: unter Windows neben
+    \datei{esim-editor.exe}, unter macOS in
+    \datei{esim-editor.app/Contents/MacOS/esim}.
+\end{itemize}
+
+Wer es oft braucht, nimmt den Ordner in den Suchpfad (\code{PATH}) auf.
+
+\section{Konsolenausgabe}
+
+\begin{shell}
+Common-emitter amplifier: bias point, frequency response, 1 kHz sine
+11 components, 8 unknowns (6 node voltages, 2 branch currents, 0 equation variables)
+[op] converged after 10 iterations (newton)
+  v(b)   = 2.04845
+  v(c)   = 5.52274
+  v(e)   = 1.38503
+  v(c,e) = 4.13771
+  i(VCC) = -0.00158988
+[ac] 1 .. 1e+08 Hz: 161 points -> results/bjt_amplifier.ac.csv
+[noise] 10 .. 100000 Hz: 81 points -> results/bjt_amplifier.noise.csv
+  output noise in the band: 2.13685e-05 rms
+  referred to the input:    1.25945e-07 rms
+    Q1.ic        98.71 %
+    RC           0.7894 %
+    ...
+[tran] 0 .. 0.005 s, bdf (order up to 2): 506 steps (0 rejected, 0 Newton failures), ...
+  thd = 0.0952244
+  fourier, fundamental 1000 Hz -> results/bjt_amplifier.tran.fourier.csv
+    v(out)  fundamental 1.66273, thd 9.52228 %
+\end{shell}
+
+Die erste Zeile ist der Titel, die zweite die Größe des Systems. Danach
+folgt je Analyse eine Zeile mit ihren Kennzahlen und der Ergebnisdatei,
+darunter Arbeitspunkt, Messgrößen, Rauschbeiträge oder Statistik.
+Warnungen beginnen mit \code{warning:}, Hinweise mit \code{note:}. Ein Fehler
+(\code{error: ...}) bricht ab; das Programm endet dann mit dem Rückgabewert
+1, sonst mit 0. Skripte können das prüfen.
+
+\section{Die Zusammenfassung}
+\label{sec:summary}
+
+\code{--summary ergebnis.json} schreibt alles, was ein anderes Programm über
+den Lauf wissen muss:
+
+\begin{json}
+{
+  "title": "RC-Tiefpass",
+  "analyses": [
+    { "type": "op", "name": "op", "strategy": "newton", "iterations": 1,
+      "values": { "v(in)": 0.0, "v(out)": 0.0 } },
+    { "type": "tran", "name": "tran", "file": ".../tiefpass.tran.csv",
+      "measures": { "t_rise": 0.002145621433071054 },
+      "stats": { "steps": 160, "rejected": 4, "newton_iterations": 240,
+                 "newton_failures": 0, "factorizations": 155,
+                 "max_order": 5, "events": 0 } },
+    { "type": "ac", "name": "ac", "file": ".../tiefpass.ac.csv",
+      "measures": { "fc": 159.18247552426536 } }
+  ]
+}
+\end{json}
+
+Je nach Analyse kommen hinzu: \code{sweep} (Parameter und Werte einer
+Studie), \code{statistics} (Monte Carlo), \code{parameters} (Anpassung),
+\code{normalized} und die absoluten Ableitungen (Empfindlichkeiten),
+\code{fourier}. Der Editor und die Python-Schnittstelle lesen genau diese
+Datei.
+
+\section{Ergebnisse zeichnen: plot.py}
+
+\datei{tools/plot.py} zeichnet die CSV-Dateien mit matplotlib
+(\code{pip install matplotlib}):
+
+\begin{shell}
+python3 tools/plot.py results/buck_converter.tran.csv
+python3 tools/plot.py results/bjt_amplifier.ac.csv -o bode.png
+python3 tools/plot.py results/relaxation_oscillator.sweep.csv --cols "v\(c\)"
+\end{shell}
+
+Die Darstellung richtet sich nach der Kopfzeile der Datei: Zeitverläufe mit
+getrennten Feldern für Spannungen, Ströme und übrige Größen, Frequenzgänge
+als Betrag in dB und Phase über logarithmischer Frequenz, DC-Sweeps über der
+ersten Spalte, Parameter-Sweeps mit einer Kurve je Parameterwert. Mehrere
+Dateien werden übereinandergelegt.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Option & Wirkung \\
+  \midrule
+  \code{-o bild.png} & Bild schreiben (PNG, PDF, SVG) statt ein Fenster zu öffnen \\
+  \code{--cols <regex>} & nur Spalten, deren Name auf den regulären Ausdruck passt \\
+  \code{--separate} & ein eigenes Feld je Größe \\
+  \code{--group} & erste Spalte als Parameter eines Sweeps behandeln \\
+  \code{--logx}, \code{--logy} & logarithmische Achsen \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Skripte}
+
+Weil Eingabe und Ausgabe Textdateien sind, lässt sich esim gut in Skripte
+einbinden. Ein Beispiel für die Shell, das alle Beispiele rechnet:
+
+\begin{shell}
+for f in examples/*.json; do
+  esim "$f" -o results || echo "FEHLER in $f"
+done
+\end{shell}
+
+Für alles, was über einfache Schleifen hinausgeht – Netzlisten erzeugen,
+Ergebnisse auswerten, Optimierungen –, ist die Python-Schnittstelle des
+nächsten Kapitels bequemer.

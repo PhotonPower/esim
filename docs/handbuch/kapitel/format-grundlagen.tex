@@ -1,0 +1,207 @@
+\chapter{Aufbau der Eingabedatei}
+\label{kap:format-grundlagen}
+
+Dieser Teil beschreibt das Eingabeformat vollständig. Er gilt gleichermaßen
+für Dateien, die im Editor entstehen, und für Dateien, die man von Hand
+schreibt oder aus einem Programm erzeugt.
+
+\section{Die Datei als Ganzes}
+
+Eine Eingabedatei ist ein JSON-Objekt. Anders als reines JSON darf sie
+Kommentare enthalten: \code{//} bis zum Zeilenende und \code{/* ... */}
+über mehrere Zeilen. Die Kodierung ist UTF-8. Ein Komma nach dem letzten
+Element einer Liste oder eines Objekts ist, wie in JSON, ein Fehler.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lLl@{}}
+  \toprule
+  Schlüssel & Inhalt & Abschnitt \\
+  \midrule
+  \code{title} & Titel, erscheint auf der Konsole und im Ergebnis & \\
+  \code{parameters} & benannte Konstanten & \ref{sec:parameter} \\
+  \code{functions} & eigene Funktionen für Ausdrücke & \ref{sec:funktionen} \\
+  \code{tables} & Kennlinien aus Stützstellen & \ref{sec:tabellen} \\
+  \code{models} & Modellparameter von Halbleitern & \ref{kap:format-modelle} \\
+  \code{subcircuits} & Teilschaltungen & \ref{kap:format-teilschaltungen} \\
+  \code{components} & die Bauteile der Schaltung & \ref{kap:format-bauteile} \\
+  \code{variables} & Unbekannte eigener Gleichungen & \ref{kap:format-gleichungen} \\
+  \code{equations} & eigene Gleichungen & \ref{kap:format-gleichungen} \\
+  \code{events} & Ereignisse mit Zuweisungen & \ref{sec:ereignisse} \\
+  \code{analyses} & die Analysen, in dieser Reihenfolge gerechnet & \ref{kap:format-analysen} \\
+  \code{outputs} & auszugebende Größen & \ref{sec:ausgaenge} \\
+  \code{options} & Toleranzen, Temperatur, Verfahren & \ref{sec:optionen} \\
+  \code{nodeset} & Startwerte für den Arbeitspunkt & \ref{sec:optionen} \\
+  \code{ic} & Anfangsspannungen für \code{"uic"} & \ref{sec:optionen} \\
+  \code{schematic} & der Schaltplan des Editors (vom Simulator überlesen) & \ref{kap:editor-schaltplan} \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Eine Datei enthält \code{components}, \code{equations} oder beides.
+Unbekannte Schlüssel – auf oberster Ebene, an Bauteilen, Modellen oder
+Analysen – erzeugen eine Warnung und werden übergangen. So fallen
+Tippfehler auf, ohne dass die Rechnung abbricht. Die Schlüssel von Bauteilen
+und Modellen unterscheiden nicht zwischen Groß- und Kleinschreibung
+(\code{"Value"} ist \code{"value"}).
+
+\section{Zahlen}
+\label{sec:zahlen}
+
+Ein Zahlenwert kann sein:
+
+\begin{itemize}
+  \item eine JSON-Zahl: \code{1000}, \code{4.7e3}, \code{-0.5},
+  \item eine Zeichenkette mit SI-Präfix und optionaler Einheit:
+    \code{"4.7k"}, \code{"100nF"}, \code{"2.2M"}, \code{"10meg"},
+  \item ein Ausdruck aus Zahlen und Parametern: \code{"2*R0"},
+    \code{"1/(2*pi*R0*C0)"}.
+\end{itemize}
+
+\begin{center}
+\begin{tabular}{@{}*{9}{c}@{}}
+  \toprule
+  \code{f} & \code{p} & \code{n} & \code{u}, \texttt{µ} & \code{m} &
+  \code{k}, \code{K} & \code{M}, \code{meg} & \code{G} & \code{T} \\
+  \midrule
+  $10^{-15}$ & $10^{-12}$ & $10^{-9}$ & $10^{-6}$ & $10^{-3}$ &
+  $10^{3}$ & $10^{6}$ & $10^{9}$ & $10^{12}$ \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+\begin{achtung}[Groß- und Kleinschreibung]
+  Anders als in SPICE unterscheiden die Präfixe Groß- und Kleinschreibung:
+  \code{"1M"} ist ein Megaohm, \code{"1m"} ein Milliohm. \code{meg} ist
+  immer Mega. In SPICE-Text (Modellkarten, SPICE-Teilschaltungen) gilt
+  dagegen die SPICE-Regel: \code{M} ist dort Milli.
+\end{achtung}
+
+Buchstaben nach dem Präfix gelten als Einheit und werden ignoriert:
+\code{"100nF"} ist $10^{-7}$, \code{"1F"} ist 1 (ein Farad, nicht ein Femto).
+In Ausdrücken ist nur das Präfix erlaubt (\code{"4.7k*2"}), keine Einheit.
+Zahlen werden unabhängig von den Ländereinstellungen des Rechners gelesen;
+das Dezimalzeichen ist immer der Punkt.
+
+\section{Parameter}
+\label{sec:parameter}
+
+Parameter sind benannte Konstanten. Sie dürfen sich aufeinander beziehen,
+die Reihenfolge spielt keine Rolle:
+
+\begin{json}
+"parameters": { "R0": "1k", "C0": "100n", "tau": "R0*C0", "fc": "1/(2*pi*tau)" }
+\end{json}
+
+Parameter können überall verwendet werden, wo eine Zahl steht – in
+Bauteilwerten, Modellparametern, Analysen (\code{"tstop": "10*tau"}), in
+Gleichungen und Ausgängen. Parameter-Sweeps, Monte Carlo,
+Empfindlichkeiten und die Anpassung an Messdaten verändern Parameter; alles,
+was von ihnen abhängt, wird für jeden Lauf neu berechnet. Wer eine Größe
+später variieren will, schreibt sie deshalb am besten gleich als Parameter.
+
+\section{Ausdrücke}
+\label{sec:ausdruecke}
+
+Ausdrücke stehen in Gleichungen, Verhaltensquellen, Ausgängen, Ereignissen,
+Schaltern und überall, wo eine Zahl erwartet wird (dort nur mit
+Parametern).
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{3.3cm}L@{}}
+  \toprule
+  Element & Schreibweise \\
+  \midrule
+  Grundrechenarten & \code{+ - * /}, Potenz \code{^} oder \code{**}, Klammern \\
+  Vergleiche & \code{< <= > >= == !=} (Ergebnis 1 oder 0) \\
+  Logik & \code{&&}, \code{||}, \code{!} \\
+  Fallunterscheidung & \code{if(bedingung, dann, sonst)} \\
+  Funktionen & \code{sin cos tan asin acos atan atan2(y,x) sinh cosh tanh exp log ln log10 sqrt abs sign min(a,b) max(a,b) pow(a,b)} \\
+  Konstanten & \code{pi} \\
+  Zeit & \code{t} oder \code{time} \\
+  Schaltungsgrößen & \code{v(knoten)}, \code{v(a,b)} $=$ \code{v(a)-v(b)}, \code{i(bauteil)} \\
+  Variablen & Namen aus \code{variables}, Elemente \code{T[i]} von Vektoren \\
+  Tabellen & \code{name(x)} für eine Kennlinie aus \code{tables} \\
+  eigene Funktionen & \code{name(a, b)} aus \code{functions} \\
+  Totzeit & \code{delay(x, td)} (Abschnitt~\ref{sec:totzeit}) \\
+  Summe & \code{sum(i, von, bis, ausdruck)} (Abschnitt~\ref{sec:vektoren}) \\
+  Zeitableitung & \code{der(ausdruck)}, nur in Gleichungen \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\code{log} und \code{ln} sind beide der natürliche Logarithmus; den
+dekadischen liefert \code{log10}. Winkel sind im Bogenmaß.
+
+Die Ableitungen für das Newton-Verfahren werden automatisch und exakt
+gebildet. Unstetige Ausdrücke – Vergleiche, \code{if}, \code{abs},
+\code{sign}, \code{min}, \code{max} – sind in Gleichungen und
+Verhaltensquellen erlaubt: Die Stelle, an der ein Vergleich kippt, wird als
+Ereignis exakt bestimmt (Abschnitt~\ref{sec:ereignisse}).
+
+\section{Eigene Funktionen}
+\label{sec:funktionen}
+
+Wiederkehrende Ausdrücke lassen sich als Funktionen ablegen:
+
+\begin{json}
+"functions": {
+  "clip(x, lim)":   "max(-lim, min(lim, x))",
+  "core(i, L, is)": "L*is*tanh(i/is)"
+}
+\end{json}
+
+Ein Aufruf wird durch den Rumpf ersetzt, mit den Argumenten anstelle der
+Parameter. Funktionen dürfen Parameter der Datei und andere Funktionen
+verwenden, sich aber nicht selbst aufrufen und keine eingebaute Funktion
+überschreiben. Sie stehen in Gleichungen, Verhaltensquellen, Schaltern,
+Ereignissen und Ausgängen zur Verfügung, nicht aber in reinen Zahlenwerten
+(Bauteilwerte, \code{parameters}).
+
+\section{Tabellen}
+\label{sec:tabellen}
+
+Kennlinien aus Stützstellen, etwa Messdaten oder Datenblattkurven, werden
+unter \code{tables} definiert und in Ausdrücken wie eine Funktion mit einem
+Argument aufgerufen:
+
+\begin{json}
+"tables": {
+  "cell": { "x": [0, 0.3, 0.5, 0.6], "y": [3.0, 2.96, 2.38, 0], "interp": "cubic" },
+  "ntc":  { "file": "ntc_curve.csv", "xcol": 0, "ycol": 1 }
+},
+"components": [
+  { "type": "B", "name": "Bcell", "nodes": ["0", "p"], "i": "cell(v(p))" }
+]
+\end{json}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Daten]
+    \code{x} und \code{y} als Listen, oder \code{points} als Liste von
+    Paaren \code{[x, y]}, oder \code{file}: eine Textdatei mit
+    Zahlenspalten. Trenner sind Komma, Semikolon oder Leerzeichen; Zeilen,
+    die nicht mit einer Zahl beginnen (Überschriften), werden übersprungen.
+    Der Pfad gilt relativ zur Eingabedatei; \code{xcol} und \code{ycol}
+    wählen die Spalten (gezählt ab 0). \code{x} muss streng steigen.
+  \item[{\code{interp}}]
+    \code{"linear"} (Standard) oder \code{"cubic"}. Die kubische
+    Interpolation ist monoton (PCHIP): glatte Steigung, aber kein
+    Überschwingen zwischen den Stützstellen. Für Kennlinien in Gleichungen
+    und Quellen ist sie meist die bessere Wahl, weil das Newton-Verfahren
+    dann eine stetige Ableitung sieht.
+  \item[{\code{extrap}}]
+    Außerhalb der Daten wird der Randwert gehalten (\code{"hold"},
+    Standard) oder mit der Randsteigung fortgesetzt (\code{"linear"}).
+\end{description}
+
+\section{Knoten}
+
+Knotennamen sind beliebige Zeichenketten oder ganze Zahlen. Masse heißt
+\code{"0"} oder \code{"gnd"}. Jede Schaltung braucht einen Massebezug, und
+jeder Knoten braucht einen Gleichstrompfad nach Masse
+(Abschnitt~\ref{sec:schwebend}). In Ausdrücken (\code{v(...)}) sind nur
+Knotennamen ohne Komma und Klammern verwendbar; einfache Namen wie
+\code{out}, \code{vdd}, \code{n12} sind deshalb am praktischsten.
+
+Größen innerhalb von Teilschaltungen heißen von außen
+\code{<Instanz>.<Name>}, etwa \code{v(X1.mid)} oder \code{i(U1.V1)}
+(Kapitel~\ref{kap:format-teilschaltungen}).

@@ -1,0 +1,91 @@
+\chapter{Text, Eigenschaften und Prüfung}
+\label{kap:editor-text}
+
+\section{Der Texteditor}
+
+Rechts neben dem Plan steht die Eingabedatei. Der Texteditor ist auf das
+Format zugeschnitten:
+
+\begin{itemize}
+  \item \textbf{Hervorhebung}: Schlüssel, Zeichenketten, Zahlen und
+    Kommentare in eigenen Farben.
+  \item \textbf{Zeilennummern} am Rand; Zeilen mit Fehlern oder Warnungen
+    sind markiert, die Meldung steht im Tooltip.
+  \item \textbf{Einrückung}: Die Eingabetaste übernimmt die Einrückung der
+    Zeile, nach \texttt{\{} oder \texttt{[} eine Stufe mehr; \taste{Tab} und \tasten{Umschalt}{Tab} rücken markierte Zeilen ein
+    und aus.
+  \item \tasten{Strg}{/} kommentiert die markierten Zeilen mit \code{//}
+    aus oder wieder ein.
+  \item Eine schließende Klammer am Zeilenanfang rückt von selbst aus;
+    die Rückschritttaste im Einzug löscht eine ganze Einrückstufe.
+\end{itemize}
+
+Steht der Cursor in einem Bauteil, wählt der Plan dieses Bauteil aus. Steht
+er in einem Bauteil einer Teilschaltung, wechselt der Plan in deren Plan.
+
+\section{Prüfung beim Tippen}
+
+Kurz nach jeder Änderung liest der Editor die Datei mit dem Parser des
+Simulators – genau so, wie \esim\ sie lesen würde. Er baut dabei die ganze
+Schaltung auf, ohne zu rechnen. Gefunden werden unter anderem:
+
+\begin{itemize}
+  \item Syntaxfehler im JSON (fehlende Kommas, Klammern, Anführungszeichen),
+  \item unbekannte Schlüssel (»unknown parameter "valeu" ignored«),
+  \item Bauteile mit falscher Zahl von Knoten, fehlenden Werten oder
+    unbekanntem Modell,
+  \item Fehler in Ausdrücken und unbekannte Namen darin,
+  \item Gleichungssysteme mit falscher Zahl von Gleichungen,
+  \item Widersprüche zwischen Plan und Text.
+\end{itemize}
+
+Fehler und Warnungen stehen an ihrer Zeile und gesammelt in
+\menue{Probleme}; ein Doppelklick dort springt zur Zeile. Die Statuszeile
+nennt die Anzahl oder, wenn alles stimmt, die Größe der Schaltung (»22
+Bauteile, 18 Unbekannte«).
+
+Nicht alles lässt sich ohne Rechnen erkennen: Ob ein Arbeitspunkt
+konvergiert oder ein Knoten keinen Gleichstrompfad nach Masse hat, zeigt
+erst die Simulation im \menue{Protokoll}.
+
+\section{Eigenschaften}
+
+Das Feld \menue{Eigenschaften} zeigt das ausgewählte Bauteil als Formular:
+
+\begin{itemize}
+  \item \textbf{Titel}: Art des Bauteils (»NPN-Transistor«,
+    »Verhaltensquelle«).
+  \item \textbf{Name}: Umbenennen ändert den Namen im Text. Ein Name, den
+    schon ein anderes Bauteil trägt, wird abgelehnt.
+  \item \textbf{Werte}: ein Feld je Schlüssel des Bauteils, dazu die
+    üblichen Schlüssel seiner Art, auch wenn sie noch nicht gesetzt sind
+    (grau: »nicht gesetzt«). Die Eingabetaste oder das Verlassen des Felds
+    schreibt den Wert in den Text. Was gültiges JSON ist (Zahlen,
+    \code{true}, Listen, ganze Objekte), wird so geschrieben, alles andere
+    (\code{4.7k}, Ausdrücke) als Zeichenkette.
+  \item \textbf{Neu}: Name und Wert eines weiteren Schlüssels, mit \taste{+}
+    oder der Eingabetaste übernommen, z.\,B. \code{ac} = \code{1} an einer
+    Quelle oder \code{ic} = \code{5} an einem Kondensator.
+  \item \textbf{Anschlüsse}: die Knoten des Bauteils, zur Information.
+  \item \menue{Im Text zeigen} springt zur Stelle im Text.
+\end{itemize}
+
+\paragraph{Das Feld »model«.}
+Bei Dioden, Transistoren und Teilschaltungen schlägt das Feld beim Tippen
+passende Modelle vor: die der Datei und die der Bibliothek, gefiltert nach
+der Art des Bauteils. Darunter steht, woher das gewählte Modell kommt (»in
+der Datei«, »aus der Bibliothek, wird übernommen«, »nicht definiert«). Ein
+Modell aus der Bibliothek wird beim Übernehmen in \code{"models"} der
+Datei kopiert. Die Schaltfläche \menue{\dots} öffnet die Modellbibliothek.
+
+Verschachtelte Werte wie die Kurvenform \code{"wave"} einer Quelle zeigt das
+Formular als Text; sie werden am besten im Texteditor bearbeitet
+(\menue{Im Text zeigen}).
+
+\section{Protokoll}
+
+Das \menue{Protokoll} zeigt alles, was \esim\ während der Simulation
+ausgibt: die Größe der Schaltung, je Analyse eine Zeile mit Schritten,
+Iterationen und Ausgabedatei, den Arbeitspunkt, Messgrößen, Statistik von
+Monte-Carlo-Läufen und am Ende die Rechenzeit. Warnungen und Fehler sind
+farbig hervorgehoben. Scheitert eine Simulation, steht hier die Ursache.

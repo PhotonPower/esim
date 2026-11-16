@@ -17,3 +17,12 @@
 *.noise.csv
 __pycache__/
 *.pyc
+
+# LaTeX auxiliary files of the user manual (the PDF is committed)
+/docs/handbuch/*.aux
+/docs/handbuch/*.log
+/docs/handbuch/*.toc
+/docs/handbuch/*.out
+/docs/handbuch/*.fls
+/docs/handbuch/*.fdb_latexmk
+/docs/handbuch/kapitel/*.aux

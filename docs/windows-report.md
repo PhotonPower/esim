@@ -6,8 +6,9 @@ Stand 2026-11-16, Zweig `windows-build`. Auftrag: `docs/windows-agent.md`.
 
 esim und der Editor bauen unter Windows 11 mit MSVC fehlerfrei und ohne
 Warnungen; alle 6 Testgruppen bestehen. Der Programmordner `dist` läuft ohne
-Qt im PATH. Zwei Fehler bei der Auslieferung wurden behoben. Die Punkte 3–7
-der Prüfliste sind noch von Hand zu prüfen.
+Qt im PATH. Zwei Fehler bei der Auslieferung wurden behoben. Die Prüfliste
+ist vollständig abgearbeitet: Die Punkte 3–7 wurden am 2026-11-16 von Hand
+am Windows-PC geprüft, ohne Befund.
 
 ## Werkzeuge
 
@@ -54,21 +55,22 @@ Vergleichstests nicht angelegt.
 ## Prüfliste (Abschnitt 5)
 
 Punkte 1 und 2 sind mit `dist\esim-editor.exe` ohne Qt im PATH geprüft, über
-`--run --snapshot`. Die Punkte 3–7 brauchen Maus und Tastatur am Rechner.
+`--run --snapshot`. Die Punkte 3–7 sind von Hand mit Maus und Tastatur am
+Windows-PC geprüft (2026-11-16): alles in Ordnung.
 
 | # | Prüfung | Status | Befund |
 | --- | --- | --- | --- |
-| 1 | Ordner und Datei mit Umlauten | teilweise | `%TEMP%\Übung\Schaltkreis ä.json` öffnet und simuliert; Bild nach `bild ö.png` gesichert. „Datei → Sichern unter“ im Dialog noch nicht. |
+| 1 | Ordner und Datei mit Umlauten | geprüft | `%TEMP%\Übung\Schaltkreis ä.json` öffnet und simuliert; Bild nach `bild ö.png` gesichert. „Datei → Sichern unter“ im Dialog von Hand geprüft. |
 | 2 | Beispiel `bjt_amplifier`, Simulation | geprüft | Spannungen an den Labels (2,05 V, 5,52 V, 1,39 V, Modell `NPN_GEN`), Frequenzgang mit rund 40 dB. Hinweiszeile zeigt „Strg+D“. |
-| 3 | Kontextmenü und Tasten im Plan | offen | |
-| 4 | Mausrad, Touchpad, Zoom in den Kurven | offen | |
-| 5 | Dialoge auf Deutsch, auch beim Schließen | offen | `qt_de.qm` wird jetzt geladen; Anzeige nicht gesehen. |
-| 6 | Skalierung 125 % und 150 %, dunkler Modus | offen | |
-| 7 | Herstellerbibliothek hinzufügen und simulieren | offen | |
+| 3 | Kontextmenü und Tasten im Plan | geprüft | von Hand, ohne Befund |
+| 4 | Mausrad, Touchpad, Zoom in den Kurven | geprüft | von Hand, ohne Befund |
+| 5 | Dialoge auf Deutsch, auch beim Schließen | geprüft | von Hand, ohne Befund (`qt_de.qm` wird geladen) |
+| 6 | Skalierung 125 % und 150 %, dunkler Modus | geprüft | von Hand, ohne Befund |
+| 7 | Herstellerbibliothek hinzufügen und simulieren | geprüft | von Hand, ohne Befund |
 
 ## Offen
 
-- Prüfliste Punkte 3–7 von Hand durchgehen; bei Fehlern Bildschirmfotos.
+- ~~Prüfliste Punkte 3–7 von Hand durchgehen.~~ Erledigt, ohne Befund.
 - ~~Auf dem Mac prüfen, ob die Qt-Dialoge mit `qt_de` weiter deutsch sind.~~
   Geprüft: `qt_de` lädt auch mit Homebrews Qt die deutschen Texte; ein Test
   in `editor_tests` hält das fest.

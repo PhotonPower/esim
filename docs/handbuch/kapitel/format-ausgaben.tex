@@ -1,0 +1,149 @@
+\chapter{Ausgänge, Optionen und Genauigkeit}
+\label{kap:format-ausgaben}
+
+\section{Ausgänge}
+\label{sec:ausgaenge}
+
+\code{"outputs"} nennt die Größen, die gespeichert werden:
+
+\begin{json}
+"outputs": ["v(in)", "v(out)", "v(c,e)", "i(V1)", "T - 273.15", "v(out)*i(V1)", "T[*]"]
+\end{json}
+
+\begin{itemize}
+  \item \code{v(knoten)}, \code{v(a,b)}, \code{i(bauteil)}, Variablen und
+    beliebige Ausdrücke daraus. Die AC-Analyse akzeptiert nur die
+    einfachen Formen.
+  \item Zweigströme gibt es für Spannungsquellen, Spulen und die
+    Spannungsquellen \code{E}, \code{H} und \code{B} (mit \code{v}). Für
+    andere Ströme eine 0-V-Quelle in Reihe schalten – oder bei einem
+    Widerstand \code{v(a,b)/R} ausgeben.
+  \item Ohne \code{outputs} werden alle Knotenspannungen, Zweigströme und
+    Variablen der Hauptschaltung ausgegeben; das Innere von Instanzen nur,
+    wenn es genannt ist (\code{v(X1.mid)}).
+  \item Jede Analyse kann mit eigenem \code{"outputs"} die globale Liste
+    ersetzen.
+\end{itemize}
+
+\section{Ergebnisdateien}
+
+Für die Eingabedatei \datei{name.json} und den Ausgabeordner \datei{out}
+entstehen:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Datei & Inhalt \\
+  \midrule
+  \datei{out/name.dc.csv} & DC-Sweep: Wert der Quelle, dann die Ausgänge \\
+  \datei{out/name.ac.csv} & \code{freq}, dann je Ausgang \code{mag(...)} und \code{phase(...)} \\
+  \datei{out/name.tran.csv} & \code{time}, dann die Ausgänge \\
+  \datei{out/name.noise.csv} & Frequenz, Rauschdichten, Verstärkung \\
+  \datei{out/name.pss.csv} & die eingeschwungene(n) Periode(n) \\
+  \datei{out/name.tran.fourier.csv} & Fourier-Analyse: Harmonische mit Betrag und Phase \\
+  \datei{out/name.<a>.measure.csv} & Messgrößen je Lauf einer Studie \\
+  \datei{out/name.sens.csv} & Tabelle der Empfindlichkeiten \\
+  \datei{out/name.fit.csv} & Messdaten und angepasste Modellkurve \\
+  \datei{out/name.op.csv} & Arbeitspunkt einer Studie, eine Zeile je Lauf \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Statt des Analysetyps steht der \code{"name"} der Analyse im Dateinamen,
+wenn sie einen hat. Alle Dateien sind CSV mit Komma als Trenner, Punkt als
+Dezimalzeichen und einer Kopfzeile:
+
+\begin{shell}
+time,v(in),v(out)
+0,0,0
+4e-06,0,0
+...
+\end{shell}
+
+Der einfache Arbeitspunkt steht nur auf der Konsole (und in der
+Zusammenfassung, Abschnitt~\ref{sec:summary}).
+
+\section{Optionen}
+\label{sec:optionen}
+
+\begin{json}
+"options": {
+  "reltol": 1e-4,       // relative Toleranz: Newton und Fehler je Zeitschritt
+  "vntol": 1e-6,        // absolute Toleranz für Spannungen [V]
+  "abstol": 1e-12,      // absolute Toleranz für Ströme [A]
+  "vartol": 1e-9,       // absolute Toleranz für Variablen
+  "lte_floor": 0.1,     // Bezugsgröße des Zeitschrittfehlers
+  "trtol": 1,           // Faktor auf den zulässigen Zeitschrittfehler
+  "gmin": 1e-12,        // Leitwert parallel zu jedem pn-Übergang [S]
+  "temp": 27,           // Temperatur der Schaltung [°C]
+  "tnom": 27,           // Temperatur der Modellparameter [°C]
+  "maxiter_dc": 100,    // Newton-Iterationen im Arbeitspunkt
+  "maxiter_tran": 20,   // Newton-Iterationen je Zeitschritt
+  "reuse_jacobian": true,   // zerlegte Matrix im Zeitschritt weiterverwenden
+  "index_reduction": true   // Systeme mit Index über 2 umformen
+},
+"nodeset": { "out": 2.5 },   // Startwerte für den Arbeitspunkt
+"ic": { "c1": 5 }            // Knotenspannungen bei t = 0 für "uic"
+\end{json}
+
+Die angegebenen Werte sind die Standardwerte.
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[{\code{nodeset}}]
+    Startwerte von Knotenspannungen für die Suche des Arbeitspunkts. Sie
+    helfen bei schwer konvergierenden Schaltungen und wählen bei bistabilen
+    Schaltungen (Flipflops, Schmitt-Trigger) den Zustand. Der Arbeitspunkt
+    selbst ist dann eine echte Lösung; die Werte sind nur der Anfang.
+  \item[{\code{ic}}]
+    Knotenspannungen bei $t=0$, nur mit \code{"uic": true} in der
+    Transientenanalyse.
+  \item[{\code{gmin}}]
+    Ein kleiner Leitwert parallel zu jedem pn-Übergang, der die Matrix auch
+    bei gesperrten Übergängen gut lösbar hält.
+  \item[{\code{reuse_jacobian}}]
+    Innerhalb eines Zeitschritts wird die zerlegte Matrix der ersten
+    Newton-Iteration weiterverwendet, solange jede Iteration die Korrektur
+    mindestens halbiert. Das spart rund 20\,\% Rechenzeit; \code{false}
+    schaltet es ab.
+\end{description}
+
+\section{Genauigkeit der Zeitintegration}
+\label{sec:genauigkeit}
+
+Pro Schritt darf der geschätzte Fehler einer Unbekannten
+\[
+  \mathit{reltol}\cdot\max\bigl(|x|,\ \mathit{lte\_floor}\cdot\text{Spitzenwert von }|x|\bigr)
+  + \text{absolute Toleranz}
+\]
+betragen (multipliziert mit \code{trtol}).
+
+\begin{itemize}
+  \item \code{lte_floor: 0} misst den Fehler relativ zum momentanen Wert.
+    Das ist die übliche Definition und richtig für Lösungen, die über
+    Größenordnungen abklingen; bei schwingenden Signalen kostet jeder
+    Nulldurchgang kleine Schritte.
+  \item \code{lte_floor: 1} misst relativ zum bisherigen Spitzenwert: am
+    schnellsten, für Signale mit gleichbleibender Amplitude ausreichend.
+  \item Der Standard 0,1 liegt dazwischen.
+\end{itemize}
+
+Das ist eine Schranke für den Fehler \emph{pro Schritt}. Über viele Schritte
+summiert er sich; für genauere Ergebnisse \code{reltol} verkleinern. Mit dem
+Standardverfahren \code{bdf} kostet das wenig, weil es dann höhere Ordnungen
+nutzt. Ein Beispiel: Der Kippschwinger in
+\datei{examples/relaxation_oscillator.json} trifft seine Periode mit den
+Standardwerten auf 0,004\,\%, mit \code{reltol} $=10^{-9}$ und \code{vntol}
+$=10^{-10}$ auf 1\,ns.
+
+\begin{hinweis}[Faustregeln]
+  \begin{itemize}[leftmargin=1.2em]
+    \item Kurven sehen eckig aus: \code{tstep} kleiner wählen (begrenzt die
+      Schrittweite) oder \code{output_step} für ein feines Ausgaberaster.
+    \item Ergebnis soll genauer werden: \code{reltol} um eine oder zwei
+      Größenordnungen verkleinern.
+    \item Schwingkreis hoher Güte verliert Amplitude: \code{"method":
+      "trap"}.
+    \item Rechnung zu langsam bei vielen Nulldurchgängen:
+      \code{lte_floor} auf 1.
+  \end{itemize}
+\end{hinweis}

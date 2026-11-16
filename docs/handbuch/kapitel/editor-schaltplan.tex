@@ -1,0 +1,229 @@
+\chapter{Der Schaltplan}
+\label{kap:editor-schaltplan}
+
+\section{Grundsätzliches: Plan und Text}
+
+Der Text der Datei ist maßgeblich; der Plan ist eine zweite Ansicht davon.
+Nach jeder Textänderung liest der Editor die Datei neu und baut den Plan
+auf: Bauteile und ihre Knoten kommen aus \code{"components"}, Lage,
+Leitungen, Labels und Masse aus \code{"schematic"}. Umgekehrt schreibt jede
+Änderung im Plan nur die betroffenen Stellen des Texts – Name und
+\code{"nodes"} geänderter Bauteile, neue und gelöschte Bauteile und den
+Abschnitt \code{"schematic"}. Kommentare, Reihenfolge und Formatierung der
+Datei bleiben erhalten, und jede Änderung im Plan ist genau ein Schritt der
+gemeinsamen Undo-Geschichte.
+
+Was sich nicht zeichnen lässt – Gleichungen, Ereignisse, Analysen,
+Optionen – bleibt im Text. Bauteile ohne Symbol im Plan (etwa die Kopplung
+\code{K}) erscheinen trotzdem und lassen sich wie alle anderen auswählen.
+
+\begin{hinweis}[Dateien ohne Plan]
+  Öffnet man eine Datei ohne \code{"schematic"}, ordnet der Editor die
+  Bauteile in Zeilen an und setzt an jeden Anschluss ein Netzlabel mit dem
+  Knotennamen aus dem Text. Die Schaltung ist damit vollständig und richtig
+  verbunden, nur noch nicht schön gezeichnet. Sobald man im Plan etwas
+  ändert, schreibt der Editor den Abschnitt \code{"schematic"} in die Datei.
+\end{hinweis}
+
+\section{Ansicht: verschieben und zoomen}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{5.2cm}L@{}}
+  \toprule
+  Bedienung & Wirkung \\
+  \midrule
+  Mausrad & Zoomt um den Mauszeiger. \\
+  \taste{Strg} + Mausrad & Zoomt (auch auf dem Touchpad). \\
+  Touchpad: wischen mit zwei Fingern & Verschiebt die Ansicht. \\
+  Touchpad: spreizen & Zoomt. \\
+  Touchpad: zweimal tippen mit zwei Fingern (macOS) & Zeigt alles. \\
+  mittlere Maustaste ziehen & Verschiebt die Ansicht. \\
+  \taste{Leertaste} halten und ziehen & Verschiebt die Ansicht. \\
+  \taste{F} & Zeigt die ganze Schaltung. \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Fährt die Maus über einen Anschluss oder eine Leitung, nennt ein Tooltip
+den Knoten (»Knoten „out“«, »Masse«) und nach einer Simulation seine
+Spannung im Arbeitspunkt. Alle Leitungen desselben Netzes werden dabei
+hervorgehoben.
+
+\section{Auswählen}
+
+\begin{itemize}
+  \item \textbf{Klick} auf ein Bauteil, eine Leitung, ein Label oder eine
+    Masse wählt es aus; ein Klick ins Leere hebt die Auswahl auf.
+  \item \textbf{Umschalt-Klick} fügt hinzu oder nimmt wieder heraus.
+  \item \textbf{Rechteck aufziehen} (im Leeren beginnen) wählt alles darin;
+    mit \taste{Umschalt} kommt es zur bisherigen Auswahl hinzu.
+\end{itemize}
+
+Ein einzelnes ausgewähltes Bauteil wird im Text markiert, und
+\menue{Eigenschaften} zeigt sein Formular. Umgekehrt wählt der Plan das
+Bauteil aus, in dessen Text der Cursor steht.
+
+\section{Bauteile platzieren}
+
+Bauteile kommen aus der Liste \menue{Bauteile}:
+\begin{itemize}
+  \item \taste{A} im Plan setzt den Cursor ins Suchfeld der Liste. Ein paar
+    Buchstaben genügen (»kon«, »npn«, »puls«); die Eingabetaste nimmt den
+    ersten Treffer.
+  \item Ein Klick auf einen Eintrag der Liste wählt ihn ebenso.
+\end{itemize}
+
+Danach hängt das Bauteil am Mauszeiger. \taste{R} dreht es um 90° im
+Uhrzeigersinn, \taste{X} spiegelt es; ein Klick setzt es ab. Das Werkzeug
+bleibt aktiv, damit man gleich weitere setzen kann – jedes bekommt den
+nächsten freien Namen (\code{R1}, \code{R2}, \dots). \taste{Esc} oder ein
+Rechtsklick beendet das Platzieren.
+
+Die Liste enthält:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Eintrag & Vorgabe im Text \\
+  \midrule
+  Widerstand, Kondensator, Spule & \code{"value": "1k"}, \code{"1u"}, \code{"1m"} \\
+  Spannungsquelle & \code{"dc": 1} \\
+  Sinusquelle & \code{"dc": 0, "ac": 1}, Sinus 1\,V, 1\,kHz \\
+  Pulsquelle & Puls 0 \dots 1\,V, Periode 1\,ms \\
+  Stromquelle & \code{"dc": "1m"} \\
+  Diode, Ideale Diode & ohne Modell bzw. \code{"vf": 0.7} \\
+  NPN, PNP, N-MOSFET, P-MOSFET, N-JFET, P-JFET & ohne Modell (Standardwerte von SPICE) \\
+  Spannungs-/stromgesteuerte Quellen E, G, F, H & Verstärkung 1 bzw. \code{"control": "V1"} \\
+  Verhaltensquelle, Spannung / Strom & \code{"v": "0"} bzw. \code{"i": "0"} \\
+  Schalter, spannungsgesteuert & \code{"vt": 0.5} \\
+  Leitung & \code{"z0": 50, "td": "1n"} \\
+  Kopplung zweier Spulen & \code{"inductors": ["L1", "L2"], "k": 0.99} \\
+  Teilschaltung »\textit{name}« & je Teilschaltung der Datei ein Eintrag \\
+  Modelle der Bibliothek & beim Suchen, z.\,B. »NPN\_GEN« (Kapitel~\ref{kap:editor-bibliothek}) \\
+  Modellbibliothek \dots, Neue Teilschaltung \dots & öffnen die jeweiligen Dialoge \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Die Werte sind nur Vorgaben; sie werden in den Eigenschaften oder im Text
+geändert. Ein Transistor ohne \code{"model"} rechnet mit den
+Standardparametern von SPICE – sinnvoller ist meist ein Modell aus der
+Bibliothek.
+
+\section{Leitungen}
+
+\taste{W} startet eine Leitung, ebenso der Eintrag \menue{Leitung zeichnen}.
+
+\begin{itemize}
+  \item Ein Klick setzt den Anfangspunkt, jeder weitere eine Ecke. Zwischen
+    zwei Klicks verläuft die Leitung rechtwinklig; \taste{/} wechselt, ob
+    sie zuerst waagrecht oder zuerst senkrecht geht.
+  \item Trifft ein Klick einen Anschluss oder eine bestehende Leitung, endet
+    die Leitung dort von selbst.
+  \item Doppelklick, \taste{Esc} oder die Eingabetaste beenden die Leitung
+    an der letzten Ecke; \taste{Entf} nimmt die letzte Ecke zurück; ein
+    Rechtsklick bricht ab.
+\end{itemize}
+
+\paragraph{Was verbunden ist.}
+Ein Leitungsende oder eine Ecke, die auf einer anderen Leitung liegt,
+verbindet beide (T-Abzweig, mit einem Punkt gezeichnet). Zwei Leitungen, die
+sich nur kreuzen, sind \emph{nicht} verbunden. Ein Anschluss ist verbunden,
+wenn eine Leitung an ihm endet oder über ihn hinweg läuft.
+
+\section{Masse, Netzlabels und Ports}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Masse (\taste{G})]
+    Jedes Netz mit einem Massesymbol ist der Knoten \code{"0"}.
+  \item[Netzlabel (\taste{N})]
+    Ein Label gibt seinem Netz einen Namen. Alle Labels mit demselben Namen
+    sind verbunden, auch ohne Leitung dazwischen – so lassen sich
+    Versorgungen und Signale ohne lange Leitungen verteilen. Doppelklick
+    auf ein Label (oder \menue{Umbenennen \dots} im Kontextmenü) ändert den
+    Namen; die Knoten aller angeschlossenen Bauteile im Text ändern sich mit.
+  \item[Port (\taste{P})]
+    Nur im Plan einer Teilschaltung: die Verbindung nach außen
+    (Kapitel~\ref{kap:editor-teilschaltungen}).
+\end{description}
+
+\section{Bearbeiten}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{4.2cm}L@{}}
+  \toprule
+  Taste & Wirkung auf die Auswahl \\
+  \midrule
+  Ziehen mit der Maus & Verschieben; Leitungen an den Anschlüssen gehen mit und bleiben rechtwinklig. \\
+  Pfeiltasten & Um ein Rasterfeld verschieben, mit \taste{Umschalt} um fünf. \\
+  \taste{R} & Drehen um 90° im Uhrzeigersinn. \\
+  \taste{X} & Spiegeln. \\
+  \tasten{Strg}{D} & Verdoppeln (mit neuen Namen). \\
+  \taste{Entf} & Löschen (Bauteile auch aus dem Text). \\
+  \tasten{Strg}{G} & In eine Teilschaltung umwandeln (Abschnitt~\ref{sec:auslagern}). \\
+  Doppelklick auf Bauteil & Eigenschaften zeigen; bei einer Teilschaltung diese öffnen. \\
+  \tasten{Alt}{Klick} & Spannung der Leitung bzw. Strom des Bauteils als Kurve. \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Ein \textbf{Rechtsklick} öffnet ein Kontextmenü mit allen Befehlen, die an
+dieser Stelle möglich sind – mit ihren Tasten: Eigenschaften, Strom oder
+Spannung zeigen, Teilschaltung öffnen, Umbenennen, Drehen, Spiegeln,
+Verdoppeln, Löschen, In Teilschaltung umwandeln, Leitung zeichnen, Masse,
+Netzlabel, Port, Bauteil, Alles zeigen und gegebenenfalls Zur
+Hauptschaltung.
+
+Die Hinweiszeile unter dem Plan nennt immer die Tasten des aktiven
+Werkzeugs.
+
+\section{Wie Knotennamen entstehen}
+
+Aus dem Plan bestimmt der Editor, welche Anschlüsse ein gemeinsames Netz
+bilden, und gibt jedem Netz einen Namen:
+
+\begin{enumerate}
+  \item Ein Netz mit Massesymbol heißt \code{"0"}.
+  \item Ein Netz mit einem Label trägt dessen Namen.
+  \item Sonst behält es den Namen, den seine Anschlüsse bisher im Text
+    hatten. Ausgaben wie \code{v(out)} bleiben deshalb gültig, auch wenn man
+    Bauteile verschiebt oder neu verdrahtet.
+  \item Neue Netze ohne Namen heißen \code{n1}, \code{n2}, \dots
+\end{enumerate}
+
+Ein Anschluss, an dem nichts hängt, bekommt einen eigenen Knoten. Der
+Simulator wird dann meist melden, dass dieser Knoten keinen Gleichstrompfad
+nach Masse hat (Kapitel~\ref{kap:fehlersuche}).
+
+\section{Wenn Plan und Text sich widersprechen}
+
+Weil beide bearbeitbar sind, können sie auseinanderlaufen: Ändert man im
+Text die Knoten eines Bauteils, ohne die Leitungen im Plan anzupassen,
+verbindet der Text etwas anderes als die Zeichnung. Der Editor zeigt das als
+Warnung in \menue{Probleme} (»Schaltplan: R1, Anschluss 2 liegt im Plan an
+„n1“, im Text an „out“«) und mit einem roten Ring am Anschluss. Gerechnet
+wird immer, was im Text steht. Die nächste Änderung im Plan schreibt die
+Knoten des Plans in den Text und beseitigt den Widerspruch.
+
+Enthält der Text einen Syntaxfehler, zeigt der Plan den letzten gültigen
+Stand und lässt sich so lange nicht ändern, bis der Fehler behoben ist.
+
+\section{Format des Abschnitts \texttt{schematic}}
+
+Der Plan steht in der Datei unter \code{"schematic"} – auf oberster Ebene
+für die Hauptschaltung und in jeder Teilschaltung für deren eigenen Plan:
+
+\begin{json}
+"schematic": {
+  "components": { "R1": { "at": [4, -2], "rot": 270, "mirror": true } },
+  "wires":   [ [[0, -2], [2, -2]] ],
+  "labels":  [ { "name": "out", "at": [10, -2], "rot": 0 } ],
+  "ports":   [ { "name": "in", "at": [-4, 0] } ],      // nur in Teilschaltungen
+  "grounds": [ { "at": [0, 2] } ]
+}
+\end{json}
+
+Koordinaten sind ganze Rasterpunkte, $y$ zeigt nach unten. \code{rot} ist
+die Drehung in Grad im Uhrzeigersinn (0, 90, 180, 270), \code{mirror}
+spiegelt. Eine Leitung ist eine Liste von Punkten. Man muss diesen Abschnitt
+nicht von Hand schreiben, kann es aber; der Simulator überliest ihn.

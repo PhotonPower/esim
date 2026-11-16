@@ -1,0 +1,143 @@
+\chapter{Wie esim rechnet – und wo die Grenzen liegen}
+\label{kap:numerik}
+
+Für die Benutzung muss man die Numerik nicht kennen. Wer aber verstehen
+will, warum eine Rechnung schnell oder langsam ist, oder Ergebnisse
+einschätzen muss, findet hier das Wichtigste.
+
+\section{Das Gleichungssystem}
+
+Alles – Schaltung, eigene Gleichungen, Teilschaltungen – wird zu einem
+einzigen System $\frac{d}{dt}q(x) + f(x,t) = 0$ zusammengesetzt. Jedes
+Bauteil trägt seine Ströme zu $f$ und seine Ladungen und Flüsse zu $q$ bei,
+dazu die Ableitungen $G = \partial f/\partial x$ und
+$C = \partial q/\partial x$. Für eigene Gleichungen gehen
+\code{der(...)}-Terme nach $q$, der Rest nach $f$; die Ableitungen kommen
+aus automatischem Differenzieren.
+
+\section{Arbeitspunkt}
+
+Newton-Verfahren mit der Spannungsbegrenzung von SPICE an pn-Übergängen.
+Scheitert es, folgen nacheinander:
+
+\begin{enumerate}
+  \item eine \textbf{Pseudo-Transiente}: Jeder Knoten ist gedämpft an seine
+    vorherige Lösung gebunden, die Dämpfung wird schrittweise gelöst. Das
+    folgt dem Einschaltvorgang und bewältigt auch lange Ketten von Stufen
+    hoher Verstärkung;
+  \item \textbf{gmin-Stepping}: zusätzliche Leitwerte nach Masse, die
+    schrittweise verschwinden;
+  \item \textbf{Quellen-Stepping}: alle Quellen werden von null aus
+    hochgefahren.
+\end{enumerate}
+
+\section{Lineare Algebra}
+
+Die Matrizen werden dünnbesetzt in LU-Faktoren zerlegt. Ihre Struktur wird
+einmal analysiert; die Bauteile schreiben ihre Einträge danach über eine
+gespeicherte Zuordnung direkt an ihren Platz. Ist die Matrix gegenüber dem
+letzten Schritt unverändert (lineare Schaltung bei gleicher Schrittweite),
+entfällt die Zerlegung ganz. Bei nichtlinearen Schaltungen wird die
+zerlegte Matrix der ersten Newton-Iteration eines Zeitschritts
+weiterverwendet, solange die Iteration gut konvergiert.
+
+\section{Zeitintegration}
+
+\begin{itemize}
+  \item Implizite Integration; je Schritt ein Newton-Problem
+    $f(x) + a\,q(x) + b = 0$.
+  \item Die Schrittweite folgt aus dem Abbruchfehler der Ladungen $q$
+    (Differenz zur Extrapolation ihres Verlaufs), nicht der Unbekannten
+    selbst. So bleiben algebraische Größen außen vor, und schwach
+    bestimmte, potentialfreie Schaltungsteile stören die
+    Schrittweitensteuerung nicht.
+  \item Mit \code{bdf} wird nach jedem Schritt geschätzt, welchen Fehler
+    die nächstniedrigere und die nächsthöhere Ordnung gehabt hätten;
+    gewählt wird die mit dem größten zulässigen Schritt. Die Schrittweite
+    bleibt konstant, bis sie verdoppelt werden kann oder verkleinert werden
+    muss (wie in DASSL).
+  \item Knicke der Quellen, Ereignisse, Laufzeiten und Totzeiten sind
+    Haltepunkte. Danach startet die Integration neu mit Ordnung~1; auch
+    dieser erste Schritt ist fehlerkontrolliert.
+\end{itemize}
+
+\section{Ereignisse}
+
+Jeder Vergleich in einem Ausdruck liefert eine Ereignisfunktion. Wechselt
+eine davon in einem Schritt das Vorzeichen, wird der Schritt so lange
+verkürzt (Sekantenverfahren mit Bisektion als Absicherung), bis er knapp
+hinter dem Wechsel endet. Zwischen zwei Ereignissen sind die Ausgänge der
+Vergleiche und die Stellungen der Schalter eingefroren – die Gleichungen
+sind also glatt, auch für Newton. Danach folgen Zuweisungen und
+Umschalten. Ein sehr kurzer Schritt, in dem alle Stellungen frei dem
+Newton-Verfahren folgen, bringt voneinander abhängige Schaltelemente und die
+algebraischen Unbekannten in Einklang; dann startet die Integration neu.
+
+\section{AC und Rauschen}
+
+Die AC-Analyse löst $(G + j\omega C)\,X = B$ mit den Ableitungen im
+Arbeitspunkt. Für das Rauschen ist jede Rauschquelle ein Strom zwischen zwei
+Knoten; ihre Übertragung zum Ausgang liefert eine adjungierte Lösung je
+Frequenz, $(G + j\omega C)^T y = e_\text{aus}$. Die Beiträge werden
+quadratisch summiert.
+
+\section{Parallelität}
+
+Studien verteilen ihre Läufe auf alle Kerne. Große Schaltungen (ab 1000
+Bauteilen) werten zusätzlich ihre Bauteile parallel aus: Die Bauteile
+werden in 16 Blöcke geteilt, die sich die Threads der Reihe nach holen;
+jeder Block schreibt in einen eigenen Puffer, die Puffer werden in fester
+Reihenfolge addiert. Deshalb sind die Ergebnisse für jede Zahl von Threads
+bitgleich. Die Matrixzerlegung bleibt seriell und bestimmt dann die
+Rechenzeit; gemessen sind rund 26\,\% Gewinn bei 20\,000 Dioden.
+
+\section{Grenzen}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Index]
+    Die Verfahren lösen Systeme vom Index 1 und 2; höhere Indizes werden
+    automatisch reduziert, soweit sich die Ableitungen als Ausdruck bilden
+    lassen (Kapitel~\ref{kap:format-gleichungen}). Systeme vom Index 2 mit
+    \code{"uic": true} brauchen Startwerte, die die Bedingungen erfüllen.
+  \item[Ereignisse]
+    Gleiten entlang einer Schaltfläche (Reibung als \code{if}, ein Schalter
+    ohne Hysterese in einer Rückkopplung) führt zu endlosem Umschalten und
+    wird abgebrochen.
+  \item[Schalter und ideale Dioden]
+    haben endliche Widerstände (\code{ron}, \code{roff}). Sehr große
+    Verhältnisse \code{roff/ron} verschlechtern die Kondition.
+  \item[Genauigkeit]
+    \code{reltol} begrenzt den Fehler je Schritt, nicht den Gesamtfehler.
+  \item[Schwach gedämpfte Schwingungen]
+    BDF-Formeln der Ordnung 3 bis 5 sind dafür nicht stabil genug; die
+    Ordnungssteuerung weicht dann auf niedrige, dämpfende Ordnungen aus.
+    Für Schwingkreise hoher Güte \code{trap} verwenden.
+  \item[Modelle]
+    Klassische SPICE-Modelle, EKV und BSIM3v3 (ohne dessen Rauschmodelle
+    und nicht-quasistatische Effekte). BSIM4 und neuere Modelle fehlen,
+    ebenso der Skineffekt von Leitungen.
+  \item[Große Schaltungen]
+    Getestet bis 40\,000 Knoten. Ruhende Schaltungsteile werden nicht
+    übersprungen; die Rechenzeit wächst mit der Zahl der Bauteile mal der
+    Zahl der Zeitschritte.
+  \item[Potentialfreie Schaltungsteile]
+    brauchen einen Gleichstrompfad nach Masse. Ihre Spannungen gegen Masse
+    sind dann nur auf Millivolt genau; Differenzen sind davon nicht
+    betroffen.
+\end{description}
+
+\section{Erweitern}
+
+Wer esim um ein Bauteil erweitern will, leitet in C++ von \code{Device} ab
+und implementiert \code{stamp()}: Ströme, die einen Knoten verlassen, nach
+$f$, Ladungen nach $q$, ihre Ableitungen nach $G$ und $C$. Zusätzliche
+Unbekannte (innere Knoten, Zweigströme) werden in \code{setup()} angelegt;
+eingetragen wird das Bauteil in \datei{src/io/Netlist.cpp}.
+\datei{src/circuit/devices/Passive.cpp} und \datei{Diode.cpp} sind gute
+Vorlagen. Für viele Fälle genügt allerdings eine Verhaltensquelle mit
+Gleichungen in einer Teilschaltung.
+
+Der numerische Kern ist auch ohne Eingabedatei nutzbar: von
+\code{DaeSystem} ableiten, \code{size()} und \code{evaluate()}
+implementieren und mit \code{runTransient()} lösen;
+\datei{examples/dae/Robertson.hpp} zeigt das.

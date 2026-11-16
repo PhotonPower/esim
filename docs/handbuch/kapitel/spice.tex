@@ -1,0 +1,117 @@
+\chapter{SPICE-Netzlisten}
+\label{kap:spice}
+
+esim liest SPICE auf zwei Wegen:
+
+\begin{itemize}
+  \item \textbf{Modellkarten und Teilschaltungen} direkt in der
+    Eingabedatei (Kapitel~\ref{kap:format-modelle} und
+    Abschnitt~\ref{sec:spice-subckt}). So werden Modelle von Herstellern
+    unverändert benutzt.
+  \item \textbf{Ganze Netzlisten} übersetzt das Werkzeug
+    \datei{tools/spice2json.py} einmalig in das JSON-Format. Danach lassen
+    sie sich im Editor öffnen, zeichnen und weiterbearbeiten.
+\end{itemize}
+
+\section{spice2json}
+
+\begin{shell}
+python3 tools/spice2json.py examples/spice/amplifier.cir -o amplifier.json
+esim amplifier.json
+\end{shell}
+
+Ohne \code{-o} schreibt das Werkzeug auf die Standardausgabe. Ein Beispiel
+für eine Netzliste:
+
+\begin{spicecode}
+Common-emitter amplifier with an RC filter subcircuit (SPICE netlist)
+.param rload=10k cfilt=1n
+
+VCC vcc 0 DC 12
+Vin in 0 DC 0 AC 1 SIN(0 10m 1k)
+Cin in b 10u
+R1 vcc b 47k
+R2 b 0 10k
+Q1 c b e QGEN
+RC vcc c 4.7k
+RE e 0 1k
+CE e 0 100u
+Cout c out 10u
+RL out 0 {rload}
+
+X1 out filt rcfilter c={cfilt}
+D1 filt clamp DGEN
+Vclamp clamp 0 DC 3
+
+.subckt rcfilter a b r=1k c=10n
+Rf a b {r}
+Cf b 0 {c}
+.ends
+
+.model QGEN NPN(Is=1e-14 Bf=200 Br=2 Vaf=100
++ Ikf=0.3 Rb=10 Rc=1 Cje=10p Cjc=5p
++ Tf=0.5n Tr=50n)
+.model DGEN D(Is=2n Rs=0.5 N=1.75 Cjo=4p M=0.4 Tt=20n)
+
+.op
+.ac dec 20 10 10meg
+.noise v(out) Vin dec 10 10 100k
+.tran 10u 5m
+.four 1k v(out)
+.print tran v(in) v(out) v(filt)
+.end
+\end{spicecode}
+
+\section{Was übersetzt wird}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Art & Unterstützt \\
+  \midrule
+  Bauteile & \code{R C L K V I E G F H D Q M J X S T}, \code{O} (verlustbehaftete Leitung mit LTRA-Modell) \\
+  Quellenformen & \code{DC}, \code{AC}, \code{SIN}, \code{PULSE}, \code{PWL} \\
+  Anweisungen & \code{.model}, \code{.subckt}/\code{.ends}, \code{.param}, \code{.op}, \code{.dc}, \code{.ac}, \code{.tran}, \code{.noise}, \code{.four}, \code{.ic}, \code{.nodeset}, \code{.temp}, \code{.options}, \code{.print} \\
+  Werte & SPICE-Zahlen (\code{10k}, \code{4.7meg}, \code{1m} = Milli), Ausdrücke in \code{{...}} als Parameter \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{itemize}
+  \item Namen und Knoten werden kleingeschrieben, weil SPICE nicht zwischen
+    Groß- und Kleinschreibung unterscheidet. Ausgaben heißen danach etwa
+    \code{v(out)} und \code{i(vin)}.
+  \item Modelle bleiben als SPICE-Zeilen erhalten; esim liest sie selbst.
+  \item \code{.print} wird zu \code{"outputs"}, \code{.four} zum Block
+    \code{fourier} der Transientenanalyse, ein Druckschritt von
+    \code{.tran} zu \code{output_step}.
+  \item Was nicht übersetzt werden kann (etwa \code{.tf} oder unbekannte
+    Bauteile), wird gemeldet und ausgelassen. Eingebundene Dateien
+    (\code{.include}, \code{.lib}) werden nicht gelesen; ihren Inhalt
+    einfügen oder die Modelle über die Bibliothek des Editors einbinden.
+\end{itemize}
+
+\section{Unterschiede zu SPICE}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{4.2cm}L@{}}
+  \toprule
+  Thema & in esim \\
+  \midrule
+  Präfixe im JSON & Groß/klein zählt: \code{M} Mega, \code{m} Milli (in SPICE-Text wie SPICE). \\
+  Zweigströme & \code{i(V1)} wie SPICE: vom Plus-Knoten durch die Quelle. \\
+  Integration & Standard ist BDF variabler Ordnung, nicht Trapez; \code{"method": "trap"} wählt die Trapezregel. \\
+  Schrittweite & \code{tstep} begrenzt die Schrittweite; der Druckschritt von \code{.tran} wird zu \code{output_step}. \\
+  Schalter & Ideal, mit exakt bestimmtem Umschaltzeitpunkt; PSpice-\code{VSWITCH} als stetiger Übergang. \\
+  Ableitungen & Exakt durch automatisches Differenzieren, auch in Verhaltensquellen. \\
+  Modelle & Diode, Gummel-Poon, JFET, MOS 1/3, BSIM3v3; dazu EKV. BSIM4 und neuere fehlen. \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Prüfen}
+
+\datei{tools/test_spice2json.py} übersetzt
+\datei{examples/spice/amplifier.cir} und vergleicht das Ergebnis mit einer
+von Hand geschriebenen Netzliste derselben Schaltung. Der Test läuft mit
+\code{ctest} (Gruppe \code{spice_import}).

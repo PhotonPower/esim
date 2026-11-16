@@ -1,0 +1,44 @@
+{
+  // RC low-pass of the user manual (chapter "Erste Schritte"): drawn in the
+  // schematic editor, pulse response and frequency response.
+  "title": "RC-Tiefpass",
+
+  "parameters": { "R": "1k", "C": "1u" },
+
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["in", "0"], "ac": 1,
+      "wave": { "type": "pulse", "v1": 0, "v2": 1, "delay": "1m", "rise": "1u", "fall": "1u", "width": "5m", "period": "10m" } },
+    { "type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R" },
+    { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "C" }
+  ],
+
+  "analyses": [
+    { "type": "op" },
+    { "type": "tran", "tstop": "20m",
+      "measure": { "t_rise": { "rise": "v(out)", "from": "1m", "to": "6m" } } },
+    { "type": "ac", "sweep": "dec", "points": 20, "fstart": 1, "fstop": "100k",
+      "measure": { "fc": { "f3db": "v(out)" } } }
+  ],
+
+  "outputs": ["v(in)", "v(out)"],
+
+  "schematic": {
+    "components": {
+      "V1": { "at": [0, 0] },
+      "R1": { "at": [4, -2], "rot": 270 },
+      "C1": { "at": [8, 0] }
+    },
+    "wires": [
+      [[0, -2], [2, -2]],
+      [[6, -2], [10, -2]],
+      [[0, 2], [8, 2]]
+    ],
+    "labels": [
+      { "name": "in", "at": [1, -2], "rot": 270 },
+      { "name": "out", "at": [10, -2] }
+    ],
+    "grounds": [
+      { "at": [4, 2] }
+    ]
+  }
+}

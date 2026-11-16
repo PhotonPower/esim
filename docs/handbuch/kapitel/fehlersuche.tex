@@ -1,0 +1,133 @@
+\chapter{Fehlersuche}
+\label{kap:fehlersuche}
+
+Dieses Kapitel sammelt die häufigsten Meldungen und Probleme mit ihren
+Ursachen. Meldungen des Simulators sind englisch; im Editor stehen sie im
+\menue{Protokoll} bzw. in \menue{Probleme}.
+
+\section{Fehler in der Datei}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[{\code{error: JSON syntax error: ... parse error at line 12, column 5}}]
+    Ein Komma fehlt oder ist zu viel (nach dem letzten Element einer Liste
+    ist keines erlaubt), eine Klammer oder ein Anführungszeichen ist offen.
+    Der Editor markiert die Zeile; oft liegt der Fehler in der Zeile
+    davor.
+  \item[{\code{warning: components[0]: unknown parameter "valu" ignored}}]
+    Ein Tippfehler in einem Schlüssel. Der Wert wird übergangen, die
+    Rechnung läuft weiter – mit dem Standardwert. Warnungen deshalb ernst
+    nehmen.
+  \item[{\code{error: component 'D1': model "XYZ" is not defined}}]
+    Das Modell fehlt unter \code{models}. Im Editor das Modell über die
+    Bibliothek übernehmen oder den Namen korrigieren.
+  \item[{\code{error: components[0]: expected nodes [a, b]}}]
+    Falsche Zahl von Knoten für diesen Bauteiltyp (Tabelle in
+    Kapitel~\ref{kap:format-bauteile}).
+  \item[{\code{error: output "v(x)": unknown node 'x'}}]
+    Ein Ausgang nennt einen Knoten, den es nicht gibt – oft nach dem
+    Umbenennen eines Labels im Plan, oder ein Knoten in einer
+    Teilschaltung ohne \code{Instanz.}-Präfix.
+  \item[{\code{error: circuit has no ground node}}]
+    Kein Knoten heißt \code{"0"} oder \code{"gnd"}. Im Plan ein
+    Massesymbol setzen (\taste{G}).
+\end{description}
+
+\section{Der Arbeitspunkt konvergiert nicht}
+\label{sec:schwebend}
+
+\begin{shell}
+error: DC operating point did not converge (check for floating nodes,
+       loops of voltage sources/inductors, or try a nodeset)
+\end{shell}
+
+Die häufigsten Ursachen:
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Schwebende Knoten]
+    Ein Knoten ohne Gleichstrompfad nach Masse – etwa zwischen zwei
+    Kondensatoren, an einer Stromquelle mit Kondensator oder auf der
+    Sekundärseite eines Übertragers. Seine Spannung ist im Arbeitspunkt
+    unbestimmt. Abhilfe: ein großer Widerstand (z.\,B. 100\,M\ohm) nach
+    Masse. Manchmal findet esim trotzdem eine Lösung; die Spannung des
+    Knotens ist dann willkürlich (oft 0\,V), Differenzen wie
+    \code{v(plus,minus)} sind davon nicht betroffen.
+  \item[Maschen aus Spannungsquellen oder Spulen]
+    Zwei parallele Spannungsquellen verschiedener Spannung, eine Spule
+    direkt parallel zu einer Spannungsquelle: Im Arbeitspunkt (Spule =
+    Kurzschluss) widersprechen sich die Gleichungen. Abhilfe: ein kleiner
+    Serienwiderstand.
+  \item[Stromquelle in Reihe mit einem Kondensator oder offenen Zweig]
+    Der Strom kann nicht fließen. Abhilfe: Parallelwiderstand.
+  \item[Schaltungen mit Mitkopplung]
+    Flipflops, Schmitt-Trigger, Oszillatoren haben mehrere oder keine
+    stabilen Arbeitspunkte. \code{"nodeset"} gibt einen Startwert vor; bei
+    Oszillatoren hilft oft \code{"uic": true} in der Transientenanalyse.
+  \item[Extreme Werte]
+    Widerstände von Femtoohm oder Teraohm, Verstärkungen über $10^{9}$
+    verschlechtern die Kondition. Werte prüfen (\code{M} statt \code{m}?).
+\end{description}
+
+Bevor esim aufgibt, versucht es nacheinander Newton, eine
+Pseudo-Transiente, gmin-Stepping und Quellen-Stepping. Wenn keines zum Ziel
+führt, liegt fast immer einer der obigen Gründe vor.
+
+\section{Probleme in der Transientenanalyse}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Rechnung sehr langsam]
+    Die Statistik (\code{steps}, \code{rejected}) zeigt, ob viele Schritte
+    verworfen werden. Ursachen sind meist sehr schnelle Vorgänge (steile
+    Flanken, kleine Kapazitäten an großen Widerständen), Schalter ohne
+    Hysterese oder ein zu kleines \code{tstep}. \code{lte_floor: 1} hilft bei
+    schwingenden Signalen; für Schaltnetzteile, die lange einschwingen, ist
+    \code{pss} oft viel schneller.
+  \item[{\code{more than 100000 events ... (chattering)}}]
+    Ein Vergleich, Schalter oder eine ideale Diode schaltet ohne Ende hin
+    und her, z.\,B. \code{der(x) = if(x < 1, 1, -1)}. Abhilfe: Hysterese
+    (\code{vh} am Schalter, zwei Ereignisse mit verschiedenen Schwellen)
+    oder eine geglättete Kennlinie (\code{tanh} statt \code{if}).
+  \item[Kurven eckig oder Spitzen fehlen]
+    Die Kurve hat zu wenige Punkte: \code{tstep} kleiner oder
+    \code{output_step} setzen.
+  \item[Schwingung klingt künstlich ab]
+    Numerische Dämpfung von BDF: \code{"method": "trap"}.
+  \item[Strom einer Spannungsquelle zappelt]
+    Typisch für \code{"method": "trap"} nach Sprüngen; \code{bdf} oder
+    \code{gear2} verwenden.
+  \item[Anfangszustand nicht wie erwartet]
+    Ohne \code{"uic": true} startet die Rechnung im Arbeitspunkt; \code{ic}
+    an Kondensatoren gilt nur mit \code{uic}.
+\end{description}
+
+\section{Probleme im Editor}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Der Plan lässt sich nicht ändern]
+    Der Text ist kein gültiges JSON. Der Plan zeigt den letzten gültigen
+    Stand, bis der Fehler (siehe \menue{Probleme}) behoben ist.
+  \item[Roter Ring an einem Anschluss]
+    Plan und Text verbinden den Anschluss verschieden
+    (Kapitel~\ref{kap:editor-schaltplan}). Gerechnet wird der Text; die
+    nächste Änderung im Plan übernimmt die Knoten des Plans.
+  \item[\tasten{Alt}{Klick} zeigt keine Kurve]
+    Die Größe ist nicht gespeichert: unter \code{"outputs"} eintragen (die
+    Statuszeile nennt den Namen) und neu simulieren.
+  \item[»Der Simulator ist abgestürzt« oder esim nicht gefunden]
+    \esim\ muss neben dem Editor liegen (im Paket mitgeliefert). Beim
+    selbst gebauten Editor kopiert der Build es dorthin.
+  \item[Englische Dialoge unter Windows]
+    Im Programmordner fehlen die Übersetzungen
+    (\datei{translations/qt_de.qm}); das Paket aus \code{cmake --install}
+    bringt sie mit.
+\end{description}
+
+\section{Wenn nichts hilft}
+
+\begin{itemize}
+  \item Die Schaltung verkleinern, bis der Fehler verschwindet: Teile
+    auskommentieren (\tasten{Strg}{/}), Analysen einzeln rechnen.
+  \item Mit \code{op} beginnen; erst wenn der Arbeitspunkt plausibel ist,
+    die anderen Analysen.
+  \item Das Protokoll ganz lesen: Warnungen weiter oben erklären oft den
+    Fehler am Ende.
+\end{itemize}

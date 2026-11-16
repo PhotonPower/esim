@@ -22,6 +22,12 @@ Bedingungen, alle anderen Differentialgleichungen. Eine Schaltung liefert `f`
 (Ströme) und `q` (Ladungen, Flüsse) über die modifizierte Knotenanalyse, ein
 Gleichungsblock liefert sie aus dem Text der Gleichungen.
 
+**Benutzerhandbuch:** [`docs/handbuch/handbuch.pdf`](docs/handbuch/handbuch.pdf)
+(rund 100 Seiten: Installation, erste Schritte, Editor, vollständige
+Beschreibung des Eingabeformats, Kommandozeile, Python, SPICE, Fehlersuche).
+Quelltext in LaTeX unter [`docs/handbuch/`](docs/handbuch); übersetzen mit
+`cd docs/handbuch && latexmk -pdf handbuch.tex`.
+
 ## Bauen und Starten
 
 Voraussetzungen: CMake ≥ 3.18, ein C++17-Compiler. Eigen und nlohmann/json

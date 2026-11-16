@@ -1,0 +1,151 @@
+\chapter{Das Hauptfenster}
+\label{kap:editor-fenster}
+
+\section{Aufbau}
+
+Das Hauptfenster besteht aus einem festen Mittelteil und mehreren Feldern,
+die sich verschieben, abtrennen und ausblenden lassen:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Bereich & Inhalt \\
+  \midrule
+  Schaltplan (Mitte) & Zeichenfläche für die Schaltung oder eine
+    Teilschaltung; darüber bei Teilschaltungen eine Leiste mit dem Weg
+    zurück zur Hauptschaltung, darunter eine Hinweiszeile mit den Tasten des
+    gerade aktiven Werkzeugs. \\
+  Text (rechts) & Die Eingabedatei mit Hervorhebung, Zeilennummern und
+    Einrückung. \\
+  Bauteile & Liste aller Bauteile, Werkzeuge, Teilschaltungen der Datei und
+    der Modelle der Bibliothek; mit Suchfeld. \\
+  Eigenschaften & Formular für das ausgewählte Bauteil. \\
+  Ergebnisse & Analysen, Größen, Wertetabelle und Kurven der letzten
+    Simulation. \\
+  Protokoll & Ausgabe des Simulators: Fortschritt, Meldungen, Warnungen und
+    Fehler, farbig hervorgehoben. \\
+  Probleme & Fehler und Warnungen der Prüfung beim Tippen und
+    Widersprüche zwischen Plan und Text; Doppelklick springt zur Zeile. \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Die Felder werden an ihrer Titelleiste gezogen. Lässt man eines über einem
+anderen los, werden beide zu Reitern; zieht man es aus dem Fenster heraus,
+schwebt es frei. \menue{Ansicht} blendet jedes Feld ein und aus. Lage und
+Größe aller Felder, die zuletzt geöffneten Dateien und die Einstellungen der
+Bibliothek merkt sich der Editor über den Neustart hinweg.
+
+\section{Menüs}
+
+\subsection*{Datei}
+\begin{tabularx}{\textwidth}{@{}lP{3.5cm}L@{}}
+  \toprule
+  Eintrag & Kürzel & Wirkung \\
+  \midrule
+  Neu & \tasten{Strg}{N} & Neue Datei aus einer Vorlage (RC-Tiefpass mit Plan). \\
+  Öffnen \dots & \tasten{Strg}{O} & Eine \datei{.json}-Datei öffnen. \\
+  Zuletzt geöffnet & & Die letzten zehn Dateien; \menue{Liste leeren}. \\
+  Beispiele & & Die mitgelieferten Beispiele (Anhang~\ref{sec:beispiele}). \\
+  Sichern & \tasten{Strg}{S} & Datei sichern. \\
+  Sichern unter \dots & \tasten{Umschalt+Strg}{S} & Unter neuem Namen sichern. \\
+  Beenden & \tasten{Strg}{Q} & Fragt bei ungesicherten Änderungen nach. \\
+  \bottomrule
+\end{tabularx}
+
+Eine Datei lässt sich auch beim Start übergeben
+(\code{esim-editor datei.json}); unter Windows genügt es, sie auf
+\datei{esim-editor.exe} zu ziehen, unter macOS auf das Programmsymbol im
+Dock oder über \menue{Öffnen mit}.
+
+\subsection*{Bearbeiten}
+\begin{tabularx}{\textwidth}{@{}lP{3.5cm}L@{}}
+  \toprule
+  Eintrag & Kürzel & Wirkung \\
+  \midrule
+  Widerrufen / Wiederholen & \tasten{Strg}{Z} / \tasten{Strg}{Y} & Gemeinsam für Plan und Text. \\
+  Ausschneiden, Kopieren, Einfügen & \tasten{Strg}{X}, \dots{} & Im Text. \\
+  Alles auswählen & \tasten{Strg}{A} & Im Text. \\
+  Kommentar ein/aus & \tasten{Strg}{/} & Markierte Zeilen mit \code{//} aus- und einkommentieren. \\
+  Auswahl in Teilschaltung umwandeln \dots & \tasten{Strg}{G} & Siehe Abschnitt~\ref{sec:auslagern}. \\
+  Modellbibliothek \dots & \tasten{Strg}{L} & Siehe Kapitel~\ref{kap:editor-bibliothek}. \\
+  \bottomrule
+\end{tabularx}
+
+Unter macOS heißt \menue{Wiederholen} \tasten{Umschalt+cmd}{Z}.
+
+\subsection*{Simulation}
+\begin{tabularx}{\textwidth}{@{}lP{3.5cm}L@{}}
+  \toprule
+  Eintrag & Kürzel & Wirkung \\
+  \midrule
+  Starten & \tasten{Strg}{R} & Sichert und rechnet die Datei. \\
+  Stoppen & \tasten{Strg}{.} & Bricht die laufende Simulation ab. \\
+  \bottomrule
+\end{tabularx}
+
+Beide Befehle stehen auch in der Werkzeugleiste oben.
+
+\subsection*{Ansicht}
+\begin{tabularx}{\textwidth}{@{}lP{3.5cm}L@{}}
+  \toprule
+  Eintrag & Kürzel & Wirkung \\
+  \midrule
+  Schaltplan, Text & & Plan oder Text ausblenden (eines bleibt immer sichtbar). \\
+  Schaltplan einpassen & \taste{F} im Plan & Ganze Schaltung zeigen. \\
+  Bauteile, Eigenschaften, \dots & & Felder ein- und ausblenden. \\
+  Kurven: alles zeigen & \tasten{Strg}{0} & Zoom der Kurven zurücksetzen. \\
+  \bottomrule
+\end{tabularx}
+
+\section{Statuszeile}
+
+Die Statuszeile am unteren Rand zeigt nach jeder Prüfung eine kurze
+Zusammenfassung (»3 Bauteile, 3 Unbekannte«) oder die Zahl der Fehler und
+Warnungen, während einer Simulation den Fortschritt der laufenden Analyse
+in Prozent und danach die Rechenzeit. Auch Rückmeldungen auf Aktionen
+(»„NPN\_GEN“ in die Datei übernommen«) erscheinen dort.
+
+\section{Wie der Editor rechnet}
+
+Der Editor startet für jede Simulation das Programm \esim\ als eigenen
+Prozess, mit einem temporären Ordner für die Ergebnisse. Das hat zwei
+Vorteile: Ein Absturz oder eine Endlosschleife des Simulators trifft nicht
+den Editor, und \menue{Stoppen} beendet einfach den Prozess. \esim\ liegt im
+Programmpaket neben dem Editor.
+
+Die Prüfung beim Tippen läuft dagegen im Editor selbst, mit demselben
+Parser wie der Simulator, in einem Hintergrund-Thread und kurz verzögert,
+damit sie das Tippen nicht bremst. Was sie meldet, meldet auch der
+Simulator.
+
+\section{Start mit Optionen}
+
+\begin{shell}
+esim-editor [datei.json] [--subcircuit <name>] [--run] [--snapshot <bild.png>]
+\end{shell}
+
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Option & Wirkung \\
+  \midrule
+  \code{datei.json} & Öffnet die Datei. \\
+  \code{--subcircuit name} & Zeigt den Plan der Teilschaltung \code{name}. \\
+  \code{--run} & Startet gleich die Simulation. \\
+  \code{--snapshot bild.png} & Sichert das Fenster (nach der Simulation) als Bild und beendet sich. Gedacht für Dokumentation und Tests; alle Bildschirmfotos dieses Handbuchs sind so entstanden. \\
+  \bottomrule
+\end{tabularx}
+
+Unter macOS liegt das Programm im Paket:
+
+\begin{shell}
+esim-editor.app/Contents/MacOS/esim-editor
+\end{shell}
+
+\section{Hell und dunkel}
+
+Der Editor folgt der Darstellung des Betriebssystems. Plan, Kurven und
+Symbole haben für den hellen und den dunklen Modus eigene, aufeinander
+abgestimmte Farben. Die acht Kurvenfarben sind so gewählt, dass sie auch bei
+Farbfehlsichtigkeit unterscheidbar bleiben; Kurvenscharen aus
+Parameterstudien erscheinen als Stufen einer Blauskala.

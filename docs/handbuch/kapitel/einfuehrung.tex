@@ -1,0 +1,137 @@
+\chapter{Einführung}
+\label{kap:einfuehrung}
+
+\section{Was ist ESIM?}
+
+ESIM ist ein Simulator für analoge elektronische Schaltungen und für
+differential-algebraische Gleichungssysteme (DAE). Er besteht aus
+mehreren Teilen, die zusammenarbeiten, aber auch einzeln nutzbar sind:
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[\esim\ – der Simulator]
+    Ein Kommandozeilenprogramm in C++. Es liest eine Eingabedatei im
+    JSON-Format, rechnet die darin verlangten Analysen und schreibt die
+    Ergebnisse als CSV-Dateien. Der Arbeitspunkt und Messgrößen erscheinen
+    zusätzlich auf der Konsole.
+  \item[\editor\ – die Oberfläche]
+    Ein Programm mit Fenstern (Qt 6) für macOS und Windows: Schaltplan und
+    Text nebeneinander, Prüfung der Eingabe beim Tippen, Simulation per
+    Tastendruck und ein Kurvenbetrachter mit Zoom, Fadenkreuz,
+    Histogrammen und Kennlinienscharen.
+  \item[Werkzeuge]
+    \datei{tools/spice2json.py} übersetzt SPICE-Netzlisten,
+    \datei{tools/plot.py} zeichnet Ergebnisse mit matplotlib, und
+    \datei{python/esim.py} ruft den Simulator aus Python auf und liefert die
+    Ergebnisse als Datenstrukturen.
+\end{description}
+
+\section{Was lässt sich simulieren?}
+
+\begin{itemize}
+  \item \textbf{Schaltungen} aus Widerständen, Kondensatoren, Spulen und
+    gekoppelten Spulen, unabhängigen und gesteuerten Quellen,
+    Verhaltensquellen mit beliebigen Ausdrücken, Dioden,
+    Bipolartransistoren (Gummel-Poon), Sperrschicht-FETs, MOSFETs (Level 1,
+    EKV, Level 3 und BSIM3v3), idealen Schaltern, idealen Dioden sowie
+    verlustlosen und verlustbehafteten Leitungen.
+  \item \textbf{Gleichungssysteme}, die direkt in der Eingabedatei stehen:
+    gewöhnliche Differentialgleichungen mit algebraischen Nebenbedingungen,
+    auch vom Index 3 und höher (sie werden automatisch umgeformt), Vektoren
+    von Unbekannten, Totzeiten und Tabellen.
+  \item \textbf{Ereignisse}: Umschaltungen und Sprünge, die vom Zustand
+    oder von der Zeit abhängen – Schalter, Anschläge, Hysterese, abgetastete
+    Regler.
+  \item \textbf{Alles gekoppelt} in einem System, etwa eine Schaltung mit
+    der Wärmebilanz eines Bauteils und einem digitalen Regler.
+\end{itemize}
+
+Die Analysen sind Arbeitspunkt, DC-Sweep, Frequenzgang (AC), Zeitverlauf
+(Transient), Rauschen, periodischer stationärer Zustand, Fourier-Analyse,
+Empfindlichkeiten und die Anpassung von Parametern an Messdaten. Jede
+Analyse lässt sich über Parameter-Sweeps und Monte-Carlo-Läufe wiederholen
+und mit Messgrößen (Grenzfrequenz, Anstiegszeit, Effektivwert …)
+auswerten.
+
+\section{Das Prinzip}
+
+Der numerische Kern löst allgemein das System
+\[
+  \frac{d}{dt}\,q(x) + f(x,t) = 0 .
+\]
+Dabei ist $x$ der Vektor aller Unbekannten (Knotenspannungen, Zweigströme,
+Variablen von Gleichungen). Zeilen, in denen $q$ verschwindet, sind
+algebraische Bedingungen, alle anderen Differentialgleichungen. Eine
+Schaltung liefert $f$ (Ströme) und $q$ (Ladungen und magnetische Flüsse)
+über die modifizierte Knotenanalyse, ein Gleichungsblock liefert sie aus dem
+Text seiner Gleichungen. Beides landet im selben System; deshalb lassen sich
+Schaltung und Gleichungen beliebig koppeln.
+
+Die Ableitungen für das Newton-Verfahren werden für alle Bauteile und alle
+Ausdrücke automatisch und exakt gebildet. Sie müssen nirgends von Hand
+angegeben werden.
+
+\section{Die Eingabedatei in Kürze}
+
+Eine Simulation ist vollständig durch eine Textdatei beschrieben. Sie ist
+JSON mit Kommentaren (\code{//} und \code{/* */}):
+
+\begin{json}
+{
+  "title": "Einweggleichrichter",
+
+  "models": {
+    "DGEN": { "type": "diode", "is": 2.5e-9, "n": 1.75, "cj0": "4p", "tt": "20n" }
+  },
+
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["in", "0"],
+      "wave": { "type": "sin", "amplitude": 5, "freq": "1k" } },
+    { "type": "D", "name": "D1", "nodes": ["in", "out"], "model": "DGEN" },
+    { "type": "R", "name": "R1", "nodes": ["out", "0"], "value": "10k" },
+    { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "1u" }
+  ],
+
+  "analyses": [
+    { "type": "op" },
+    { "type": "tran", "tstop": "5m" }
+  ],
+
+  "outputs": ["v(in)", "v(out)", "i(V1)"]
+}
+\end{json}
+
+Die Datei nennt Modelle, Bauteile mit ihren Knoten, die gewünschten
+Analysen und die Größen, die ausgegeben werden sollen. Der Editor legt den
+Schaltplan in derselben Datei unter dem Schlüssel \code{"schematic"} ab; der
+Simulator überliest ihn. Eine im Editor gezeichnete Schaltung lässt sich
+also jederzeit auch ohne Editor rechnen.
+
+\section{Über dieses Handbuch}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Teil I – Grundlagen] Installation und ein geführter erster Durchgang
+    mit dem Editor.
+  \item[Teil II – Der Editor] Alle Fenster, Werkzeuge und Tasten des
+    Editors.
+  \item[Teil III – Die Eingabedatei] Die vollständige Beschreibung des
+    Formats: Zahlen, Ausdrücke, Bauteile, Modelle, Teilschaltungen,
+    Analysen, Studien, Gleichungen, Ereignisse und Optionen. Dieser Teil
+    gilt für Editor und Kommandozeile gleichermaßen.
+  \item[Teil IV – Werkzeuge und Praxis] Kommandozeile, Python, SPICE-Import,
+    Fehlersuche und ein Blick auf die Numerik.
+  \item[Anhang] Tastenkürzel, Präfixe, Funktionen und die Liste der
+    mitgelieferten Beispiele zum Nachschlagen.
+\end{description}
+
+\paragraph{Schreibweisen.}
+Text in \code{Schreibmaschinenschrift} steht so in Dateien oder auf der
+Kommandozeile. Menüpunkte sind als \menue{Datei}\pfad\menue{Neu}
+geschrieben, Tasten als \taste{R} oder \tasten{Strg}{R}.
+
+\begin{hinweis}[Tasten auf dem Mac]
+  Die Kürzel sind in diesem Handbuch in der Windows-Form angegeben. Auf dem
+  Mac steht die Befehlstaste (\taste{cmd}) für \taste{Strg}, die Wahltaste
+  (\taste{alt}) für \taste{Alt} und die Rückschritttaste für \taste{Entf}.
+  Der Editor zeigt in Menüs, Tooltips und der Hinweiszeile jeweils die
+  Namen des eigenen Systems.
+\end{hinweis}

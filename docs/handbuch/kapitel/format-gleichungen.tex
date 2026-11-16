@@ -1,0 +1,276 @@
+\chapter{Gleichungen und Ereignisse}
+\label{kap:format-gleichungen}
+
+Neben Schaltungen rechnet esim Gleichungssysteme, die direkt in der Datei
+stehen – allein oder mit einer Schaltung gekoppelt. Damit lassen sich
+Mechanik, Thermik, Reaktionskinetik, Regler oder eigene Bauteilmodelle
+beschreiben.
+
+\section{Variablen und Gleichungen}
+
+\begin{json}
+"variables": {
+  "y1": 1,                               // Anfangswert
+  "y2": { "init": 0, "abstol": 1e-12 },  // Anfangswert mit eigener Toleranz
+  "y3": { "guess": 0.5 }                 // nur Startwert für den Löser
+},
+"equations": [
+  "der(y1) = -0.04*y1 + 1e4*y2*y3",
+  "der(y2) =  0.04*y1 - 1e4*y2*y3 - 3e7*y2^2",
+  "0 = y1 + y2 + y3 - 1"
+]
+\end{json}
+
+Es braucht genauso viele Gleichungen wie Variablen. Eine Gleichung ohne
+\code{der()} ist eine algebraische Bedingung. \code{der()} darf einen
+beliebigen Ausdruck der Unbekannten einschließen, muss aber linear mit
+konstantem Faktor in der Gleichung stehen:
+
+\begin{shell}
+m*der(v) = F - k*x              ok
+der(C0*u + C1*u^2) = -u/R       ok (nichtlineare "Ladung")
+der(x) + der(y) = -x            ok
+x*der(y) = 1                    nicht erlaubt -> Hilfsvariable einführen:
+                                der(y) = dy  und  x*dy = 1
+\end{shell}
+
+Gleichungen höherer Ordnung werden als System erster Ordnung geschrieben
+(\code{der(x) = v}, \code{der(v) = ...}). Variablen dürfen in Ausgängen,
+Messgrößen, Verhaltensquellen und Schaltern verwendet werden.
+
+\section{Anfangswerte}
+\label{sec:anfangswerte}
+
+Eine Variable, die in einem \code{der()} vorkommt, ist ein \emph{Zustand}.
+
+\begin{itemize}
+  \item Zahl oder \code{"init"}: Der Zustand startet bei diesem Wert.
+  \item \code{"guess"} oder \code{null}: Der Zustand startet im
+    Gleichgewicht (seine Zeitableitung ist bei $t=0$ null); der Wert ist nur
+    Startwert für das Newton-Verfahren.
+  \item Für algebraische Variablen ist jeder Wert nur ein Startwert: Vor
+    der Integration werden sie so bestimmt, dass alle algebraischen
+    Gleichungen erfüllt sind (konsistente Anfangswerte).
+  \item \code{"abstol"} setzt die absolute Toleranz dieser Variable
+    (Standard: \code{options.vartol}).
+\end{itemize}
+
+Die Analysen \code{op}, \code{dc} und \code{ac} rechnen immer mit dem
+Gleichgewicht aller Gleichungen; die vorgegebenen Anfangswerte gelten nur
+für \code{tran} und \code{pss}.
+
+\section{Vektoren}
+\label{sec:vektoren}
+
+Viele gleichartige Unbekannte, etwa die Stützstellen einer örtlich
+diskretisierten partiellen Differentialgleichung, werden als Vektor
+vereinbart; eine Schleife schreibt ihre Gleichungen:
+
+\begin{json}
+"parameters": { "n": 41, "a": 1.1e-4, "dx": "0.2/(n-1)" },
+"variables":  { "T[n]": 20 },
+"equations": [
+  "T[1] = 100",
+  { "for": "i", "from": 2, "to": "n-1",
+    "equation": "der(T[i]) = a * (T[i-1] - 2*T[i] + T[i+1]) / dx^2" },
+  "T[n] = T[n-1]"
+]
+\end{json}
+
+\begin{itemize}
+  \item \code{"T[n]"} legt die Unbekannten \code{T[1]} bis \code{T[n]} an.
+    Der Startwert ist eine Zahl für alle Elemente oder eine Liste mit einem
+    Wert je Element (\code{"init": [...]}, \code{"guess": [...]}).
+  \item Eine Schleife \code{{"for": "i", "from": .., "to": .., "equation": ".."}}
+    steht für eine Gleichung je Indexwert. Mit \code{"equations": [...]}
+    enthält sie mehrere Einträge, die wieder Schleifen sein dürfen.
+  \item Der Index ist ein konstanter ganzzahliger Ausdruck aus Zahlen,
+    Parametern und Schleifenindizes. Ein Index, der von einer Unbekannten
+    abhängt, ist nicht möglich.
+  \item \code{sum(i, von, bis, ausdruck)} summiert über einen Index.
+  \item In den Ausgängen steht \code{T[*]} für alle Elemente.
+\end{itemize}
+
+Die Schleifen werden beim Einlesen ausgerollt; für den Löser sind es
+einzelne Gleichungen. Matrix- und Vektoroperationen gibt es nicht; sie
+lassen sich mit \code{sum} schreiben. Beispiel:
+\datei{examples/heat_rod.json}.
+
+\section{Indexreduktion}
+
+Zwangsbedingungen der Mechanik und vorgegebene Bahnen führen auf Systeme,
+die ein Integrationsverfahren nicht direkt lösen kann. Das Pendel in
+kartesischen Koordinaten ist das Standardbeispiel:
+
+\begin{json}
+"equations": [
+  "der(x) = u", "der(y) = v",
+  "der(u) = -2*x*lam", "der(v) = -g - 2*y*lam",
+  "0 = x^2 + y^2 - L^2"          // Index 3
+]
+\end{json}
+
+Beim Einlesen bestimmt eine Strukturanalyse (Algorithmus von Pantelides),
+wie oft jede Gleichung abgeleitet werden müsste. Ist der Index größer als
+2, wird das System selbsttätig umgeformt:
+
+\begin{itemize}
+  \item Jede algebraische Bedingung $g = 0$, die $k$-mal abzuleiten wäre,
+    erhält ihre Zeitableitungen bis zur Ordnung $k-1$ als zusätzliche
+    Gleichungen. Sie werden symbolisch gebildet, wobei für \code{der(x)}
+    die rechten Seiten der Gleichungen \code{c*der(x) = ...} eingesetzt
+    werden.
+  \item Je zusätzlicher Gleichung kommt ein Multiplikator
+    \code{index_mu1}, \code{index_mu2}, \dots{} als Unbekannte hinzu. Er
+    wirkt als $\dot x = \dots - \partial g/\partial x \cdot \mu$
+    (Stabilisierung nach Gear, Gupta und Leimkuhler) und ist für die exakte
+    Lösung null.
+  \item Das Ergebnis hat Index 2. Bedingung und Ableitungen gelten mit der
+    Genauigkeit der Newton-Iteration; es gibt keine Drift.
+\end{itemize}
+
+Das Programm meldet, was es hinzugefügt hat:
+
+\begin{shell}
+note: index 3 reduced to 2 by adding time derivatives of constraints:
+  "0 = x^2 + y^2 - L^2":
+    added  0 = 2*x*u + 2*y*v   (multiplier index_mu1 in the equations of x, y)
+\end{shell}
+
+\code{"options": {"index_reduction": false}} schaltet die Umformung ab.
+Nicht reduzierbar sind Bedingungen, deren Ableitung sich nicht als Ausdruck
+bilden lässt: wenn sie Knotenspannungen oder Ströme der Schaltung, Tabellen
+oder Totzeiten enthalten, oder wenn für eine ihrer Unbekannten keine
+Gleichung der Form \code{c*der(x) = ...} existiert. Dann bleibt das System,
+wie es ist, und eine Warnung nennt die Ursache. Beispiele:
+\datei{examples/pendulum.json} (von Hand auf Index 2 gebracht) und
+\datei{examples/pendulum_index3.json} (automatisch).
+
+\section{Ereignisse}
+\label{sec:ereignisse}
+
+\subsection*{Automatisch}
+
+Jeder Vergleich (\code{<}, \code{<=}, \code{>}, \code{>=}) und jedes
+\code{abs}, \code{sign}, \code{min}, \code{max} in Gleichungen und
+Verhaltensquellen wird überwacht. Kippt eines davon während eines
+Zeitschritts, sucht der Löser den Zeitpunkt, endet dort, schaltet um und
+startet die Integration neu. Bis dahin rechnet er mit dem alten Zweig
+weiter, sodass z.\,B. \code{der(z) = if(t < 1, 1, -2)} exakt bei $t = 1$
+knickt. Dafür ist nichts weiter anzugeben. Schalter und ideale Dioden
+schalten ebenso.
+
+\subsection*{Mit Aktion}
+
+Ein Eintrag unter \code{events} weist Zuständen neue Werte zu. Er hat
+genau einen Auslöser:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Auslöser & feuert \\
+  \midrule
+  \code{"when": "h < 0"} & in dem Moment, in dem die Bedingung wahr \emph{wird} \\
+  \code{"every": "1m"} & periodisch; erstmals nach einer Periode oder zur Zeit \code{"start"} (z.\,B. \code{"start": 0}) \\
+  \code{"at": 2.5} oder \code{"at": [1, 2.5]} & zu den angegebenen Zeiten \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{json}
+"variables": { "h": 1, "v": 0 },
+"equations": [ "der(h) = v", "der(v) = -g" ],
+"events": [
+  { "when": "h < 0", "set": { "v": "-0.8*v" } }      // springender Ball
+]
+\end{json}
+
+\begin{itemize}
+  \item Die rechten Seiten von \code{set} werden mit den Werten vor dem
+    Ereignis berechnet, erst dann wird zugewiesen. Löst eine Zuweisung
+    weitere Bedingungen aus, feuern diese im selben Zeitpunkt.
+  \item Zuweisen lassen sich Zustände, diskrete Variablen sowie Größen der
+    Schaltung: \code{"v(c)"} für die Spannung eines Knotens mit
+    Kondensator, \code{"i(L1)"} für einen Spulenstrom. Algebraische Größen
+    ergeben sich nach dem Ereignis neu aus den Gleichungen; eine Zuweisung
+    an sie bleibt wirkungslos.
+  \item Zeitereignisse werden exakt getroffen. Mit \code{every} entsteht
+    ein abgetastetes System: Ein Regler liest zu festen Zeiten die
+    Schaltung aus und ändert seine diskreten Zustände, dazwischen läuft die
+    Strecke kontinuierlich (\datei{examples/digital_pi_control.json}).
+  \item Eine Bedingung, die schon beim Start wahr ist, löst nicht aus.
+\end{itemize}
+
+\subsection*{Diskrete Variablen}
+
+Diskrete Variablen ändern sich nur durch Zuweisungen und sind dazwischen
+konstant: Schaltzustände, Betriebsarten, Zähler. Sie brauchen keine
+Gleichung:
+
+\begin{json}
+"variables": { "T": 15, "heat": { "discrete": 1 } },
+"equations": [ "Cth*der(T) = P*heat - (T - Tout)/Rth" ],
+"events": [
+  { "when": "T > 22", "set": { "heat": 0 } },         // Zweipunktregler
+  { "when": "T < 20", "set": { "heat": 1 } }          // mit Hysterese
+]
+\end{json}
+
+In \code{op}, \code{dc} und \code{ac} behalten diskrete Variablen ihren
+Startwert.
+
+\subsection*{Grenzen}
+
+Ein Modell, das ohne Hysterese hin- und herschaltet
+(\code{der(x) = if(x < 1, 1, -1)} pendelt um $x = 1$) oder dessen
+Ereignisse sich häufen (der Ball springt unendlich oft in endlicher Zeit),
+bricht nach \code{max_events} Ereignissen mit einer Fehlermeldung ab.
+Solche Modelle brauchen eine Hysterese oder eine geglättete Kennlinie. Der
+Löser sucht Vorzeichenwechsel am Ende und an drei Stellen im Inneren jedes
+Zeitschritts; ein Hin- und Rückwechsel, der kürzer als ein Viertelschritt
+ist, kann unbemerkt bleiben. \code{tstep} begrenzt die Schrittweite.
+
+\section{Totzeiten}
+\label{sec:totzeit}
+
+\code{delay(x, td)} liefert den Wert, den der Ausdruck \code{x} vor der
+konstanten Zeit \code{td} hatte:
+
+\begin{json}
+"equations": [ "T * der(y) = K * delay(u, Td) - y" ]
+\end{json}
+
+\begin{itemize}
+  \item Vor dem Start gilt der Wert bei $t=0$ (das System war in Ruhe).
+  \item Im Arbeitspunkt und in der AC-Analyse ist \code{delay(x, td)}
+    gleich \code{x}.
+  \item Kein Zeitschritt ist länger als die kleinste Totzeit. Zwischen den
+    gespeicherten Zeitpunkten wird kubisch interpoliert, an Knicken linear;
+    Knicke und Sprünge setzen eine Totzeit später einen Haltepunkt.
+  \item \code{td} muss eine positive Konstante sein (Zahl oder Parameter).
+\end{itemize}
+
+\datei{examples/dead_time_control.json} zeigt einen Regelkreis mit
+Totzeit.
+
+\section{Kopplung mit der Schaltung}
+
+Gleichungen lesen die Schaltung über \code{v(...)} und \code{i(...)}. In die
+andere Richtung wirkt die Verhaltensquelle \code{B}, deren Strom, Spannung
+oder Ladung ein Ausdruck ist, der auch Variablen enthalten darf:
+
+\begin{json}
+"variables": { "T": 298.15, "Rntc": { "guess": 10 } },
+"equations": [
+  "Cth*der(T) = v(in,mid)^2/Rntc - (T - Tamb)/Rth",     // Wärmebilanz
+  "Rntc = R25*exp(B*(1/T - 1/T0))"                       // Kennlinie
+],
+"components": [
+  { "type": "B", "name": "NTC", "nodes": ["in", "mid"], "i": "v(in,mid)/Rntc" }
+]
+\end{json}
+
+Das vollständige Beispiel ist \datei{examples/ntc_inrush.json}: ein
+Heißleiter, der sich durch seinen eigenen Strom erwärmt und den
+Einschaltstrom begrenzt. In eine Teilschaltung verpackt, wird daraus ein
+wiederverwendbares Bauteil mit thermischem Gedächtnis.

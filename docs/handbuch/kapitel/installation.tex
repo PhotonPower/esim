@@ -1,0 +1,164 @@
+\chapter{Installation}
+\label{kap:installation}
+
+ESIM wird aus dem Quelltext gebaut; für Windows gibt es zusätzlich ein
+fertiges Paket aus der automatischen Übersetzung auf GitHub. Der Simulator
+\esim\ braucht nur einen C++17-Compiler und CMake, der Editor zusätzlich
+Qt~6.
+
+\section{Was gebraucht wird}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lLl@{}}
+  \toprule
+  Werkzeug & Zweck & nötig für \\
+  \midrule
+  CMake $\geq$ 3.18 & Build-System & alles \\
+  C++17-Compiler & Clang (macOS), MSVC (Windows), GCC (Linux) & alles \\
+  Eigen 3, nlohmann/json & Bibliotheken; fehlen sie, lädt CMake sie selbst herunter & alles \\
+  Qt $\geq$ 6.5 & Oberfläche des Editors & \editor \\
+  Python 3 & Testsuite, Werkzeuge, Python-Schnittstelle & optional \\
+  numpy, matplotlib & Ergebnisse als Arrays, Plotten mit \datei{plot.py} & optional \\
+  ngspice & drei Vergleichstests gegen ngspice & optional \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Ohne Qt baut CMake nur den Simulator und seine Tests; alles im Teil III
+dieses Handbuchs funktioniert dann trotzdem über die Kommandozeile.
+
+\section{macOS}
+
+Mit Homebrew sind alle Voraussetzungen schnell installiert:
+
+\begin{shell}
+brew install cmake qt eigen nlohmann-json
+\end{shell}
+
+Dann im Ordner des Quelltexts:
+
+\begin{shell}
+cmake -S . -B build
+cmake --build build --parallel
+ctest --test-dir build                 # Tests (optional)
+\end{shell}
+
+Der Editor liegt danach als Programmpaket in
+\datei{build/editor/esim-editor.app}:
+
+\begin{shell}
+open build/editor/esim-editor.app
+\end{shell}
+
+Ein eigenständiges Programmpaket, das man in den Ordner »Programme« ziehen
+kann (mit den Qt-Bibliotheken, \esim\ und den Beispielen im Paket), legt
+
+\begin{shell}
+cmake --install build --prefix dist
+\end{shell}
+
+in \datei{dist/esim-editor.app} an.
+
+\begin{hinweis}[Gatekeeper]
+  Das Programm ist nicht mit einer Apple-Entwickler-ID signiert. Ein selbst
+  gebautes Programm startet ohne Rückfrage. Wird das Paket auf einen
+  anderen Mac kopiert, verweigert macOS beim ersten Start unter Umständen das
+  Öffnen; dann im Finder mit Rechtsklick \pfad\ \menue{Öffnen} starten oder
+  unter \menue{Systemeinstellungen}\pfad\menue{Datenschutz \& Sicherheit}
+  einmal erlauben.
+\end{hinweis}
+
+\section{Windows 11}
+
+\subsection{Fertiges Paket}
+
+Bei jedem Hochladen auf GitHub baut GitHub Actions ein Windows-Paket. Es
+liegt im Repository unter \menue{Actions}, im jeweils neuesten Lauf unter
+\menue{Artifacts}, als \datei{esim-windows}. Alternativ mit dem
+GitHub-Kommandozeilenprogramm:
+
+\begin{shell}
+gh run list --limit 3                    # Nummer des neuesten Laufs
+gh run download <Nummer> -n esim-windows
+\end{shell}
+
+Das Paket entpacken und \datei{esim-editor.exe} starten. Qt muss dafür nicht
+installiert sein; die Qt-Bibliotheken, \datei{esim.exe} und die Beispiele
+liegen im selben Ordner. Ein Installationsprogramm gibt es nicht – der
+Ordner kann an eine beliebige Stelle kopiert werden.
+
+\begin{hinweis}[SmartScreen]
+  Auch unter Windows ist das Programm nicht signiert. Beim ersten Start kann
+  SmartScreen warnen; mit \menue{Weitere Informationen}\pfad\menue{Trotzdem
+  ausführen} lässt es sich starten.
+\end{hinweis}
+
+\subsection{Selbst bauen}
+
+Benötigt werden Visual Studio 2022 oder neuer (oder nur dessen Build Tools)
+mit der Arbeitslast »Desktopentwicklung mit C++«, CMake, Git, Qt~6 für MSVC
+und optional Python. Mit \code{winget} geht das so:
+
+\begin{shell}
+winget install --id Git.Git -e
+winget install --id Kitware.CMake -e
+winget install --id Python.Python.3.12 -e
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+python -m pip install aqtinstall
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -O C:\Qt
+\end{shell}
+
+Dann in einer neuen Eingabeaufforderung im Ordner des Quelltexts:
+
+\begin{shell}
+cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+cmake --install build --config Release --prefix dist
+\end{shell}
+
+\texttt{dist\textbackslash esim-editor.exe} läuft danach für sich allein.
+CMake wählt das neueste installierte Visual Studio von selbst; Qts
+Bibliotheken für MSVC 2022 passen auch zu neueren Versionen.
+
+\begin{achtung}[Visual Studio 2026]
+  Visual Studio 2026 wird erst von CMake 4.2 an erkannt. Mit einem älteren
+  CMake bricht die Konfiguration ab; dann ein neueres CMake installieren
+  oder das mit Visual Studio gelieferte verwenden
+  (\texttt{Common7\textbackslash\allowbreak IDE\textbackslash CommonExtensions\textbackslash Microsoft\textbackslash CMake\textbackslash CMake\textbackslash bin}).
+\end{achtung}
+
+Alle Programme arbeiten intern mit UTF-8; Dateien und Ordner mit Umlauten
+(etwa \texttt{C:\textbackslash\allowbreak Übung\textbackslash\allowbreak Schaltkreis~ä.json}) sind kein Problem.
+
+\section{Linux}
+
+Der Simulator und der Editor bauen auch mit GCC unter Linux; ein Paket wird
+dafür nicht gepflegt. Mit den Paketen der Distribution (z.\,B. unter Debian
+und Ubuntu \code{cmake g++ qt6-base-dev libeigen3-dev nlohmann-json3-dev})
+genügen dieselben Befehle wie unter macOS.
+
+\section{Optionale Teile}
+
+\paragraph{Python.}
+Die Python-Schnittstelle (Kapitel~\ref{kap:python}) braucht nur die
+Standardbibliothek. Mit \code{pip install numpy matplotlib} liefert sie
+numpy-Arrays, und \datei{tools/plot.py} kann zeichnen.
+
+\paragraph{ngspice.}
+Ist ngspice installiert (unter Windows \datei{ngspice_con.exe} im Suchpfad),
+legt CMake drei zusätzliche Tests an, die esims Modelle (BSIM3, MOS Level~3,
+SPICE-Teilschaltungen) gegen ngspice vergleichen. Für die Benutzung ist
+ngspice nicht nötig.
+
+\section{Prüfen, ob alles läuft}
+
+\begin{shell}
+./build/esim examples/rc_lowpass.json -o results
+\end{shell}
+
+Auf der Konsole erscheinen der Arbeitspunkt und eine Zeile je Analyse; die
+Kurven liegen danach in \datei{results/rc_lowpass.ac.csv} und
+\datei{results/rc_lowpass.tran.csv}. Im Editor öffnet
+\menue{Datei}\pfad\menue{Beispiele} dieselbe Datei; \tasten{Strg}{R} rechnet
+sie.

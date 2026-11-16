@@ -1,0 +1,283 @@
+\chapter{Halbleitermodelle}
+\label{kap:format-modelle}
+
+\section{Modelle angeben}
+
+Modellparameter stehen unter \code{models} und werden über \code{"model"}
+am Bauteil benutzt. Ein Modell kann ein JSON-Objekt sein:
+
+\begin{json}
+"models": {
+  "DGEN": { "type": "diode", "is": 2.5e-9, "n": 1.75, "cj0": "4p", "tt": "20n" },
+  "nch":  { "type": "nmos", "vto": 0.7, "kp": "120u", "lambda": 0.05, "tox": "8n" }
+}
+\end{json}
+
+oder eine SPICE-Zeile, wie sie Hersteller veröffentlichen; lange Karten als
+Liste ihrer Zeilen:
+
+\begin{json}
+"models": {
+  "QGEN": ".model QGEN NPN(Is=1e-14 Bf=200 Br=2 Vaf=100 Ikf=0.3 Rb=10 Rc=1 Cje=10p Cjc=5p Tf=0.5n Tr=50n)",
+  "n18":  [".model n18 NMOS (LEVEL=49 TOX=4.1E-9 VTH0=0.369",
+           "+ K1=0.579 U0=293 VSAT=1.68E5 ...)"]
+}
+\end{json}
+
+In SPICE-Zeilen gelten die SPICE-Regeln: Groß- und Kleinschreibung egal,
+\code{m} und \code{M} sind Milli, \code{meg} ist Mega. Unterstützt werden die
+Typen \code{D}, \code{NPN}, \code{PNP}, \code{NMOS}, \code{PMOS},
+\code{NJF}, \code{PJF}. Parameter, die esim kennt, aber nicht auswertet
+(etwa Angaben für Gehäuse oder Rauschmodelle anderer Simulatoren), werden
+einmal aufgelistet und übergangen. Ausdrücke in geschweiften Klammern
+(\code{KF={PWR(FLW,0.5)/1E11}}) werden mit den Parametern ausgewertet.
+
+Die Namen und Standardwerte der Parameter folgen SPICE. Die folgenden
+Tabellen nennen alle Parameter mit ihren Standardwerten.
+
+\section{Diode}
+
+Shockley-Gleichung mit Bahnwiderstand, Sperrschicht- und
+Diffusionskapazität und Durchbruch für Z-Dioden.
+
+\begin{longtable}{@{}lP{8.2cm}ll@{}}
+  \toprule
+  Parameter & Bedeutung & Einheit & Standard \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{is} & Sättigungsstrom & A & $10^{-14}$ \\
+  \code{n} & Emissionskoeffizient & – & 1 \\
+  \code{rs} & Bahnwiderstand & \ohm & 0 \\
+  \code{cj0} & Sperrschichtkapazität bei 0\,V & F & 0 \\
+  \code{vj} & Diffusionsspannung & V & 1 \\
+  \code{m} & Gradationsexponent & – & 0,5 \\
+  \code{fc} & Grenze der Sperrschichtformel in Flussrichtung & – & 0,5 \\
+  \code{tt} & Transitzeit (Diffusionsladung) & s & 0 \\
+  \code{bv} & Durchbruchspannung & V & $\infty$ \\
+  \code{ibv} & Strom bei der Durchbruchspannung & A & $10^{-3}$ \\
+  \code{eg} & Bandabstand (Temperaturgang von \code{is}) & eV & 1,11 \\
+  \code{xti} & Temperaturexponent von \code{is} & – & 3 \\
+  \code{kf}, \code{af} & 1/f-Rauschen: Koeffizient, Exponent & – & 0, 1 \\
+\end{longtable}
+
+\section{Bipolartransistor}
+
+Gummel-Poon-Modell mit Early-Effekt, Hochstromabfall der Verstärkung,
+Leckströmen, Bahnwiderständen sowie Sperrschicht- und Diffusionsladungen.
+Nicht enthalten sind die Substratdiode, der stromabhängige Basiswiderstand
+und die Arbeitspunktabhängigkeit der Transitzeit (\code{xtf}, \code{vtf},
+\code{itf}).
+
+\begin{longtable}{@{}lP{8.2cm}ll@{}}
+  \toprule
+  Parameter & Bedeutung & Einheit & Standard \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{is} & Transportsättigungsstrom & A & $10^{-16}$ \\
+  \code{bf}, \code{br} & Stromverstärkung vorwärts, rückwärts & – & 100, 1 \\
+  \code{nf}, \code{nr} & Emissionskoeffizienten & – & 1, 1 \\
+  \code{vaf}, \code{var} & Early-Spannung vorwärts, rückwärts & V & $\infty$ \\
+  \code{ikf}, \code{ikr} & Kniestrom der Hochstrominjektion & A & $\infty$ \\
+  \code{ise}, \code{ne} & Leckstrom Basis–Emitter: Sättigungsstrom, Emissionskoeffizient & A, – & 0, 1,5 \\
+  \code{isc}, \code{nc} & Leckstrom Basis–Kollektor & A, – & 0, 2 \\
+  \code{rb}, \code{rc}, \code{re} & Bahnwiderstände & \ohm & 0 \\
+  \code{cje}, \code{vje}, \code{mje} & Sperrschicht Basis–Emitter: Kapazität, Potential, Exponent & F, V, – & 0, 0,75, 0,33 \\
+  \code{cjc}, \code{vjc}, \code{mjc} & Sperrschicht Basis–Kollektor & F, V, – & 0, 0,75, 0,33 \\
+  \code{tf}, \code{tr} & Transitzeit vorwärts, rückwärts & s & 0 \\
+  \code{fc} & Grenze der Sperrschichtformel & – & 0,5 \\
+  \code{eg}, \code{xti} & Bandabstand, Temperaturexponent von \code{is} & eV, – & 1,11, 3 \\
+  \code{xtb} & Temperaturexponent der Stromverstärkung & – & 0 \\
+  \code{kf}, \code{af} & 1/f-Rauschen des Basisstroms & – & 0, 1 \\
+\end{longtable}
+
+\section{Sperrschicht-FET}
+
+Shichman-Hodges-Modell (quadratische Kennlinie, Kanallängenmodulation) mit
+Sperrschichten am Gate und deren Kapazitäten. \code{vto} ist für beide
+Polaritäten negativ angegeben.
+
+\begin{longtable}{@{}lP{8.2cm}ll@{}}
+  \toprule
+  Parameter & Bedeutung & Einheit & Standard \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{vto} & Abschnürspannung & V & $-2$ \\
+  \code{beta} & Steilheitsparameter & A/V$^2$ & $10^{-4}$ \\
+  \code{lambda} & Kanallängenmodulation & 1/V & 0 \\
+  \code{is} & Sättigungsstrom der Gate-Dioden & A & $10^{-14}$ \\
+  \code{cgs}, \code{cgd} & Gate-Kapazitäten bei 0\,V & F & 0 \\
+  \code{pb} & Potential der Gate-Sperrschicht & V & 1 \\
+  \code{fc} & Grenze der Sperrschichtformel & – & 0,5 \\
+  \code{kf}, \code{af} & 1/f-Rauschen & – & 0, 1 \\
+\end{longtable}
+
+\section{MOSFET}
+
+Für MOSFETs gibt es vier Modelle, gewählt mit \code{level}:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  \code{level} & Modell \\
+  \midrule
+  1 (Standard) & Shichman-Hodges: einfach, robust, für Übungen und digitale Grundschaltungen \\
+  \code{"ekv"} & ladungsbasiert, glatt von schwacher bis starker Inversion \\
+  3 & SPICE MOS3: halbempirisches Kurzkanalmodell, verbreitet bei Leistungs-MOSFETs \\
+  \code{"bsim3"} (SPICE 8, 49, 53) & BSIM3v3.3: Kurzkanalmodell der Halbleiterprozesse \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Level 1}
+
+Shichman-Hodges mit Substrateffekt, Kanallängenmodulation, Bulk-Dioden,
+Überlapp- und Sperrschichtkapazitäten. Mit \code{tox} kommt die Ladung des
+Kanals hinzu: ladungserhaltend, in Sättigung 40\,:\,60 auf Drain und Source
+verteilt, Gate-Kapazität $\frac23 C_\text{ox}$ in Sättigung und
+$C_\text{ox}$ im Widerstandsbereich und unterhalb der Schwelle.
+
+\begin{longtable}{@{}lP{8.2cm}ll@{}}
+  \toprule
+  Parameter & Bedeutung & Einheit & Standard \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{vto} & Schwellspannung (negativ beim selbstsperrenden P-MOSFET) & V & 0 \\
+  \code{kp} & Steilheitsparameter $\mu C_\text{ox}$ & A/V$^2$ & $2\cdot10^{-5}$ \\
+  \code{gamma} & Substratsteuerfaktor & $\sqrt{\text{V}}$ & 0 \\
+  \code{phi} & Oberflächenpotential & V & 0,6 \\
+  \code{lambda} & Kanallängenmodulation & 1/V & 0 \\
+  \code{w}, \code{l} & Kanalweite und -länge (meist am Bauteil) & m & $10^{-4}$ \\
+  \code{tox} & Oxiddicke; 0: keine Kanalladung & m & 0 \\
+  \code{cgso}, \code{cgdo} & Überlappkapazität Gate–Source, Gate–Drain je Weite & F/m & 0 \\
+  \code{cgbo} & Überlappkapazität Gate–Bulk je Länge & F/m & 0 \\
+  \code{cbd}, \code{cbs} & Sperrschichtkapazitäten Bulk–Drain, Bulk–Source & F & 0 \\
+  \code{pb}, \code{mj}, \code{fc} & Potential, Exponent, Grenze der Bulk-Sperrschichten & V, –, – & 0,8, 0,5, 0,5 \\
+  \code{is} & Sättigungsstrom der Bulk-Dioden & A & $10^{-14}$ \\
+  \code{tcv} & Temperaturkoeffizient der Schwellspannung & V/K & 0 \\
+  \code{kf}, \code{af} & 1/f-Rauschen & – & 0, 1 \\
+\end{longtable}
+
+\subsection{EKV (\texttt{"level": "ekv"})}
+
+Ladungsbasiertes Modell nach Enz, Krummenacher und Vittoz. Ein einziger
+glatter Ausdruck beschreibt den Strom von schwacher bis starker Inversion:
+Unterhalb der Schwelle fällt er exponentiell ($n V_T \ln 10$ je Dekade, $n$
+aus \code{gamma}), weit darüber gilt das Quadratgesetz von Level~1. Dazu
+kommen Beweglichkeitsreduktion durch das Gate-Feld (\code{theta} in 1/V),
+Geschwindigkeitssättigung (\code{ucrit} in V/m, wirkt mit der Kanallänge)
+und Kanallängenmodulation (\code{lambda}). Das Modell ist symmetrisch in
+Drain und Source, alle Ableitungen sind stetig, und die Ladungen (mit
+\code{tox}) stammen aus demselben Ansatz.
+
+Es ersetzt kein BSIM: Kurzkanaleffekte wie DIBL oder Gate-Ströme fehlen.
+Wo Level~1 unterhalb der Schwelle exakt 0 liefert (Leckströme, Schaltungen
+im Unterschwellbetrieb, Analogschalter nahe 0\,V), ist es die bessere Wahl;
+\datei{examples/mosfet_subthreshold.json} vergleicht beide.
+
+\subsection{Level 3}
+
+Das halbempirische Kurzkanalmodell von SPICE (MOS3), das viele
+Herstellermodelle von MOSFETs benutzen, etwa die von Transim erzeugten
+Modelle von Leistungs-MOSFETs. Zusätzlich zu den Parametern von Level~1:
+
+\begin{longtable}{@{}lP{8.2cm}ll@{}}
+  \toprule
+  Parameter & Bedeutung & Einheit & Standard \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{theta} & Beweglichkeitsreduktion durch das Gate-Feld & 1/V & 0 \\
+  \code{eta} & statische Rückwirkung (Absenkung der Schwelle durch den Drain) & – & 0 \\
+  \code{vmax} & maximale Driftgeschwindigkeit; 0: keine Sättigung & m/s & 0 \\
+  \code{nfs} & Dichte schneller Oberflächenzustände; $>0$: Strom unterhalb der Schwelle & 1/cm$^2$ & 0 \\
+  \code{kappa} & Sättigungsfeldfaktor (Kanallängenmodulation, mit \code{nsub}) & – & 0,2 \\
+  \code{xj} & Tiefe der Übergänge (Kurzkanaleffekt, mit \code{nsub}) & m & 0 \\
+  \code{ld} & seitliche Diffusion: wirksame Länge $l - 2\,\mathit{ld}$ & m & 0 \\
+  \code{delta} & Weiteneffekt auf die Schwelle & – & 0 \\
+  \code{u0} & Oberflächenbeweglichkeit & cm$^2$/Vs & 600 \\
+  \code{nsub} & Substratdotierung; 0: nicht angegeben & 1/cm$^3$ & 0 \\
+  \code{nss} & Dichte der Oberflächenzustände (Schwelle aus \code{nsub}) & 1/cm$^2$ & 0 \\
+  \code{tpg} & Art des Gate-Materials (Schwelle aus \code{nsub}) & – & 1 \\
+\end{longtable}
+
+Ohne \code{kp} folgt es aus \code{u0} und \code{tox}; ohne \code{tox} gilt
+$10^{-7}$\,m; aus \code{nsub} folgen fehlende \code{gamma}, \code{phi} und
+\code{vto}. Der Temperaturgang ist der von ngspice. Der Drainstrom stimmt
+mit ngspice (MOS3) auf besser als $10^{-9}$ überein. Die Gate-Ladung ist
+die ladungserhaltende von Level~1 mit der Schwellspannung von Level~3
+(ngspice rechnet hier mit Kapazitäten nach Meyer), was Schaltflanken leicht
+verändert.
+
+\subsection{BSIM3 (\texttt{"level": "bsim3"})}
+
+Der Drainstrom nach BSIM3v3.3, dem Kurzkanalmodell, für das
+Halbleiterhersteller Parametersätze veröffentlichen; in SPICE-Karten als
+\code{LEVEL=8}, \code{49} oder \code{53}. Umgesetzt sind:
+
+\begin{itemize}
+  \item Schwellspannung mit Kurz- und Schmalkanaleffekten und DIBL,
+    Unterschwellstrom,
+  \item die drei Beweglichkeitsmodelle, Geschwindigkeitssättigung,
+    Bahnwiderstände,
+  \item Kanallängenmodulation, DIBL und SCBE im Ausgangsleitwert,
+    Poly-Verarmung, Substratstrom,
+  \item Temperaturabhängigkeit und die Größenabhängigkeit aller Parameter
+    über ihre L-, W- und P-Varianten,
+  \item die Kapazitätsmodelle \code{capmod} 0 bis 3 (Standard 3): 0
+    stückweise mit eigener Flachbandspannung \code{vfbcv}, 1 und 2 mit
+    \code{vfbzb} aus der Schwellspannung (2 mit glatten Übergängen), 3 das
+    Charge-Thickness-Modell (\code{acde}, \code{moin}),
+  \item die Aufteilung der Kanalladung mit \code{xpart} (0: 40/60, 0,5:
+    50/50, 1: 0/100, negativ: keine Kanalladung), dazu \code{noff},
+    \code{voffcv}, \code{clc}, \code{cle}, \code{dlc}, \code{dwc} mit
+    \code{llc} \dots{} \code{wwlc} und die spannungsabhängigen
+    Überlappkapazitäten \code{cgsl}, \code{cgdl}, \code{ckappa},
+  \item Sperrschichtkapazitäten (\code{cj}, \code{cjsw}, \code{cjswg}) mit
+    den Instanzparametern \code{ad}, \code{as}, \code{pd}, \code{ps}, sowie
+    \code{w}, \code{l} und der Zahl paralleler Transistoren \code{m}.
+\end{itemize}
+
+Es gelten die Gleichungen ab BSIM3v3.2: \code{capmod} 1 und 2 nehmen
+\code{vfbzb}, auch wenn die Karte \code{VERSION=3.1} angibt. Es fehlen die
+Rauschmodelle von BSIM3 (es gelten die Formeln von Level~1),
+nicht-quasistatische Effekte (\code{nqsmod}, \code{elm}) und die Auswahl
+zwischen mehreren Karten nach \code{lmin}/\code{lmax}. Parameter, die
+deshalb ohne Wirkung bleiben, werden still akzeptiert; unbekannte werden
+gemeldet.
+
+Geprüft sind Drainstrom und Ladungen gegen eine getrennt geschriebene
+Umsetzung derselben Gleichungen in Python (16 bzw. 25 Parametersätze mit je
+über 600 Arbeitspunkten, Übereinstimmung auf $5\cdot10^{-9}$ bzw.
+$10^{-8}$) und gegen BSIM3v3.3 in ngspice (Übereinstimmung auf
+$10^{-9}$). Ein Beispiel ist \datei{examples/ring_oscillator_bsim3.json}.
+
+\section{Temperatur}
+\label{sec:temperatur}
+
+\code{options.temp} ist die Temperatur der Schaltung, \code{options.tnom}
+(Standard 27\,°C) die, für die die Modellparameter gelten. Skaliert werden
+die Sättigungsströme aller pn-Übergänge (\code{eg}, \code{xti}), die
+Stromverstärkung von Bipolartransistoren (\code{xtb}), die Beweglichkeit im
+MOSFET ($k_p \sim T^{-1{,}5}$) und auf Wunsch die Schwellspannung
+(\code{tcv} in V/K). Sperrschichtpotentiale und Kapazitäten bleiben bei
+Level~1 unverändert; Level~3 und BSIM3 haben ihren eigenen, vollständigeren
+Temperaturgang.
+
+Eine Analyse bei mehreren Temperaturen ist ein Parameter-Sweep über einen
+Parameter, der in \code{options.temp} steht:
+
+\begin{json}
+"parameters": { "T": 27 },
+"options": { "temp": "T" },
+"analyses": [ { "type": "dc", "source": "V1", "start": 0, "stop": 0.8, "step": 0.01,
+                "param_sweep": { "param": "T", "values": [-40, 27, 125] } } ]
+\end{json}

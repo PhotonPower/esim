@@ -1,0 +1,347 @@
+\chapter{Analysen}
+\label{kap:format-analysen}
+
+\section{Übersicht}
+
+Die Liste \code{analyses} nennt die Analysen; sie werden in dieser
+Reihenfolge gerechnet.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lP{5.6cm}L@{}}
+  \toprule
+  \code{type} & Parameter & Ergebnis \\
+  \midrule
+  \code{op} & – & Arbeitspunkt (Konsole) \\
+  \code{dc} & \code{source}, \code{start}, \code{stop}, \code{step} & Sweep einer V- oder I-Quelle \\
+  \code{ac} & \code{sweep}, \code{points}, \code{fstart}, \code{fstop} & Betrag und Phase je Ausgang \\
+  \code{tran} & \code{tstop}, optional \code{tstep}, \code{method}, \code{uic}, \code{output_step}, \dots & Zeitverlauf \\
+  \code{noise} & \code{output}, \code{input}, Frequenzen wie \code{ac} & Rauschdichten \\
+  \code{pss} & \code{period}, optional \code{periods}, \code{tstab}, \code{tol} & eingeschwungene Periode \\
+  \code{sens} & \code{analysis}, optional \code{parameters}, \code{delta} & Empfindlichkeiten \\
+  \code{fit} & \code{analysis}, \code{output}, \code{data}, \code{parameters} & angepasste Parameter \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Für jede Analyse gilt außerdem:
+
+\begin{itemize}
+  \item \code{"name"} gibt ihr einen eigenen Namen (für die Ergebnisdatei
+    und für Python); ohne Namen heißt sie wie ihr Typ.
+  \item \code{"outputs"} ersetzt für diese Analyse die globale Liste der
+    Ausgänge.
+  \item \code{"measure"} berechnet Kennwerte aus den Kurven
+    (Abschnitt~\ref{sec:messgroessen}).
+  \item \code{"param_sweep"} und \code{"monte_carlo"} wiederholen sie
+    (Kapitel~\ref{kap:format-studien}).
+  \item \code{"save": false} unterdrückt die Datei mit den Kurven, wenn nur
+    Messgrößen interessieren.
+\end{itemize}
+
+\section{Arbeitspunkt (op)}
+
+\begin{json}
+{ "type": "op" }
+\end{json}
+
+Der Arbeitspunkt ist die stationäre Lösung: Kondensatoren sind offen,
+Spulen kurzgeschlossen, Quellen stehen auf ihrem \code{dc}-Wert,
+Zeitableitungen eigener Gleichungen sind null. Die Werte der Ausgänge
+erscheinen auf der Konsole. Konvergiert das Newton-Verfahren nicht direkt,
+versucht esim nacheinander eine Pseudo-Transiente, gmin-Stepping und
+Quellen-Stepping (Kapitel~\ref{kap:numerik}); die Konsole nennt, welches
+Verfahren zum Ziel geführt hat. Bei bistabilen Schaltungen wählt
+\code{"nodeset"} den gewünschten Zustand (Abschnitt~\ref{sec:optionen}).
+
+\section{DC-Sweep (dc)}
+
+\begin{json}
+{ "type": "dc", "source": "Vin", "start": 0, "stop": 5, "step": 0.01 }
+\end{json}
+
+Der Wert der Quelle \code{source} (Spannungs- oder Stromquelle, auch in
+einer Teilschaltung: \code{"X1.V1"}) läuft von \code{start} bis \code{stop}
+in Schritten von \code{step}; für jeden Wert wird der Arbeitspunkt
+bestimmt, ausgehend vom vorigen. Die erste Spalte der Ergebnisdatei ist der
+Wert der Quelle. Übertragungskennlinien, Ausgangskennlinienfelder (mit einem
+Parameter-Sweep außen herum) und Kennlinien von Bauteilen entstehen so.
+
+\section{Frequenzgang (ac)}
+
+\begin{json}
+{ "type": "ac", "sweep": "dec", "points": 20, "fstart": 10, "fstop": "10meg" }
+\end{json}
+
+Die Kleinsignalanalyse linearisiert die Schaltung im Arbeitspunkt und
+rechnet für jede Frequenz das komplexe lineare Gleichungssystem. Angeregt
+wird sie von den Quellen mit \code{ac} (und \code{acphase}).
+
+\begin{itemize}
+  \item \code{sweep}: \code{"dec"} (Standard; \code{points} je Dekade),
+    \code{"oct"} (je Oktave) oder \code{"lin"} (\code{points} insgesamt).
+    \code{points} ist ohne Angabe 10.
+  \item Die Ergebnisdatei enthält je Ausgang \code{mag(...)} (Betrag) und
+    \code{phase(...)} (Grad). Der Editor zeigt den Betrag in dB.
+  \item Nur einfache Ausgänge sind erlaubt: \code{v(knoten)},
+    \code{v(a,b)}, \code{i(bauteil)}, Variablen.
+  \item Eigene Gleichungen und Verhaltensquellen sind in der
+    Linearisierung enthalten. Die Laufzeit von Leitungen wirkt exakt als
+    Phasendrehung; \code{delay(x, td)} in Ausdrücken ist in der
+    AC-Analyse dagegen gleich \code{x}.
+\end{itemize}
+
+\section{Zeitverlauf (tran)}
+\label{sec:tran}
+
+\begin{json}
+{ "type": "tran", "tstop": "5m", "tstep": "10u" }
+\end{json}
+
+\begin{longtable}{@{}lP{10.6cm}@{}}
+  \toprule
+  Schlüssel & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{tstop} & Endzeit. \\
+  \code{tstep} & Gewünschte Auflösung: Kein Schritt wird länger (Standard \code{tstop/50}). \\
+  \code{hmax} & Größte Schrittweite (wie \code{tstep}, nur ohne Bezug zur Ausgabe). \\
+  \code{hinit}, \code{hmin} & Erste und kleinste Schrittweite. \\
+  \code{method} & Integrationsverfahren: \code{"bdf"} (Standard), \code{"gear2"}, \code{"trap"}, \code{"be"}. \\
+  \code{max_order} & Höchste Ordnung von \code{"bdf"} (1 bis 5, Standard 5). \\
+  \code{uic} & \code{true}: ohne Arbeitspunkt von den Anfangsbedingungen starten. \\
+  \code{output_step} & Ausgabe auf dem festen Raster 0, $\Delta t$, $2\Delta t$, \dots \\
+  \code{max_events} & Höchstzahl von Ereignissen (Standard 100\,000). \\
+  \code{fourier} & Fourier-Analyse am Ende (Abschnitt~\ref{sec:fourier}). \\
+\end{longtable}
+
+\paragraph{Start.}
+Die Schaltung beginnt in ihrem Arbeitspunkt (mit den Werten der Quellen bei
+$t=0$), Zustände eigener Gleichungen bei ihren Anfangswerten
+(Abschnitt~\ref{sec:anfangswerte}). Mit \code{"uic": true} wird die
+Anfangslösung übersprungen: Es gelten \code{ic} an Kondensatoren und
+Spulen, \code{"ic": {"knoten": spannung}} auf oberster Ebene und die
+Startwerte der Variablen. Knoten, die Spannungsquellen von Masse aus
+festlegen (Versorgungen, auch über Strommesser hinweg), starten auf deren
+Spannung; alles andere bei 0.
+
+\paragraph{Schrittweite.}
+Die Schrittweite wird automatisch aus dem geschätzten Fehler gewählt
+(Abschnitt~\ref{sec:genauigkeit}). Ecken der Quellen (Pulsflanken,
+PWL-Stützstellen), Ereignisse und Laufzeiten von Leitungen und Totzeiten
+werden exakt getroffen. Sinusquellen begrenzen den Schritt auf ein
+Zwanzigstel ihrer Periode.
+
+\paragraph{Verfahren.}
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[\code{bdf} (Standard)]
+    BDF mit variabler Ordnung 1 bis 5. Nach jedem Schritt wird die
+    Ordnung gewählt, die den größten nächsten Schritt erlaubt. Bei glatten
+    Lösungen und engen Toleranzen braucht es ein Vielfaches weniger
+    Schritte als ein Verfahren fester Ordnung.
+  \item[{\code{gear2}}]
+    BDF fester Ordnung 2. Robust, klingelt nicht, dämpft Schwingungen
+    leicht.
+  \item[{\code{trap}}]
+    Trapezregel. Keine numerische Dämpfung – die beste Wahl für schwach
+    gedämpfte Schwingkreise über viele Perioden. Dafür können Ströme von
+    Spannungsquellen von Schritt zu Schritt leicht alternieren.
+  \item[{\code{be}}]
+    Rückwärts-Euler: erste Ordnung, sehr robust, stark dämpfend.
+\end{description}
+
+\paragraph{Ausgabe.}
+Ohne \code{output_step} wird jeder Zeitpunkt des Lösers ausgegeben; die
+Abstände sind dann ungleich. Mit \code{output_step} wird auf ein festes
+Raster interpoliert, was für die Weiterverarbeitung (FFT, Vergleich mit
+Messungen) praktisch ist; die Schrittweite des Lösers bleibt dabei frei.
+Am Zeitpunkt eines Ereignisses steht der Zustand \emph{vor} der Zuweisung,
+im Punkt unmittelbar danach der neue.
+
+\section{Fourier-Analyse}
+\label{sec:fourier}
+
+\begin{json}
+{ "type": "tran", "tstop": "5m", "tstep": "10u",
+  "fourier": { "freq": "1k", "harmonics": 9, "outputs": ["v(out)"] } }
+\end{json}
+
+Der Block \code{fourier} einer Transientenanalyse berechnet das Spektrum
+der letzten ganzen Periode(n) zur Grundfrequenz \code{freq}. Das Ergebnis
+steht in \datei{<Name>.tran.fourier.csv} (Betrag und Phase je Harmonischer,
+Zeile 0 ist der Mittelwert); Grundschwingung und Klirrfaktor erscheinen auf
+der Konsole. \code{periods} (Standard 1) wählt die Zahl der ausgewerteten
+Perioden, \code{from} den frühesten Zeitpunkt. Die Genauigkeit hängt von der
+Auflösung des Zeitverlaufs ab: Für kleine Klirrfaktoren \code{tstep} und
+\code{reltol} klein wählen.
+
+\section{Rauschen (noise)}
+
+\begin{json}
+{ "type": "noise", "output": "v(out)", "input": "Vin",
+  "sweep": "dec", "points": 20, "fstart": 10, "fstop": "100k" }
+\end{json}
+
+Berechnet im Arbeitspunkt die spektrale Rauschdichte am Ausgang
+(\code{onoise}, bei einer Spannung in V/$\sqrt{\text{Hz}}$) und, wenn eine
+Quelle als \code{input} genannt ist, die auf sie bezogene Dichte
+(\code{inoise}) samt Verstärkung. Auf der Konsole stehen das über das Band
+integrierte Rauschen und die größten Beiträge. \code{output} ist
+\code{v(knoten)}, \code{v(a,b)} oder \code{i(bauteil)}.
+
+Rauschquellen sind das thermische Rauschen aller Widerstände (auch der
+Bahnwiderstände von Diode und Transistor), das Schrotrauschen von
+Dioden-, Kollektor- und Basisstrom, das thermische Kanalrauschen des MOSFET
+und 1/f-Rauschen über die Modellparameter \code{kf} und \code{af}.
+Schalter, ideale Dioden und Verhaltensquellen rauschen nicht; Widerstände
+mit \code{"noise": false} auch nicht.
+
+\section{Periodischer stationärer Zustand (pss)}
+
+Schaltnetzteile, Gleichrichter oder Verstärker mit großen
+Koppelkondensatoren brauchen oft Tausende Perioden, bis sie eingeschwungen
+sind. Die Analyse \code{pss} sucht den eingeschwungenen Zustand direkt:
+
+\begin{json}
+{ "type": "pss", "period": "10u",
+  "measure": { "vout": { "avg": "v(out)" }, "ripple": { "pp": "v(out)" } } }
+\end{json}
+
+\begin{itemize}
+  \item \code{period} ist die Periode der Anregung. Alle Quellen müssen sich
+    mit ihr wiederholen; das wird geprüft.
+  \item Gesucht wird ein Zustand, der nach einer Periode wieder erreicht
+    ist. Jede Iteration rechnet eine Periode und schätzt aus den letzten
+    Ergebnissen, wohin die langsamen Vorgänge laufen
+    (Anderson-Beschleunigung). Der Tiefsetzsteller aus
+    \datei{examples/buck_converter.json} braucht so 5 Perioden statt etwa
+    2000.
+  \item Ergebnis ist eine Periode im eingeschwungenen Zustand
+    (\code{"periods": n} für mehrere); Messgrößen, \code{fourier} und
+    \code{output_step} wirken wie bei \code{tran}.
+  \item \code{tol} (Standard $10^{-4}$) ist die relative Abweichung, mit
+    der sich der Zustand nach einer Periode wiederholen muss;
+    \code{max_iterations} begrenzt die Zahl der Iterationen. \code{tstab}
+    rechnet vor der Suche eine Zeit lang normal, was bei stark
+    nichtlinearem Anlauf hilft.
+\end{itemize}
+
+Die Periode muss bekannt sein. Für selbstschwingende Schaltungen
+(Oszillatoren) ist die Analyse nicht gedacht, ebenso wenig für Zustände, die
+erst nach einem Schaltvorgang mit Gedächtnis erreicht werden (Hysterese,
+diskrete Variablen). Totzeiten und Leitungen unterstützt sie nicht.
+
+\section{Empfindlichkeiten (sens)}
+
+Die Analyse \code{sens} beantwortet die Frage, welche Parameter ein
+Ergebnis bestimmen:
+
+\begin{json}
+{ "type": "sens", "parameters": ["R1", "R2", "C"],
+  "analysis": { "type": "ac", "sweep": "dec", "points": 100, "fstart": 1, "fstop": "100k",
+                "measure": { "fc": { "f3db": "v(out)" } } } }
+\end{json}
+
+\begin{itemize}
+  \item Jeder Parameter wird um $\pm$\code{delta} (relativ, Standard
+    $10^{-3}$) geändert, die eingebettete Analyse wiederholt und der
+    Differenzenquotient gebildet – zwei Rechnungen je Parameter.
+  \item Betrachtet werden die Messgrößen der Analyse, bei \code{op} ihre
+    Ausgänge.
+  \item Ohne \code{parameters} werden alle Einträge von \code{parameters}
+    variiert.
+  \item Ausgegeben wird die normierte Empfindlichkeit: um wie viel Prozent
+    sich das Ergebnis ändert, wenn der Parameter um ein Prozent wächst. Die
+    Tabelle steht in \datei{<Name>.sens.csv}; die Zusammenfassung
+    (\code{--summary}) enthält zusätzlich die absoluten Ableitungen.
+  \item Messgrößen aus abgetasteten Kurven (Grenzfrequenzen,
+    Durchgangszeiten) sind nur so genau wie das Raster; dann ein größeres
+    \code{delta} (z.\,B. 0,02) oder ein feineres Raster wählen.
+\end{itemize}
+
+\section{Anpassung an Messdaten (fit)}
+
+Die Analyse \code{fit} verändert Parameter so, dass eine simulierte Kurve
+möglichst gut auf Datenpunkten liegt (kleinste Quadrate nach
+Levenberg-Marquardt):
+
+\begin{json}
+{ "type": "fit",
+  "analysis": { "type": "dc", "source": "V1", "start": 0.25, "stop": 0.75, "step": 0.005 },
+  "output": "-i(V1)",
+  "data": { "file": "data/diode_iv.csv", "xcol": 0, "ycol": 1 },
+  "parameters": { "is0": { "min": 1e-14, "max": 1e-6, "log": true },
+                  "n0":  { "min": 1, "max": 3 } },
+  "residual": "log" }
+\end{json}
+
+\begin{itemize}
+  \item \code{analysis} ist eine \code{dc}-, \code{ac}- oder
+    \code{tran}-Analyse; \code{output} die Größe, die mit den Daten
+    verglichen wird (bei \code{ac} ihr Betrag). Die Daten müssen innerhalb
+    des simulierten Bereichs liegen; dazwischen wird linear interpoliert.
+  \item \code{data}: \code{x} und \code{y}, \code{points} oder eine Datei
+    wie bei den Tabellen (Abschnitt~\ref{sec:tabellen}).
+  \item \code{parameters}: je Parameter optional \code{start} (sonst der
+    Wert aus \code{parameters}), \code{min}, \code{max} und
+    \code{"log": true}, wenn sich der Wert über Größenordnungen bewegen
+    kann.
+  \item \code{residual}: \code{"lin"} (Differenz, Standard), \code{"rel"}
+    (relativ zu den Daten) oder \code{"log"} (Logarithmus des Verhältnisses,
+    für Daten über mehrere Dekaden).
+  \item Ergebnis: die angepassten Werte und der mittlere Restfehler auf der
+    Konsole, Daten und Modellkurve in \datei{<Name>.fit.csv}.
+\end{itemize}
+
+Das Verfahren findet ein lokales Minimum; die Startwerte sollten in der
+richtigen Größenordnung liegen. Parameter, die die Kurve im gemessenen
+Bereich kaum beeinflussen, bleiben unbestimmt.
+\datei{examples/fit_diode.json} passt so das Modell einer Diode an eine
+gemessene Kennlinie an.
+
+\section{Messgrößen}
+\label{sec:messgroessen}
+
+Mit \code{measure} berechnet eine Analyse Kennwerte aus ihren Kurven:
+
+\begin{json}
+{ "type": "tran", "tstop": "200m",
+  "measure": {
+    "vdc":    { "avg": "v(out)", "from": "160m" },
+    "ripple": { "pp":  "v(out)", "from": "160m" },
+    "t90":    { "cross": "v(out)", "level": 13.5 }
+  } }
+\end{json}
+
+Jede Messung besteht aus einer Funktion mit dem auszuwertenden Ausdruck und
+Optionen. $x$ ist dabei die Zeit, die Frequenz oder der Wert der gesweepten
+Quelle; in der AC-Analyse wird der Betrag ausgewertet.
+
+\begin{longtable}{@{}P{3.2cm}P{6.4cm}P{4.2cm}@{}}
+  \toprule
+  Funktion & Ergebnis & Optionen \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{min}, \code{max}, \code{pp} & Extremwerte, Spitze-Spitze & \\
+  \code{argmin}, \code{argmax} & $x$, bei dem der Extremwert liegt & \\
+  \code{avg}, \code{rms}, \code{integ} & Mittelwert, Effektivwert, Integral über $x$ & \\
+  \code{final} & letzter Wert & \\
+  \code{at} & Wert an der Stelle \code{x} & \code{x} \\
+  \code{cross} & $x$ des \code{n}-ten Durchgangs durch \code{level} & \code{level}, \code{n} (Standard 1), \code{edge}: \code{rise}, \code{fall}, \code{both} \\
+  \code{period}, \code{freq}, \code{duty} & Periode, Frequenz, Tastgrad aus den steigenden Durchgängen & \code{level} (Standard: Mitte zwischen Minimum und Maximum) \\
+  \code{rise}, \code{fall} & Anstiegs- bzw. Abfallzeit zwischen zwei Pegeln & \code{low}, \code{high} (Standard 10\,\% und 90\,\% des Hubs) \\
+  \code{f3db}, \code{f3db_low} & obere bzw. untere Frequenz, bei der die Kurve auf Maximum$/\sqrt2$ gefallen ist & \\
+  \code{thd}, \code{harmonic} & Klirrfaktor (bis zur 15. Harmonischen) bzw. Amplitude der \code{n}-ten Harmonischen & \code{fundamental}, \code{n} \\
+\end{longtable}
+
+\code{from} und \code{to} beschränken jede Messung auf einen Ausschnitt von
+$x$. Eine Messung ohne Ergebnis (z.\,B. kein Durchgang gefunden) liefert
+»not defined« bzw. \code{nan}. Ausgewertet werden die ausgegebenen Punkte,
+mit \code{output_step} also das Raster.
+
+Ohne Studie erscheinen die Messgrößen auf der Konsole und im Editor in der
+Wertetabelle. In Parameter-Sweeps und Monte-Carlo-Läufen entsteht daraus
+eine Tabelle mit einer Zeile je Lauf (Kapitel~\ref{kap:format-studien}).

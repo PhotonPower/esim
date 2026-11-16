@@ -1,0 +1,126 @@
+\chapter{Die Modellbibliothek}
+\label{kap:editor-bibliothek}
+
+Halbleiter brauchen Modellparameter, und fertige Bausteine wie
+Operationsverstärker kommen als Teilschaltungen. Die Modellbibliothek
+sammelt solche Modelle aus mehreren Quellen und kopiert ein gewähltes Modell
+in die Datei. Die Datei bleibt dadurch vollständig: Sie rechnet auch auf
+einem Rechner, der die Bibliothek nicht kennt.
+
+\section{Quellen}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Standardbibliothek]
+    Ins Programm eingebaut (\datei{editor/library/standard.lib}). Sie
+    enthält nur allgemeine Modelle mit Lehrbuchwerten, keine Bauteile
+    bestimmter Hersteller:
+
+    \begin{tabularx}{\linewidth}{@{}lL@{}}
+      \toprule
+      Name & Beschreibung \\
+      \midrule
+      \code{NPN_GEN}, \code{PNP_GEN} & Allgemeiner NPN- und PNP-Transistor \\
+      \code{D_GEN} & Allgemeine Siliziumdiode, etwa 0,6\,V bei 1\,mA \\
+      \code{Z5V1_GEN} & Z-Diode 5,1\,V, vereinfacht \\
+      \code{NMOS_L1}, \code{PMOS_L1} & MOSFETs Level 1 mit Gate-Ladung \\
+      \code{n18}, \code{p18} & MOSFETs BSIM3v3, typisch für 0,18\,µm \\
+      \bottomrule
+    \end{tabularx}
+  \item[Beispiele]
+    Die Modelle aus \code{"models"} der mitgelieferten Beispiele.
+  \item[Eigene Bibliotheken]
+    Dateien und ganze Ordner, die man selbst einbindet:
+    \begin{itemize}
+      \item SPICE-Dateien (\datei{.lib}, \datei{.mod}, \datei{.txt},
+        \datei{.cir}, \datei{.sp}) mit \code{.model}-Karten und
+        \code{.subckt}-Teilschaltungen, wie Hersteller sie veröffentlichen,
+      \item esim-Dateien (\datei{.json}) mit ihrem Abschnitt
+        \code{"models"}.
+    \end{itemize}
+\end{description}
+
+\section{Eigene Bibliotheken einbinden}
+
+Im Dialog \menue{Modellbibliothek} (\tasten{Strg}{L}) führt
+\menue{Bibliotheken \dots} zur Liste der eigenen Bibliotheken.
+\menue{Datei \dots} und \menue{Ordner \dots} fügen hinzu,
+\menue{Entfernen} nimmt einen Eintrag wieder heraus. Ein Ordner wird mit
+allen passenden Dateien gelesen. Die Liste bleibt über den Neustart
+erhalten.
+
+Beim Lesen einer SPICE-Datei gilt:
+\begin{itemize}
+  \item Fortsetzungszeilen (\code{+}) und Kommentare (\code{*}, \code{;})
+    werden verstanden.
+  \item Jede \code{.model}-Karte auf oberster Ebene ist ein Modell. Der
+    Kommentar direkt über der Karte ist ihre Beschreibung; dessen erste
+    Zeile erscheint in der Liste.
+  \item Jeder \code{.subckt}-Block ist eine Teilschaltung. Er nimmt die
+    \code{.model}- und \code{.subckt}-Definitionen der Datei mit, die er
+    benutzt. Reine Hilfs-Teilschaltungen, die nur von anderen benutzt
+    werden, erscheinen nicht in der Liste. Enthält eine Datei nur eine
+    Teilschaltung, ist der Kommentarkopf der Datei ihre Beschreibung.
+  \item Modelltypen, die esim nicht kennt, werden übergangen; was sich
+    nicht lesen lässt, nennt der Dialog unter der Liste.
+\end{itemize}
+
+\begin{hinweis}[Modelle von Herstellern]
+  Die Modelldateien der Halbleiterhersteller stehen meist auf deren
+  Produktseiten (»SPICE model«, »PSpice model«). esim versteht die
+  üblichen PSpice-Formen (Kapitel~\ref{kap:format-teilschaltungen}) und
+  ist mit Makromodellen von Operationsverstärkern und mit
+  Leistungs-MOSFETs (Level~3) erprobt. Weil die Lizenz solcher Dateien
+  die Weitergabe oft nicht erlaubt, gehören sie in die eigene Bibliothek,
+  nicht in ein öffentliches Projekt.
+\end{hinweis}
+
+\section{Der Dialog}
+
+\menue{Bearbeiten}\pfad\menue{Modellbibliothek \dots} (\tasten{Strg}{L})
+oder der Eintrag \menue{Modellbibliothek \dots} der Bauteilliste öffnet
+den Dialog:
+
+\begin{itemize}
+  \item \textbf{Suchfeld}: sucht in Name, Beschreibung und Quelle.
+  \item \textbf{Art}: Alle Arten, Dioden, Bipolartransistoren, MOSFETs,
+    JFETs oder Teilschaltungen (SPICE).
+  \item \textbf{Liste} mit Name, Art, Beschreibung und Quelle.
+  \item \textbf{Karte}: der vollständige Text des gewählten Modells mit
+    seiner Quelle.
+\end{itemize}
+
+Die Schaltflächen unten:
+\begin{description}[leftmargin=2em]
+  \item[Im Plan platzieren] kopiert das Modell in die Datei und hängt ein
+    passendes Bauteil (Diode, Transistor, Instanz der Teilschaltung) mit
+    diesem Modell an den Mauszeiger.
+  \item[In die Datei übernehmen] kopiert nur das Modell nach
+    \code{"models"} bzw. die Teilschaltung nach \code{"subcircuits"}.
+  \item[Verwenden] (wenn der Dialog aus dem Feld \code{model} der
+    Eigenschaften geöffnet wurde) setzt das Modell am gewählten Bauteil.
+\end{description}
+
+\section{Schneller: Suche in der Bauteilliste}
+
+Für den Alltag ist der Dialog oft nicht nötig. Die Suche der Bauteilliste
+findet auch die Modelle der Bibliothek: \taste{A}, »NPN\_GEN« tippen,
+Eingabetaste – der Transistor hängt mit seinem Modell am Mauszeiger. Ebenso
+schlägt das Feld \code{model} in den Eigenschaften beim Tippen passende
+Modelle vor.
+
+\section{Was in der Datei landet}
+
+Ein Modell wird als SPICE-Zeile in \code{"models"} kopiert, lange Karten als
+Liste ihrer Zeilen:
+
+\begin{json}
+"models": {
+  "NPN_GEN": ".model NPN_GEN NPN(IS=1e-14 BF=200 BR=2 CJE=10p CJC=5p TF=0.5n)",
+  "n18": [".model n18 NMOS (LEVEL=49 VERSION=3.1 TNOM=27 TOX=4.1E-9",
+          "+ XJ=1E-7 NCH=2.3549E17 VTH0=0.3694303 ...)"]
+}
+\end{json}
+
+Eine Teilschaltung landet als SPICE-Text unter \code{"subcircuits"},
+zusammen mit allem, was sie braucht. Ist ein Modell gleichen Namens schon in
+der Datei, wird es nicht noch einmal kopiert.

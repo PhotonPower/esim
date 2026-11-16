@@ -1,0 +1,163 @@
+\chapter{Python}
+\label{kap:python}
+
+\datei{python/esim.py} startet den Simulator aus Python und liefert die
+Ergebnisse als Datenstrukturen: numpy-Arrays, wenn numpy installiert ist,
+sonst Listen. Das Modul braucht nur die Standardbibliothek. Damit lassen
+sich Netzlisten erzeugen, Studien programmieren, Ergebnisse auswerten und
+mit Messdaten vergleichen.
+
+\section{Erste Schritte}
+
+\begin{python}
+import sys; sys.path.insert(0, "python")    # Ordner des Moduls
+import esim
+
+res = esim.run("docs/handbuch/tiefpass.json")
+print(res)                  # <Result 'RC-Tiefpass': 3 analyses>
+print(res.op.values)        # {'v(in)': 0.0, 'v(out)': 0.0}
+print(res.ac.measures["fc"])   # 159.18...
+
+t, v = res.tran["time"], res.tran["v(out)"]
+\end{python}
+
+\code{esim.run()} schreibt die Netzliste in einen temporären Ordner, startet
+\esim, liest Ergebnisdateien und Zusammenfassung und räumt wieder auf.
+
+\section{esim.run()}
+
+\begin{python}
+esim.run(netlist, parameters=None, analyses=None, outputs=None,
+         esim=None, keep=None, threads=None)
+\end{python}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[\code{netlist}] Pfad einer Eingabedatei oder die Netzliste als
+    \code{dict}.
+  \item[\code{parameters}] \texttt{\{name: wert\}}, überschreibt Einträge von
+    \code{"parameters"}.
+  \item[\code{analyses}] ersetzt die Analysen der Netzliste (Liste von
+    \code{dict}).
+  \item[\code{outputs}] ersetzt die Ausgänge.
+  \item[\code{esim}] Pfad des Programms. Sonst wird es gesucht: die
+    Umgebungsvariable \code{ESIM_BIN}, \datei{build/esim} neben dem Modul
+    (auch \texttt{build\textbackslash Release\textbackslash esim.exe}), der
+    Suchpfad.
+  \item[\code{keep}] Ordner, in dem die Ergebnisdateien bleiben sollen;
+    ohne Angabe ein temporärer, der wieder gelöscht wird.
+  \item[\code{threads}] gleichzeitige Läufe einer Studie (Standard: alle
+    Kerne). \code{1}, wenn man aus Python selbst viele Simulationen parallel
+    startet.
+\end{description}
+
+Tabellendateien (\code{"file"} in \code{tables} und \code{fit}) werden
+relativ zur Eingabedatei aufgelöst, auch wenn die Netzliste woanders
+gerechnet wird. \code{esim.load_netlist(pfad)} liest eine Eingabedatei
+(mit Kommentaren) in ein \code{dict}.
+
+\section{Ergebnisse}
+
+\code{run()} liefert ein \code{Result}:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Zugriff & Inhalt \\
+  \midrule
+  \code{res.op}, \code{res.dc}, \code{res.ac}, \code{res.tran}, \code{res.pss}, \code{res.noise}, \code{res.sens} & die erste Analyse dieses Typs \\
+  \code{res["name"]} & die Analyse mit diesem \code{"name"} \\
+  \code{res.analyses} & alle Analysen in der Reihenfolge der Datei \\
+  \code{res.log} & alles, was der Simulator ausgegeben hat, mit Warnungen \\
+  \code{res.title} & Titel \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Jede Analyse (\code{Analysis}) hat:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+  \toprule
+  Attribut & Inhalt \\
+  \midrule
+  \code{a["spalte"]}, \code{a.data} & Spalten der Ergebnisdatei \\
+  \code{a.columns} & Namen der Spalten \\
+  \code{a.values} & Arbeitspunkt: \texttt{\{ausgang: wert\}} \\
+  \code{a.measures} & Messgrößen; bei Studien je Messgröße eine Liste mit einem Wert je Lauf; \code{None} ohne Ergebnis \\
+  \code{a.stats} & Schritte, verworfene Schritte, Newton-Iterationen, Ereignisse \dots \\
+  \code{a.sweep} & Studie: \texttt{\{"param", "values"\}} bzw. \texttt{\{"params", "grid"\}} \\
+  \code{a.statistics} & Monte Carlo: je Messgröße \code{mean}, \code{std}, \code{min}, \code{max}, \code{count} \\
+  \code{a.parameters} & Anpassung: die angepassten Werte \\
+  \code{a.sensitivities} & Empfindlichkeiten: \texttt{\{parameter: \{größe: \%/\%\}\}} \\
+  \code{a.fourier} & Fourier-Analyse \\
+  \code{a.runs()} & Parameter-Sweep: Paare (Wert, \texttt{\{spalte: werte\}}) je Lauf \\
+  \code{a.info} & der vollständige Eintrag der Zusammenfassung \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+Fehler des Simulators kommen als \code{esim.EsimError} mit dessen Meldung:
+
+\begin{python}
+try:
+    esim.run({"components": [{"type": "R", "nodes": ["a"], "value": 1}],
+              "analyses": [{"type": "op"}]})
+except esim.EsimError as e:
+    print(e)        # components[0]: expected nodes [a, b]
+\end{python}
+
+\section{Beispiele}
+
+\subsection*{Eine eigene Studie}
+
+\begin{python}
+for C in ["470n", "1u", "2.2u"]:
+    r = esim.run("docs/handbuch/tiefpass.json", parameters={"C": C},
+                 analyses=[{"type": "ac", "fstart": 1, "fstop": "100k",
+                            "measure": {"fc": {"f3db": "v(out)"}}}])
+    print(C, round(r.ac.measures["fc"], 2))
+# 470n 339.68
+# 1u 159.21
+# 2.2u 72.58
+\end{python}
+
+\subsection*{Kurvenschar eines Sweeps}
+
+\begin{python}
+import matplotlib.pyplot as plt
+
+r = esim.run("docs/handbuch/tiefpass.json",
+             analyses=[{"type": "tran", "tstop": "20m",
+                        "param_sweep": {"param": "R", "values": [1000, 2200, 4700]}}])
+for R, cols in r.tran.runs():
+    plt.plot(cols["time"] * 1e3, cols["v(out)"], label=f"R = {R:g} Ohm")
+plt.xlabel("t / ms"); plt.ylabel("v(out) / V"); plt.legend(); plt.show()
+\end{python}
+
+\subsection*{Netzliste im Programm erzeugen}
+
+\begin{python}
+n = 20                                   # RC-Kette mit n Gliedern
+comps = [{"type": "V", "name": "V1", "nodes": ["n0", "0"], "ac": 1}]
+for k in range(n):
+    comps += [{"type": "R", "nodes": [f"n{k}", f"n{k+1}"], "value": "1k"},
+              {"type": "C", "nodes": [f"n{k+1}", "0"], "value": "1n"}]
+res = esim.run({"components": comps,
+                "analyses": [{"type": "ac", "fstart": 1e3, "fstop": 1e8, "points": 20}],
+                "outputs": [f"v(n{n})"]})
+print(res.ac.columns)       # ['freq', 'mag(v(n20))', 'phase(v(n20))']
+\end{python}
+
+\subsection*{Mit Messdaten vergleichen}
+
+\begin{python}
+import numpy as np
+meas_t, meas_v = np.loadtxt("messung.csv", delimiter=",", unpack=True)
+sim = esim.run("schaltung.json").tran
+v_sim = np.interp(meas_t, sim["time"], sim["v(out)"])
+print("größte Abweichung:", np.max(np.abs(v_sim - meas_v)))
+\end{python}
+
+Wer Parameter an Messungen anpassen will, nimmt dafür besser die Analyse
+\code{fit} (Kapitel~\ref{kap:format-analysen}): Sie rechnet im Simulator
+selbst und braucht viel weniger Läufe.
