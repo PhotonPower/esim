@@ -17,7 +17,7 @@
 #include <QTest>
 #include <QTextCursor>
 #include <cstdio>
-#include <unistd.h>
+#include <cstdlib>
 
 #include "Checker.hpp"
 #include "CodeEditor.hpp"
@@ -406,5 +406,5 @@ int main(int argc, char** argv) {
     // no question about unsaved changes
     QFile::remove(path);
     std::fflush(stdout);
-    _exit(g_failures ? 1 : 0);
+    std::_Exit(g_failures ? 1 : 0);
 }

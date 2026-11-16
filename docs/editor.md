@@ -165,9 +165,20 @@ schreibt die Knoten des Plans.
 
 ## Nächste Schritte
 
-**Schritt 4: Windows 11**
-- esim und Editor mit MSVC bauen (Pfade mit Umlauten: `std::filesystem::path`),
-  `windeployqt`, später ein Installer.
+**Schritt 4: Windows 11** – vorbereitet, auf Windows noch nicht gebaut:
+- MSVC: `/utf-8` (Quelltexte mit „Ω“, „„“ …), `/bigobj`, `/permissive-`,
+  `NOMINMAX`; kein `M_PI`, keine POSIX-Funktionen; Warte-Befehl des
+  Thread-Pools auch für MSVC (`_mm_pause`, `__yield`).
+- Umlaute in Pfaden: Manifest mit `activeCodePage` UTF-8 für alle Programme
+  (`cmake/utf8.manifest`), esim schaltet die Konsole auf UTF-8; das
+  Python-Modul liest und schreibt UTF-8 und findet `esim.exe`.
+- Editor: Tastennamen je System (Strg/Alt/Entf statt ⌘/⌥/⌫), Kontextmenü mit
+  echten Kürzeln, Touchpads, die nur Winkel melden.
+- Auslieferung: `cmake --install` mit `windeployqt`/`macdeployqt`; Tests
+  finden die Qt-DLLs über den PATH; ngspice als `ngspice_con`.
+- Geprüft: Build mit GCC/libstdc++ (dritte Standardbibliothek) ohne
+  Warnungen, alle Tests; Bundle auf macOS. Offen: echter MSVC-Build, Bedienung
+  unter Windows, später ein Installer.
 
 ## Offene Punkte
 

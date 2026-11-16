@@ -45,6 +45,23 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set(ESIM_WARNINGS -Wall -Wextra -Wpedantic)
 endif()
+if(MSVC)
+  # sources are UTF-8 (texts like "Ω" and German quotes); large objects
+  # (nlohmann/json, Eigen); standard conformance; no min/max macros
+  add_compile_options(/utf-8 /bigobj /permissive- /Zc:__cplusplus)
+  add_compile_definitions(NOMINMAX _CRT_SECURE_NO_WARNINGS)
+endif()
+
+# Windows: UTF-8 as the code page of every program (see cmake/utf8.manifest).
+function(esim_windows_program target)
+  if(WIN32)
+    if(MSVC)
+      target_sources(${target} PRIVATE ${PROJECT_SOURCE_DIR}/cmake/utf8.manifest)
+    else()
+      target_sources(${target} PRIVATE ${PROJECT_SOURCE_DIR}/cmake/utf8.rc)
+    endif()
+  endif()
+endfunction()
 
 # --- esimcore: generic DAE solvers and expressions, knows nothing about circuits
 add_library(esimcore
@@ -88,6 +105,7 @@ target_compile_options(esimcircuit PRIVATE ${ESIM_WARNINGS})
 add_executable(esim src/main.cpp)
 target_link_libraries(esim PRIVATE esimcircuit)
 target_compile_options(esim PRIVATE ${ESIM_WARNINGS})
+esim_windows_program(esim)
 
 if(ESIM_BUILD_EXAMPLES)
   # A DAE that is not a circuit, solved with esimcore alone.
@@ -98,11 +116,13 @@ endif()
 if(ESIM_BUILD_TESTS)
   enable_testing()
   add_executable(esim_tests tests/tests.cpp)
+  esim_windows_program(esim_tests)
   target_link_libraries(esim_tests PRIVATE esimcircuit)
   target_include_directories(esim_tests PRIVATE examples)
   add_test(NAME esim_tests COMMAND esim_tests)
   # Charges of a single BSIM3 transistor, for tests/test_bsim3.py.
   add_executable(bsim3_charges tests/bsim3_charges.cpp)
+  esim_windows_program(bsim3_charges)
   target_link_libraries(bsim3_charges PRIVATE esimcircuit)
 
   # The Python interface (python/esim.py) only needs an interpreter.
@@ -116,7 +136,8 @@ if(ESIM_BUILD_TESTS)
               BSIM3_CHARGES_BIN=$<TARGET_FILE:bsim3_charges>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_bsim3.py)
     # BSIM3 against ngspice, if it is installed.
-    find_program(NGSPICE_EXECUTABLE ngspice)
+    # (on Windows the console program is ngspice_con)
+    find_program(NGSPICE_EXECUTABLE NAMES ngspice_con ngspice)
     if(NGSPICE_EXECUTABLE)
       add_test(NAME bsim3_ngspice
         COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>

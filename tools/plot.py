@@ -25,7 +25,7 @@ from collections import OrderedDict
 
 
 def read_csv(path):
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         rows = list(csv.reader(f))
     if len(rows) < 2:
         sys.exit(f"{path}: no data")

@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef _MSC_VER
+#include <intrin.h>  // _mm_pause, __yield
+#endif
+
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -59,6 +63,10 @@ private:
         __builtin_ia32_pause();
 #elif defined(__aarch64__)
         __asm__ __volatile__("yield");
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+        _mm_pause();
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+        __yield();
 #else
         std::this_thread::yield();
 #endif

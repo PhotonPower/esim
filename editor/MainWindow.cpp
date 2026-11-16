@@ -30,6 +30,7 @@
 
 #include "CodeEditor.hpp"
 #include "JsonSpan.hpp"
+#include "Keys.hpp"
 #include "ModelBrowser.hpp"
 #include "PartPalette.hpp"
 #include "PlotWidget.hpp"
@@ -134,7 +135,7 @@ MainWindow::MainWindow() {
     scopeBar_ = new QWidget;
     auto* up = new QToolButton;
     up->setText(tr("‹ Hauptschaltung"));
-    up->setToolTip(tr("Zurück zur Hauptschaltung (⌘↑)"));
+    up->setToolTip(tr("Zurück zur Hauptschaltung (%1)").arg(Keys::cmd(QStringLiteral("↑"))));
     up->setAutoRaise(true);
     scopeLabel_ = new QLabel;
     auto* bar = new QHBoxLayout(scopeBar_);
@@ -1044,7 +1045,7 @@ void MainWindow::extractSelection() {
     const Schematic& s = schematic_->schematic();
     const ItemSet sel = schematic_->selection();
     if (sel.comps.isEmpty()) {
-        status_->setText(tr("Erst Bauteile im Plan auswählen, dann ⌘G"));
+        status_->setText(tr("Erst Bauteile im Plan auswählen, dann %1").arg(Keys::cmd("G")));
         return;
     }
     // a free name to start with

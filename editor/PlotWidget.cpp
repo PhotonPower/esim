@@ -13,6 +13,7 @@
 #include <limits>
 
 #include "Format.hpp"
+#include "Keys.hpp"
 #include "Theme.hpp"
 
 namespace {
@@ -258,7 +259,7 @@ void PlotWidget::paintEvent(QPaintEvent*) {
     p.fillRect(rect(), Theme::surface());
     if (data_.panels.isEmpty()) {
         p.setPen(Theme::textSecondary());
-        p.drawText(rect(), Qt::AlignCenter, tr("Keine Kurven: Simulation starten (⌘R) und eine Analyse wählen"));
+        p.drawText(rect(), Qt::AlignCenter, tr("Keine Kurven: Simulation starten (%1) und eine Analyse wählen").arg(Keys::cmd("R")));
         return;
     }
     if (panes_.isEmpty() || panes_[0].area.width() != width() - kLeft - kRight) layoutPanes();

@@ -341,11 +341,11 @@ def main():
     ap.add_argument("netlist", help="SPICE netlist (.cir, .sp, .net)")
     ap.add_argument("-o", "--output", help="JSON file to write (default: standard output)")
     args = ap.parse_args()
-    with open(args.netlist) as f:
+    with open(args.netlist, encoding="utf-8", errors="replace") as f:
         result = convert(f.read())
     text = json.dumps(result, indent=2)
     if args.output:
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write(text + "\n")
     else:
         print(text)

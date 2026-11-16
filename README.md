@@ -34,6 +34,21 @@ sonst lädt CMake sie herunter.
 
     ./build/esim examples/bjt_amplifier.json -o results
 
+**Windows 11** (Visual Studio 2022 oder dessen Build Tools mit „Desktop
+development with C++“, CMake, Qt 6 für MSVC 2022 64-bit aus dem Qt-Installer,
+optional Python 3 für die Tests; in der „x64 Native Tools Command Prompt“):
+
+    cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
+    cmake --build build --config Release
+    ctest --test-dir build -C Release
+    cmake --install build --config Release --prefix dist   # Editor mit esim, Qt-DLLs, Beispielen
+
+`dist` läuft dann allein (`dist\esim-editor.exe`). Ohne Qt wird nur der
+Simulator gebaut. Die Programme verwenden intern UTF-8 (Manifest), Dateien
+und Ordner mit Umlauten gehen also. Im Editor heißen die Kürzel unter
+Windows Strg und Alt statt ⌘ und ⌥. Ein Arbeitsablauf für GitHub Actions
+(`.github/workflows/build.yml`) baut und testet auf Windows und macOS.
+
 Der Arbeitspunkt wird auf der Konsole ausgegeben, alle anderen Analysen landen
 in `<Ausgabeordner>/<Dateiname>.<Analyse>.csv`, z. B.
 `results/bjt_amplifier.tran.csv`.

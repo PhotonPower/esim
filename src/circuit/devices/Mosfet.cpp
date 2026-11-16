@@ -78,7 +78,7 @@ void Mosfet::setupLevel3(const CircuitOptions& o) {
         alpha3_ = 2.0 * epsSi / (q * p_.nsub * 1e6);
         depletion3_ = std::sqrt(alpha3_);
     }
-    narrow3_ = p_.delta * 0.5 * M_PI * epsSi / coxArea_;
+    narrow3_ = p_.delta * 0.5 * 3.14159265358979323846 * epsSi / coxArea_;  // (M_PI is not standard)
     const double fact1 = tnom / refTemp, fact2 = temp / refTemp;
     const double arg1 = -eg1 / (2.0 * k * tnom) + 1.1150877 / (k * 2.0 * refTemp);
     const double pbfact1 = -2.0 * vtnom * (1.5 * std::log(fact1) + q * arg1);

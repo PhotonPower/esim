@@ -27,7 +27,7 @@ check(spice2json.value("{2*r}") == "2*r", "parameter expression")
 check(spice2json.value("rload") == "rload", "parameter name")
 
 # --- a complete netlist ---
-with open(os.path.join(ROOT, "examples", "spice", "amplifier.cir")) as f:
+with open(os.path.join(ROOT, "examples", "spice", "amplifier.cir"), encoding="utf-8") as f:
     net = spice2json.convert(f.read())
 check(not spice2json.warnings, "no warnings: " + "; ".join(spice2json.warnings))
 by_name = {c["name"]: c for c in net["components"]}

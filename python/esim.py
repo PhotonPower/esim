@@ -148,7 +148,7 @@ def _array(values):
 
 
 def _read_csv(path):
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         rows = list(csv.reader(f))
     header, body = rows[0], rows[1:]
     columns = list(zip(*body)) if body else [[] for _ in header]
@@ -170,13 +170,16 @@ def _strip_comments(text):
 
 def load_netlist(path):
     """Read a netlist file into a dict (comments are allowed in the file)."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.loads(_strip_comments(f.read()))
 
 
 def _find_program(esim):
+    build = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build")
     candidates = [esim, os.environ.get("ESIM_BIN"),
-                  os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "esim"),
+                  os.path.join(build, "esim"),
+                  os.path.join(build, "esim.exe"),               # Windows
+                  os.path.join(build, "Release", "esim.exe"),    # Windows, Visual Studio
                   shutil.which("esim")]
     for c in candidates:
         if c and os.path.isfile(c) and os.access(c, os.X_OK):
@@ -225,17 +228,18 @@ def run(netlist, parameters=None, analyses=None, outputs=None, esim=None, keep=N
     try:
         netlist_path = os.path.join(workdir, "netlist.json")
         summary_path = os.path.join(workdir, "summary.json")
-        with open(netlist_path, "w") as f:
+        with open(netlist_path, "w", encoding="utf-8") as f:
             json.dump(spec, f)
         command = [program, netlist_path, "-o", workdir, "--summary", summary_path]
         if threads:
             command += ["-j", str(int(threads))]
-        proc = subprocess.run(command, capture_output=True, text=True)
+        # esim writes UTF-8 (also on Windows, where the locale may say otherwise)
+        proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
         log = proc.stdout + proc.stderr
         if proc.returncode != 0:
             message = [l for l in proc.stderr.splitlines() if l.startswith("error:")]
             raise EsimError(message[-1][len("error: "):] if message else log.strip())
-        with open(summary_path) as f:
+        with open(summary_path, encoding="utf-8") as f:
             summary = json.load(f)
         result = []
         for entry in summary["analyses"]:

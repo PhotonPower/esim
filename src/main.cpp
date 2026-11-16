@@ -5,6 +5,11 @@
 #include <iostream>
 #include <string>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>  // SetConsoleOutputCP
+#endif
+
 #include "app/Runner.hpp"
 #include "circuit/Device.hpp"
 #include "io/Netlist.hpp"
@@ -28,6 +33,10 @@ void usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // Texts are UTF-8 (the manifest makes arguments and file names UTF-8 as well).
+    SetConsoleOutputCP(CP_UTF8);
+#endif
     std::string input, summaryPath;
     esim::RunConfig cfg;
     nlohmann::json summary = nlohmann::json::array();

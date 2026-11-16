@@ -15,6 +15,7 @@
 #include <functional>
 
 #include "Format.hpp"
+#include "Keys.hpp"
 #include "Symbols.hpp"
 #include "Theme.hpp"
 
@@ -587,21 +588,32 @@ void SchematicView::contextMenu(QMouseEvent* e) {
         menu.addAction(tr("Spannung v(%1) zeigen").arg(net), this, [this, net]() { emit probe(QStringLiteral("v(%1)").arg(net)); });
     if (h.type == ItemType::Label) menu.addAction(tr("Umbenennen …"), this, [this, h]() { renameLabel(h.index); });
     if (!menu.isEmpty()) menu.addSeparator();
-    menu.addAction(tr("Drehen\tR"), this, [this]() { transformSelection(0); })->setEnabled(any);
-    menu.addAction(tr("Spiegeln\tX"), this, [this]() { transformSelection(1); })->setEnabled(any);
-    menu.addAction(tr("Verdoppeln\t⌘D"), this, &SchematicView::duplicateSelection)->setEnabled(any);
-    menu.addAction(tr("Löschen\t⌫"), this, &SchematicView::deleteSelection)->setEnabled(any);
-    menu.addAction(tr("In Teilschaltung umwandeln …\t⌘G"), this, &SchematicView::extractRequested)
+    // the keys shown as the platform writes them
+    const auto keyed = [](QAction* a, const QKeySequence& key) {
+        a->setShortcut(key);
+        a->setShortcutVisibleInContextMenu(true);
+        return a;
+    };
+    keyed(menu.addAction(tr("Drehen"), this, [this]() { transformSelection(0); }), QKeySequence(Qt::Key_R))->setEnabled(any);
+    keyed(menu.addAction(tr("Spiegeln"), this, [this]() { transformSelection(1); }), QKeySequence(Qt::Key_X))->setEnabled(any);
+    keyed(menu.addAction(tr("Verdoppeln"), this, &SchematicView::duplicateSelection), QKeySequence(Qt::CTRL | Qt::Key_D))
+        ->setEnabled(any);
+    keyed(menu.addAction(tr("Löschen"), this, &SchematicView::deleteSelection), QKeySequence(QKeySequence::Delete))
+        ->setEnabled(any);
+    keyed(menu.addAction(tr("In Teilschaltung umwandeln …"), this, &SchematicView::extractRequested),
+          QKeySequence(Qt::CTRL | Qt::Key_G))
         ->setEnabled(!comps.isEmpty());
     menu.addSeparator();
-    menu.addAction(tr("Leitung zeichnen\tW"), this, &SchematicView::startWire);
-    menu.addAction(tr("Masse\tG"), this, &SchematicView::startGround);
-    menu.addAction(tr("Netzlabel …\tN"), this, &SchematicView::startLabel);
-    if (!model_.scope.isEmpty()) menu.addAction(tr("Port …\tP"), this, &SchematicView::startPort);
-    menu.addAction(tr("Bauteil …\tA"), this, &SchematicView::partChooserRequested);
+    keyed(menu.addAction(tr("Leitung zeichnen"), this, &SchematicView::startWire), QKeySequence(Qt::Key_W));
+    keyed(menu.addAction(tr("Masse"), this, &SchematicView::startGround), QKeySequence(Qt::Key_G));
+    keyed(menu.addAction(tr("Netzlabel …"), this, &SchematicView::startLabel), QKeySequence(Qt::Key_N));
+    if (!model_.scope.isEmpty())
+        keyed(menu.addAction(tr("Port …"), this, &SchematicView::startPort), QKeySequence(Qt::Key_P));
+    keyed(menu.addAction(tr("Bauteil …"), this, &SchematicView::partChooserRequested), QKeySequence(Qt::Key_A));
     menu.addSeparator();
-    menu.addAction(tr("Alles zeigen\tF"), this, &SchematicView::fitAll);
-    if (!model_.scope.isEmpty()) menu.addAction(tr("Zur Hauptschaltung\t⌘↑"), this, &SchematicView::leaveRequested);
+    keyed(menu.addAction(tr("Alles zeigen"), this, &SchematicView::fitAll), QKeySequence(Qt::Key_F));
+    if (!model_.scope.isEmpty())
+        keyed(menu.addAction(tr("Zur Hauptschaltung"), this, &SchematicView::leaveRequested), QKeySequence(Qt::CTRL | Qt::Key_Up));
     menu.exec(e->globalPosition().toPoint());
 }
 
@@ -935,7 +947,8 @@ void SchematicView::wheelEvent(QWheelEvent* e) {
         const double steps = !pixel.isNull() && touchpad ? pixel.y() / 50.0 : angle.y() / 120.0;
         zoomAt(e->position(), std::pow(1.2, steps));
     } else {
-        pan_ += QPointF(pixel);
+        // Windows touchpads may give angles only
+        pan_ += pixel.isNull() ? QPointF(angle) / 4.0 : QPointF(pixel);
         update();
     }
     e->accept();
@@ -1349,9 +1362,11 @@ void SchematicView::paintEvent(QPaintEvent*) {
     if (mode_ == Mode::Place)
         hint = tr("Klick: platzieren · R drehen · X spiegeln · Esc: fertig");
     else if (mode_ == Mode::Wire)
-        hint = tr("Klick: Ecke · endet an Anschluss oder Leitung · Doppelklick/Esc: beenden · ⌫: letzte Ecke · /: Knick");
+        hint = tr("Klick: Ecke · endet an Anschluss oder Leitung · Doppelklick/Esc: beenden · %1: letzte Ecke · /: Knick")
+                   .arg(Keys::erase());
     else if (hasFocus())
-        hint = tr("R drehen · X spiegeln · ⌫ löschen · ⌘D verdoppeln · W Leitung · G Masse · N Label · ⌥-Klick: Kurve");
+        hint = tr("R drehen · X spiegeln · %1 löschen · %2 verdoppeln · W Leitung · G Masse · N Label · %3-Klick: Kurve")
+                   .arg(Keys::erase(), Keys::cmd("D"), Keys::alt());
     if (!hint.isEmpty()) {
         p.setPen(Theme::textSecondary());
         p.drawText(QRectF(10, height() - fm.height() - 8, width() - 20, fm.height() + 4), Qt::AlignLeft | Qt::AlignVCenter,
