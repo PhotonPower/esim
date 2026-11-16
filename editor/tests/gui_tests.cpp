@@ -8,6 +8,9 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QTreeWidget>
+#include <QComboBox>
+#include <QProcess>
+#include <QStackedWidget>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
@@ -19,6 +22,9 @@
 #include "CodeEditor.hpp"
 #include "MainWindow.hpp"
 #include "ModelBrowser.hpp"
+#include "HistogramWidget.hpp"
+#include "PlotWidget.hpp"
+#include "ResultsPanel.hpp"
 #include "PartPalette.hpp"
 #include "PropertyPanel.hpp"
 #include "Schematic.hpp"
@@ -290,6 +296,38 @@ int main(int argc, char** argv) {
             QApplication::processEvents();
             browser.grab().save(qEnvironmentVariable("ESIM_SNAPSHOT_DIR") + "/library.png");
         }
+    }
+
+    std::printf("[test] measurements: histogram, points, curve families\n");
+    {
+        QTemporaryDir out;
+        QProcess esim;
+        esim.start(ESIM_BINARY, {ESIM_SOURCE_DIR "/examples/monte_carlo_filter.json", "-o", out.path(), "--summary",
+                                 out.filePath("s.json")});
+        check(esim.waitForFinished(60000) && esim.exitCode() == 0, "esim ran the Monte Carlo example");
+        ResultsPanel panel;
+        panel.resize(1100, 640);
+        panel.show();
+        QString error;
+        check(panel.load(out.filePath("s.json"), error), "summary loaded: " + error);
+        auto* stack = panel.findChild<QStackedWidget*>();
+        auto* hist = panel.findChild<HistogramWidget*>();
+        auto* view = panel.findChild<QComboBox*>();
+        check(stack && hist && stack->currentWidget() == hist, "Monte Carlo shows histograms");
+        check(view && view->count() == 3 && view->itemText(1).contains("C"), "views: histogram, over R, over C");
+        const QString dir = qEnvironmentVariable("ESIM_SNAPSHOT_DIR");
+        QApplication::processEvents();
+        if (!dir.isEmpty()) panel.grab().save(dir + "/mc_hist.png");
+        if (view) view->setCurrentIndex(view->findData("C"));
+        check(stack && stack->currentWidget() == panel.plot(), "points over C");
+        if (!dir.isEmpty()) panel.grab().save(dir + "/mc_points.png");
+        // the nested sweep: fc over C, one curve per R
+        auto* analyses = panel.findChild<QListWidget*>("analyses");
+        if (analyses) analyses->setCurrentRow(1);
+        check(view && view->count() == 2 && view->currentData().toString() == "R", QString("sweep over R by default: %1 views, %2").arg(view ? view->count() : -1).arg(view ? view->currentData().toString() + " / " + view->currentText() : QString()));
+        if (view) view->setCurrentIndex(view->findData("C"));
+        QApplication::processEvents();
+        if (!dir.isEmpty()) panel.grab().save(dir + "/grid.png");
     }
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

@@ -372,6 +372,40 @@ void PlotWidget::drawCurve(QPainter& p, const Curve& c, int pane, bool sorted) {
         i0 = std::max(0, static_cast<int>(std::lower_bound(c.x.begin(), c.x.end(), lo) - c.x.begin()) - 1);
         i1 = std::min(n, static_cast<int>(std::upper_bound(c.x.begin(), c.x.end(), hi) - c.x.begin()) + 1);
     }
+    if (c.markers) {
+        // the points: a cloud (translucent, many may overlap) or the values of a sweep
+        const bool cloud = c.markers == 1;
+        QColor fill = c.color();
+        if (cloud) fill.setAlphaF(0.55f);
+        if (c.markers == 2) {
+            p.setPen(QPen(c.color(), 2.0, penStyle(c.dash), Qt::RoundCap, Qt::RoundJoin));
+            p.setBrush(Qt::NoBrush);
+            QPainterPath line;
+            bool open = false;
+            for (int k = i0; k < i1; ++k) {
+                const double u = toX(c.x[k]);
+                if (!std::isfinite(u) || !std::isfinite(c.y[k])) {
+                    open = false;
+                    continue;
+                }
+                const QPointF q(pixelX(u), std::clamp(pixelY(pane, c.y[k]), a.top() - 1e4, a.bottom() + 1e4));
+                if (open) line.lineTo(q);
+                else line.moveTo(q);
+                open = true;
+            }
+            p.drawPath(line);
+        }
+        p.setPen(cloud ? QPen(Qt::NoPen) : QPen(Theme::surface(), 2.0));  // a ring of the background
+        p.setBrush(fill);
+        const double r = cloud ? 3.0 : 4.0;
+        for (int k = i0; k < i1; ++k) {
+            const double u = toX(c.x[k]);
+            if (!std::isfinite(u) || !std::isfinite(c.y[k])) continue;
+            const QPointF q(pixelX(u), pixelY(pane, c.y[k]));
+            if (a.adjusted(-6, -6, 6, 6).contains(q.toPoint())) p.drawEllipse(q, r, r);
+        }
+        return;
+    }
     QPen pen(c.color(), 2.0, penStyle(c.dash), Qt::RoundCap, Qt::RoundJoin);
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
@@ -488,8 +522,15 @@ void PlotWidget::drawLegend(QPainter& p) {
             }
             // in a sweep the colour stands for the run: the sample shows the line style only
             const QColor color = c.runs > 1 ? Theme::textSecondary() : c.color();
-            p.setPen(QPen(color, 2.0, penStyle(c.dash), Qt::RoundCap));
-            p.drawLine(QPointF(x, y + lineHeight / 2.0), QPointF(x + 22, y + lineHeight / 2.0));
+            if (c.markers != 1) {
+                p.setPen(QPen(color, 2.0, penStyle(c.dash), Qt::RoundCap));
+                p.drawLine(QPointF(x, y + lineHeight / 2.0), QPointF(x + 22, y + lineHeight / 2.0));
+            }
+            if (c.markers) {
+                p.setPen(c.markers == 2 ? QPen(Theme::surface(), 2.0) : QPen(Qt::NoPen));
+                p.setBrush(color);
+                p.drawEllipse(QPointF(x + 11, y + lineHeight / 2.0), 4.0, 4.0);
+            }
             p.setPen(Theme::textPrimary());
             p.drawText(QRect(x + 28, y, w - 28, lineHeight), Qt::AlignLeft | Qt::AlignVCenter, c.name);
             x += w;
@@ -528,12 +569,37 @@ void PlotWidget::drawCrosshair(QPainter& p) {
         int dash;
         QString text;
         double y;
+        double px;  // where the dot goes
     };
     QVector<Entry> entries;
+    // a cloud of points: the point nearest to the pointer, with its x
+    double bestDist = 12.0;
+    const Curve* bestCurve = nullptr;
+    int bestIndex = -1;
     for (const Curve& c : data_.panels[k].curves) {
+        if (c.markers != 1) continue;
+        for (int i = 0; i < c.x.size(); ++i) {
+            const double d = std::hypot(pixelX(toX(c.x[i])) - mouse_.x(), pixelY(k, c.y[i]) - mouse_.y());
+            if (d < bestDist) {
+                bestDist = d;
+                bestCurve = &c;
+                bestIndex = i;
+            }
+        }
+    }
+    QString head = formatSI(x, data_.xUnit, 6);
+    if (bestCurve) {
+        head = QStringLiteral("%1 = %2").arg(data_.xLabel, formatSI(bestCurve->x[bestIndex], data_.xUnit, 6));
+        entries.push_back({bestCurve->color(), bestCurve->dash,
+                           label(*bestCurve) + "  " + formatSI(bestCurve->y[bestIndex], data_.panels[k].unit, 5),
+                           bestCurve->y[bestIndex], pixelX(toX(bestCurve->x[bestIndex]))});
+    }
+    for (const Curve& c : data_.panels[k].curves) {
+        if (c.markers == 1) continue;
         const double y = interpolate(c, x);
         if (std::isnan(y)) continue;
-        entries.push_back({c.color(), c.dash, label(c) + "  " + formatSI(y, data_.panels[k].unit, 5), y});
+        entries.push_back({c.color(), c.dash, label(c) + "  " + formatSI(y, data_.panels[k].unit, 5), y,
+                           double(mouse_.x())});
     }
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.y > b.y; });
     for (const Entry& e : entries) {
@@ -541,12 +607,15 @@ void PlotWidget::drawCrosshair(QPainter& p) {
         if (py < panes_[k].area.top() || py > panes_[k].area.bottom()) continue;
         p.setPen(QPen(Theme::surface(), 2));
         p.setBrush(e.color);
-        p.drawEllipse(QPointF(mouse_.x(), py), 4.0, 4.0);
+        p.drawEllipse(QPointF(e.px, py), 4.0, 4.0);
     }
+    if (bestCurve == nullptr && std::all_of(data_.panels[k].curves.begin(), data_.panels[k].curves.end(),
+                                                                [](const Curve& c) { return c.markers == 1; }))
+        return;  // a cloud and nothing near: no box
 
     const int maxRows = 12;
     QStringList lines;
-    lines << formatSI(x, data_.xUnit, 6);
+    lines << head;
     for (int i = 0; i < std::min<int>(entries.size(), maxRows); ++i) lines << entries[i].text;
     if (entries.size() > maxRows) lines << tr("… %1 weitere").arg(entries.size() - maxRows);
     int w = 0;

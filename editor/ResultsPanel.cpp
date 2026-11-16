@@ -1,6 +1,8 @@
 #include "ResultsPanel.hpp"
 
+#include <QComboBox>
 #include <QFile>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonDocument>
 #include <QLabel>
@@ -13,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include "Format.hpp"
+#include "HistogramWidget.hpp"
 #include "PlotWidget.hpp"
 #include "Theme.hpp"
 
@@ -106,17 +109,40 @@ QIcon swatch(const QColor& color, int dash) {
 
 ResultsPanel::ResultsPanel(QWidget* parent) : QWidget(parent) {
     analyses_ = new QListWidget;
+    analyses_->setObjectName("analyses");
     filter_ = new QLineEdit;
     filter_->setPlaceholderText(tr("Größen filtern"));
     filter_->setClearButtonEnabled(true);
     quantities_ = new QListWidget;
+    quantities_->setObjectName("quantities");
     quantities_->setUniformItemSizes(true);
     values_ = makeTable(this);
     plot_ = new PlotWidget;
     bigValues_ = makeTable(this);
+    histogram_ = new HistogramWidget;
     stack_ = new QStackedWidget;
     stack_->addWidget(plot_);
     stack_->addWidget(bigValues_);
+    stack_->addWidget(histogram_);
+    view_ = new QComboBox;
+    viewBar_ = new QWidget;
+    auto* vb = new QHBoxLayout(viewBar_);
+    vb->setContentsMargins(6, 4, 6, 0);
+    vb->addWidget(new QLabel(tr("Darstellung:")));
+    vb->addWidget(view_);
+    vb->addStretch(1);
+    viewBar_->hide();
+    auto* right = new QWidget;
+    auto* rl = new QVBoxLayout(right);
+    rl->setContentsMargins(0, 0, 0, 0);
+    rl->setSpacing(0);
+    rl->addWidget(viewBar_);
+    rl->addWidget(stack_, 1);
+    connect(view_, &QComboBox::currentIndexChanged, this, [this]() {
+        if (filling_ || !measures_) return;
+        viewChoice_[currentKey_] = view_->currentData().toString();
+        updatePlot();
+    });
 
     auto* quantityBox = new QWidget;
     auto* ql = new QVBoxLayout(quantityBox);
@@ -135,7 +161,7 @@ ResultsPanel::ResultsPanel(QWidget* parent) : QWidget(parent) {
 
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(left);
-    split->addWidget(stack_);
+    split->addWidget(right);
     split->setStretchFactor(0, 0);
     split->setStretchFactor(1, 1);
     split->setSizes({240, 800});
@@ -167,6 +193,9 @@ void ResultsPanel::clear() {
     values_->setRowCount(0);
     bigValues_->setRowCount(0);
     plot_->clear();
+    histogram_->clear();
+    viewBar_->hide();
+    measures_ = false;
     stack_->setCurrentWidget(plot_);
 }
 
@@ -192,7 +221,8 @@ bool ResultsPanel::load(const QString& summaryPath, QString& error) {
         const QString type = e.value("type").toString(), name = e.value("name").toString();
         QString label = typeName(type);
         if (!name.isEmpty() && name != type) label += QString::fromUtf8(" „%1“").arg(name);
-        if (e.contains("sweep")) label += tr(" (Sweep)");
+        if (e.contains("sweep"))
+            label += e.value("sweep").toObject().value("param").toString() == "run" ? tr(" (Monte Carlo)") : tr(" (Sweep)");
         const auto add = [&](const QString& text, const QString& file, const QString& kind) {
             auto* item = new QListWidgetItem(text, analyses_);
             item->setData(EntryRole, i);
@@ -230,8 +260,11 @@ void ResultsPanel::showAnalysis(int row) {
     filling_ = true;
     quantities_->clear();
     table_ = {};
+    measures_ = currentKey_.endsWith("/measures");
+    viewBar_->setVisible(measures_);
     if (file.isEmpty()) {
         filling_ = false;
+        viewBar_->hide();
         // values only (operating point and the like): the large table
         QVector<QPair<QString, QString>> rows;
         flatten(entry, QString(), rows);
@@ -239,16 +272,32 @@ void ResultsPanel::showAnalysis(int row) {
         stack_->setCurrentWidget(bigValues_);
         return;
     }
-    stack_->setCurrentWidget(plot_);
     QString error;
     if (!readCsv(file, table_, error)) {
         filling_ = false;
         plot_->clear();
+        stack_->setCurrentWidget(plot_);
         return;
     }
-    const QStringList names = quantities(table_);
+    QStringList names = quantities(table_);
     // a sweep: the colour stands for the run, the line style for the quantity
-    const bool sweep = table_.header.size() > 2 && (table_.header[1] == "time" || table_.header[1] == "freq");
+    bool sweep = table_.header.size() > 2 && (table_.header[1] == "time" || table_.header[1] == "freq");
+    if (measures_) {
+        // measurements of runs: which columns are parameters, and how to show them
+        QStringList params;
+        const QJsonObject sw = entry.value("sweep").toObject();
+        if (sw.contains("param")) params << sw.value("param").toString();
+        for (const QJsonValue& v : sw.value("params").toArray()) params << v.toString();
+        info_ = measureInfo(table_, entry.value("statistics").toObject().keys(), params);
+        names = info_.measures;
+        sweep = false;
+        view_->clear();
+        if (info_.monteCarlo) view_->addItem(tr("Histogramm"), QString());
+        for (const QString& p : info_.params)
+            view_->addItem(info_.monteCarlo ? tr("Streuung über %1").arg(p) : tr("über %1").arg(p), p);
+        const int choice = view_->findData(viewChoice_.value(currentKey_, info_.monteCarlo ? QString() : info_.params.value(0)));
+        view_->setCurrentIndex(std::max(0, choice));
+    }
     // ticked before: keep; new analysis: the first eight
     const bool known = checked_.contains(currentKey_);
     const QStringList before = checked_.value(currentKey_);
@@ -271,6 +320,26 @@ void ResultsPanel::showAnalysis(int row) {
 void ResultsPanel::updatePlot() {
     if (table_.columns.isEmpty()) return;
     const QStringList on = checked_.value(currentKey_);
+    if (measures_) {
+        const QString x = view_->currentData().toString();
+        if (x.isEmpty()) {  // histograms of the ticked quantities
+            QVector<Histogram> hs;
+            for (int k = 0; k < info_.measures.size(); ++k) {
+                const QString& m = info_.measures[k];
+                if (!on.contains(m)) continue;
+                hs << histogram(m, table_.columns[table_.header.indexOf(m)]);
+                hs.last().slot = k % Theme::kSeries;
+            }
+            histogram_->setData(hs);
+            stack_->setCurrentWidget(histogram_);
+            return;
+        }
+        stack_->setCurrentWidget(plot_);
+        if (on.isEmpty()) plot_->clear();
+        else plot_->setData(measurePlot(table_, info_, x, on));
+        return;
+    }
+    stack_->setCurrentWidget(plot_);
     if (on.isEmpty()) {
         plot_->clear();
         return;

@@ -23,7 +23,8 @@ qt_add_executable(esim-editor MACOSX_BUNDLE WIN32
   PropertyPanel.cpp
   PartPalette.cpp
   ModelLibrary.cpp
-  ModelBrowser.cpp)
+  ModelBrowser.cpp
+  HistogramWidget.cpp)
 
 # The standard model library, built into the program.
 qt_add_resources(esim-editor "library" PREFIX "/" FILES library/standard.lib)
@@ -69,7 +70,8 @@ if(ESIM_BUILD_TESTS)
     target_include_directories(editor_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(editor_gui_tests PRIVATE esimcircuit Qt6::Widgets Qt6::Concurrent Qt6::Test)
     target_compile_options(editor_gui_tests PRIVATE ${ESIM_WARNINGS})
-    target_compile_definitions(editor_gui_tests PRIVATE ESIM_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_compile_definitions(editor_gui_tests PRIVATE ESIM_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+                                                       ESIM_BINARY="$<TARGET_FILE:esim>")
     add_test(NAME editor_gui COMMAND editor_gui_tests)
     set_tests_properties(editor_gui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
   endif()

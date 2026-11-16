@@ -182,6 +182,10 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
   Rechteck, Doppelklick zeigt alles; das Fadenkreuz zeigt die Werte.
   Frequenzgänge erscheinen als Betrag in dB und Phase, Sweeps mit einer
   Farbstufe je Lauf.
+- Messgrößen über viele Läufe: bei Monte Carlo ein Histogramm je Größe
+  (Mittelwert, ±σ, Statistik) oder die Punkte über einem gestreuten
+  Parameter; bei Parameter-Sweeps die Messgröße über einem Parameter,
+  verschachtelte Sweeps als Kurvenschar (Auswahl „Darstellung“).
 - Konzept, Stand und nächste Schritte: [`docs/editor.md`](docs/editor.md).
 
 Der Editor bringt das Programm `esim` in seinem Paket mit.

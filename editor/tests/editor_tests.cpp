@@ -10,6 +10,7 @@
 #include <QProcess>
 #include <QTextStream>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 
 #include "Checker.hpp"
@@ -115,6 +116,44 @@ void testCurves() {
         check(s.panels[0].curves[2].run == 2 && s.panels[0].curves[2].runs == 3, "runs numbered for the colour scale");
     if (!s.panels.isEmpty() && s.panels[0].curves.size() == 3)
         check(s.panels[0].curves[1].group == "R = 2k", "run named with SI prefix: " + s.panels[0].curves[1].group);
+}
+
+void testMeasures() {
+    // a nested sweep: R outside, C inside, fc measured
+    CsvTable t;
+    t.header = {"R", "C", "fc"};
+    t.columns = {{1, 1, 2, 2}, {3e-9, 1e-9, 3e-9, 1e-9}, {10, 30, 5, 15}};
+    MeasureInfo info = measureInfo(t, {}, {"R", "C"});
+    check(!info.monteCarlo && info.params == QStringList({"R", "C"}) && info.measures == QStringList{"fc"}, "sweep columns");
+    PlotData d = measurePlot(t, info, "C", {});
+    check(d.panels.size() == 1 && d.panels[0].curves.size() == 2, "one curve per R");
+    if (d.panels.size() == 1 && d.panels[0].curves.size() == 2) {
+        const Curve& c = d.panels[0].curves[0];
+        check(c.x == QVector<double>({1e-9, 3e-9}) && c.y == QVector<double>({30, 10}), "sorted by C");
+        check(c.group == "R = 1" && c.runs == 2 && c.markers == 2, "family labelled, line with points: " + c.group);
+    }
+    // Monte Carlo: the statistics name the measurements
+    t.header = {"run", "C", "fc"};
+    info = measureInfo(t, {"fc"}, {"run"});
+    check(info.monteCarlo && info.params == QStringList{"C"} && info.measures == QStringList{"fc"}, "Monte Carlo columns");
+    d = measurePlot(t, info, "C", {});
+    check(d.panels.value(0).curves.size() == 1 && d.panels[0].curves[0].markers == 1, "Monte Carlo: one cloud");
+    // decades of a parameter: logarithmic axis
+    t.columns[1] = {1e-9, 1e-8, 1e-7, 1e-6};
+    check(measurePlot(t, info, "C", {}).logX, "log axis over decades");
+
+    QVector<double> v;
+    for (int k = 0; k < 1000; ++k) v << std::sin(k * 1.3) * 3.0 + 10.0;
+    v << std::numeric_limits<double>::quiet_NaN();
+    const Histogram h = histogram("x", v);
+    int sum = 0;
+    for (int c : h.counts) sum += c;
+    check(h.count == 1000 && sum == 1000, "every finite value in a bin");
+    check(h.counts.size() >= 5 && h.counts.size() <= 60 && h.edges.size() == h.counts.size() + 1, "5 to 60 bins");
+    check(std::abs(h.mean - 10.0) < 0.05 && std::abs(h.std - 3.0 / std::sqrt(2.0)) < 0.05, "mean and deviation");
+    check(h.edges.first() == h.min && std::abs(h.edges.last() - h.max) < 1e-12, "bins span the values");
+    const Histogram one = histogram("c", {2, 2, 2});
+    check(one.counts.size() == 1 && one.counts[0] == 3, "constant values: one bin");
 }
 
 void testFormat() {
@@ -460,6 +499,8 @@ int main(int argc, char** argv) {
     testLocations();
     std::printf("[test] curves from CSV files\n");
     testCurves();
+    std::printf("[test] measurements over runs\n");
+    testMeasures();
     std::printf("[test] numbers with SI prefixes\n");
     testFormat();
     std::printf("[test] JSON with positions\n");

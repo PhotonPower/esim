@@ -12,11 +12,15 @@ class QListWidgetItem;
 class QStackedWidget;
 class QTableWidget;
 class PlotWidget;
+class HistogramWidget;
+class QComboBox;
 
 // Results of the last run: the analyses of the summary file on the left,
 // the quantities of the chosen one to tick, its scalar values (operating
 // point, measurements, statistics) in a table, and the curves in a plot.
 // After a new run the chosen analysis and quantities stay chosen.
+// Measurements over the runs of a sweep or Monte Carlo analysis appear as
+// curves over a parameter, as points, or as histograms.
 class ResultsPanel : public QWidget {
     Q_OBJECT
 public:
@@ -45,6 +49,12 @@ private:
     QStackedWidget* stack_;
     PlotWidget* plot_;
     QTableWidget* bigValues_;  // instead of the plot, for analyses without curves
+    HistogramWidget* histogram_;
+    QWidget* viewBar_;         // how measurements are shown
+    QComboBox* view_;
+    bool measures_ = false;    // the shown table holds measurements of runs
+    MeasureInfo info_;
+    QHash<QString, QString> viewChoice_;  // per analysis
 
     QJsonArray entries_;
     CsvTable table_;

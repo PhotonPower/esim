@@ -100,6 +100,18 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
   Operationsverstärker). Dafür müsste esim SPICE-Teilschaltungen lesen
   (`tools/spice2json.py` kann Netzlisten übersetzen).
 
+**Schritt 3c (Auswertung über Läufe)** – erledigt:
+- Die Messgrößen einer Analyse mit `monte_carlo` oder `param_sweep`
+  (Tabelle `*.measure.csv`) haben eigene Darstellungen, wählbar über
+  „Darstellung“ und je Analyse gemerkt.
+- Monte Carlo: Histogramm je Messgröße als eigenes Feld (eigene Achse,
+  Klassen nach Freedman–Diaconis), Mittelwert und ±σ markiert, Statistik
+  in der Kopfzeile, Anzahl je Klasse beim Überfahren; oder die Punkte über
+  einem gestreuten Parameter (zeigt, welcher Parameter die Streuung macht).
+- Sweeps: Messgröße über einem Parameter (Linie mit Punkten, über Dekaden
+  logarithmisch); weitere Parameter eines verschachtelten Sweeps ergeben
+  eine Kurvenschar auf der Blauskala.
+
 ### Wie Plan und Text zusammenhängen
 
 Der Text ist maßgeblich. Nach jeder Textänderung (entprellt) liest der Plan
@@ -135,7 +147,6 @@ schreibt die Knoten des Plans.
 ## Nächste Schritte
 
 **Schritt 3 (Rest)**
-- Darstellung von Monte Carlo (Histogramm) und Messgrößen über Sweeps.
 - SPICE-Teilschaltungen (`.subckt`) aus Herstellerbibliotheken übernehmen.
 - Eine Auswahl im Plan in eine neue Teilschaltung umwandeln.
 

@@ -184,3 +184,120 @@ PlotData plotData(const CsvTable& t, const QStringList& selected) {
     }
     return d;
 }
+
+// --- measurements ---------------------------------------------------------------
+
+MeasureInfo measureInfo(const CsvTable& t, const QStringList& statistics, const QStringList& sweepParams) {
+    MeasureInfo info;
+    info.monteCarlo = !t.header.isEmpty() && t.header[0] == "run";
+    for (const QString& h : t.header) {
+        if (h == "run" && info.monteCarlo) continue;
+        // Monte Carlo: the statistics name the measurements; a sweep: its parameters are known
+        const bool measure = !statistics.isEmpty() ? statistics.contains(h) : !sweepParams.contains(h);
+        (measure ? info.measures : info.params) << h;
+    }
+    return info;
+}
+
+PlotData measurePlot(const CsvTable& t, const MeasureInfo& info, const QString& x, const QStringList& selected) {
+    PlotData d;
+    const int xCol = int(t.header.indexOf(x));
+    if (xCol < 0) return d;
+    d.xLabel = x;
+    const QVector<double>& xs = t.columns[xCol];
+    double lo = std::numeric_limits<double>::infinity(), hi = 0;
+    bool positive = true;
+    for (double v : xs) {
+        if (!std::isfinite(v)) continue;
+        positive = positive && v > 0;
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+    }
+    d.logX = positive && lo > 0 && hi / lo >= 20.0;  // values over decades
+
+    // runs grouped by the other parameters (a nested sweep); Monte Carlo: one cloud
+    QStringList others;
+    if (!info.monteCarlo)
+        for (const QString& p : info.params)
+            if (p != x) others << p;
+    QVector<QPair<QString, QVector<int>>> groups;
+    QMap<QString, int> index;
+    const int rows = int(xs.size());
+    for (int r = 0; r < rows; ++r) {
+        QStringList key;
+        for (const QString& o : others)
+            key << QStringLiteral("%1 = %2").arg(o, formatSI(t.columns[t.header.indexOf(o)][r], QString(), 4));
+        const QString label = key.join(", ");
+        auto it = index.find(label);
+        if (it == index.end()) {
+            it = index.insert(label, int(groups.size()));
+            groups.push_back({label, {}});
+        }
+        groups[*it].second.push_back(r);
+    }
+    for (auto& g : groups)
+        std::stable_sort(g.second.begin(), g.second.end(), [&](int a, int b) { return xs[a] < xs[b]; });
+
+    int q = 0;
+    for (const QString& m : info.measures) {
+        if (!selected.isEmpty() && !selected.contains(m)) continue;
+        const int col = int(t.header.indexOf(m));
+        Panel panel{m, QString(), {}};
+        for (int g = 0; g < groups.size(); ++g) {
+            Curve c;
+            c.name = m;
+            c.group = groups[g].first;
+            for (int r : groups[g].second) {
+                c.x.push_back(xs[r]);
+                c.y.push_back(t.columns[col][r]);
+            }
+            c.markers = info.monteCarlo ? 1 : 2;
+            if (groups.size() > 1) {
+                c.run = g;
+                c.runs = int(groups.size());
+            } else {
+                c.slot = q % Theme::kSeries;
+            }
+            panel.curves.push_back(c);
+        }
+        d.panels.push_back(panel);
+        ++q;
+    }
+    return d;
+}
+
+Histogram histogram(const QString& name, const QVector<double>& values) {
+    Histogram h;
+    h.name = name;
+    QVector<double> v;
+    for (double x : values)
+        if (std::isfinite(x)) v.push_back(x);
+    h.count = int(v.size());
+    if (v.isEmpty()) return h;
+    std::sort(v.begin(), v.end());
+    h.min = v.front();
+    h.max = v.back();
+    double sum = 0, sq = 0;
+    for (double x : v) sum += x;
+    h.mean = sum / v.size();
+    for (double x : v) sq += (x - h.mean) * (x - h.mean);
+    h.std = v.size() > 1 ? std::sqrt(sq / (v.size() - 1)) : 0.0;
+    const auto quantile = [&](double p) {
+        const double pos = p * (v.size() - 1);
+        const int i = int(pos);
+        return i + 1 < v.size() ? v[i] + (pos - i) * (v[i + 1] - v[i]) : v[i];
+    };
+    const double range = h.max - h.min;
+    int bins = 1;
+    if (range > 0) {
+        const double iqr = quantile(0.75) - quantile(0.25);
+        const double width = 2.0 * iqr * std::pow(double(v.size()), -1.0 / 3.0);
+        bins = width > 0 ? int(std::ceil(range / width)) : int(std::ceil(std::sqrt(double(v.size()))));
+        bins = std::clamp(bins, 5, 60);
+    }
+    const double lo = range > 0 ? h.min : h.min - 0.5, w = range > 0 ? range / bins : 1.0;
+    for (int k = 0; k <= bins; ++k) h.edges.push_back(lo + k * w);
+    h.counts.fill(0, bins);
+    for (double x : v) h.counts[std::clamp(int((x - lo) / w), 0, bins - 1)]++;
+    return h;
+}
