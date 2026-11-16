@@ -574,7 +574,7 @@ Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibun
 
 | type | Bauteil | nodes | Parameter |
 |------|---------|-------|-----------|
-| `R`, `resistor` | Widerstand | a, b | `value` |
+| `R`, `resistor` | Widerstand | a, b | `value`; `"noise": false` ohne thermisches Rauschen |
 | `C`, `capacitor` | Kondensator | a, b | `value`, `ic` (Spannung a−b bei t=0) |
 | `L`, `inductor` | Spule | a, b | `value`, `ic` (Strom a→b bei t=0) |
 | `V`, `vsource` | Spannungsquelle | +, − | `dc`, `wave`, `ac`, `acphase` |
@@ -810,8 +810,19 @@ Liste von Zeilen.
 
 - Gelesen werden R, C, L, K, V und I (DC, AC, SIN, PULSE, PWL), E und G
   (linear, `POLY(n)`, `VALUE = {…}`, `TABLE {…} = (x, y) …`), F und H (linear,
-  `POLY(n)`), B (`V=` oder `I=`), D, Q, M, J, S (mit `.model … SW`), T und X;
-  dazu `.param`, `PARAMS:` an `.subckt` und an Instanzen, `.model`.
+  `POLY(n)`), B (`V=` oder `I=`), D, Q, M, J, S, T und X; dazu `.param`,
+  `PARAMS:` an `.subckt` und an Instanzen, `.model` (auch mit Ausdrücken
+  wie `KF={PWR(FLW,0.5)/1E11}`, ausgewertet mit den Parametern des
+  Subcircuits).
+- Formen von PSpice: Widerstände mit Modell (`R1 a b RMOD 1k`; `R=` im
+  Modell skaliert, `T_ABS=-273.15` macht den Widerstand rauschfrei, als
+  `"noise": false`); Schalter mit `VSWITCH(RON ROFF VON VOFF)` mit dem
+  stetigen Übergang von PSpice zwischen VOFF und VON (als Verhaltensquelle);
+  Schalter mit `SW(VT VH)` werden esims Schalter mit Hysterese.
+- Erprobt mit dem Makromodell des LM358/LM2904 von TI (PSpice, 18
+  Teilschaltungen, 227 Bauteile): DC-Kennlinie und Sprungantwort stimmen
+  mit ngspice im PSpice-Modus überein (DC auf 7 Stellen, Zeitverlauf auf
+  0,3 mV).
 - Ausdrücke in `{…}` werden übersetzt: Zahlen mit SPICE-Endungen (`M` ist
   milli, `meg` mega), `**`, `a ? b : c`, `limit`, `pwr`, `pwrs`, `uramp`,
   `u`, `stp`, `sgn`.

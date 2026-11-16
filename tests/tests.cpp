@@ -2957,7 +2957,7 @@ void testSpiceSubcircuits() {
     // expressions of SPICE in the syntax of the simulator
     checkTrue(spiceExpression("2**3") == "(2 ^ 3)", "** is a power: " + spiceExpression("2**3"));
     checkTrue(spiceExpression("a > 1 ? 2 : 3") == "if((a > 1), 2, 3)", "?: is if(): " + spiceExpression("a > 1 ? 2 : 3"));
-    checkTrue(spiceExpression("1meg*2M") == "(1000000 * 0.002)", "suffixes, M is milli: " + spiceExpression("1meg*2M"));
+    checkTrue(spiceExpression("1meg*2M") == "(1e+06 * 0.002)", "suffixes, M is milli: " + spiceExpression("1meg*2M"));
     checkTrue(spiceExpression("V(1, Out) + I(Vsense)") == "(v(1,out) + i(vsense))", "probes of nodes and sources");
 
     // values of the translated expressions: B sources at the operating point
@@ -3005,6 +3005,52 @@ void testSpiceSubcircuits() {
     const double vt = 0.025852;  // kT/q at 27 °C
     checkNear(probe(*md.circuit, x, "v(a)"), vt * std::log(1e-3 / 1e-10) + 1e-3, 2e-3, "the subcircuit's own DMOD");
     checkNear(probe(*md.circuit, x, "v(b)"), vt * std::log(1e-3 / 1e-14), 2e-3, "the file's dmod unchanged");
+
+    // PSpice: VSWITCH with a smooth transition, resistors with a model,
+    // expressions of the subcircuit's parameters in a model card
+    const auto vswitch = [](double vc) {
+        std::string text = R"json({
+            "parameters": {"vc": VC},
+            "subcircuits": {"s": [
+                ".subckt s a c",
+                ".param isat=1e-10",
+                "S1 a 0 c 0 SWM",
+                ".model SWM VSWITCH(RON=1 ROFF=1MEG VON=1 VOFF=0)",
+                "R1 m 0 RM 1k",
+                "I1 0 m 1m",
+                "R2 k 0 R_NOISELESS 1meg",
+                "I2 0 k 1m",
+                "D1 k 0 DX",
+                ".model RM RES(R=2)",
+                ".model R_NOISELESS RES(T_ABS=-273.15)",
+                ".model DX D(IS={isat})",
+                ".ends"]},
+            "components": [
+                {"type": "I", "name": "I1", "nodes": ["0", "a"], "dc": "1m"},
+                {"type": "V", "name": "VC", "nodes": ["c", "0"], "dc": "vc"},
+                {"type": "X", "name": "X1", "subcircuit": "s", "nodes": ["a", "c"]}
+            ]})json";
+        text.replace(text.find("VC"), 2, std::to_string(vc));
+        Netlist sw = parseNetlistText(text);
+        const Vector y = solveOperatingPoint(*sw.circuit, sw.options);
+        return std::make_pair(probe(*sw.circuit, y, "v(a)"), y);
+    };
+    const double lm = std::log(1e3), lr = std::log(1e-6);
+    const double r075 = std::exp(lm + 1.5 * lr * 0.25 - 2 * lr * std::pow(0.25, 3));
+    checkNear(vswitch(0.75).first, 1e-3 * r075, 1e-9, "VSWITCH between VOFF and VON: PSpice's resistance");
+    checkNear(vswitch(0.5).first, 1.0, 1e-9, "VSWITCH half way: sqrt(RON*ROFF)");
+    checkNear(vswitch(2.0).first, 1e-3, 1e-12, "VSWITCH on: RON");
+    checkNear(vswitch(-1.0).first, 1e3, 1e-6, "VSWITCH off: ROFF");
+    Netlist rm = parseNetlistText(R"json({"subcircuits": {"s": [".subckt s", ".param isat=1e-10", "R1 m 0 RM 1k",
+        "I1 0 m 1m", "D1 k 0 DX", "I2 0 k 1m", ".model RM RES(R=2)", ".model DX D(IS={isat})", ".ends"]},
+        "components": [{"type": "X", "name": "X1", "subcircuit": "s", "nodes": []}]})json");
+    x = solveOperatingPoint(*rm.circuit, rm.options);
+    checkNear(probe(*rm.circuit, x, "v(X1.m)"), 2.0, 1e-9, "the model's R= scales the resistance");
+    checkNear(probe(*rm.circuit, x, "v(X1.k)"), vt * std::log(1e-3 / 1e-10), 2e-3, "IS={isat} from the subcircuit's .param");
+    const SpiceDefinitions quiet = parseSpiceSubcircuit("s", ".subckt s a\nR1 a 0 R_NOISELESS 1k\n"
+                                                             ".model R_NOISELESS RES(T_ABS=-273.15)\n.ends\n");
+    checkTrue(quiet.subcircuits.at("s")["components"][0].value("noise", true) == false,
+              "T_ABS at absolute zero: a resistor without noise");
 
     // what cannot be read says where
     const auto error = [](const std::string& text) {
@@ -3094,6 +3140,15 @@ void testEditorSupport() {
         checkNear(probe(*de.circuit, x, "v(out)"), 0.75, 1e-12, "numbers read the same under a German locale");
         checkNear(probe(*de.circuit, x, "if(v(out) >= 0.5, 2.5, 0)"), 2.5, 1e-12,
                   "numbers and argument lists in expressions under a German locale");
+        checkTrue(spiceExpression("0.5*1.5k") == "(0.5 * 1500)", "SPICE expressions under a German locale: " +
+                                                                    spiceExpression("0.5*1.5k"));
+        Netlist sp = parseNetlistText(R"json({
+            "subcircuits": {"s": [".subckt s o", "S1 o 0 o 0 SW", ".model SW VSWITCH(RON=0.5 ROFF=1.5 VON=0.25 VOFF=0.125)",
+                                  "I1 0 o 0.1", ".ends"]},
+            "components": [{"type": "X", "name": "X1", "subcircuit": "s", "nodes": ["a"]}]
+        })json");
+        const Vector y = solveOperatingPoint(*sp.circuit, sp.options);
+        checkTrue(std::isfinite(probe(*sp.circuit, y, "v(a)")), "a translated SPICE switch under a German locale");
     } else {
         std::cout << "  (no German locale installed: locale test skipped)\n";
     }

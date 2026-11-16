@@ -360,7 +360,7 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
     switch (kind) {
         case 'r':
             needNodes(2, 2, "[a, b]");
-            ckt.add(std::make_unique<Resistor>(name, n[0], n[1], p.numAny({"value", "r"})));
+            ckt.add(std::make_unique<Resistor>(name, n[0], n[1], p.numAny({"value", "r"}), p.flag("noise", true)));
             break;
         case 'c':
             needNodes(2, 2, "[a, b]");
@@ -1192,9 +1192,25 @@ double parseSpiceValue(const std::string& token, const std::string& where) {
 json parseSpiceModel(const std::string& name, const std::string& text) {
     const std::string where = "model \"" + name + "\"";
     // Separators to blanks; a '+' at the start of a line continues the previous one.
+    // {expressions} (of parameters of a subcircuit) are kept aside: "{#k}"
     std::string flat;
+    std::vector<std::string> expressions;
     bool lineStart = true;
-    for (char ch : text) {
+    for (size_t i = 0; i < text.size(); ++i) {
+        char ch = text[i];
+        if (ch == '{') {
+            int depth = 0;
+            size_t j = i;
+            for (; j < text.size(); ++j) {
+                if (text[j] == '{') ++depth;
+                if (text[j] == '}' && --depth == 0) break;
+            }
+            expressions.push_back(text.substr(i + 1, j - i - 1));
+            flat += "{#" + std::to_string(expressions.size() - 1) + "}";
+            i = j;
+            lineStart = false;
+            continue;
+        }
         if (ch == '\n' || ch == '\r') {
             flat += ' ';
             lineStart = true;
@@ -1252,12 +1268,22 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
             throw std::runtime_error(where + ": expected KEY=VALUE near '" + tok[k] + "'");
         std::string key = lower(tok[k]);
         if (bsim3 && key == "version") continue;  // a version number like 3.3.0 is not a value
+        if (key == "cjo") key = "cj0";
+        if (tok[k + 2].rfind("{#", 0) == 0) {
+            // an expression: evaluated where the model is used
+            const size_t e = std::stoul(tok[k + 2].substr(2));
+            if (!bsim3 && !keys.count(key)) {
+                ignored += (ignored.empty() ? "" : ", ") + key;
+                continue;
+            }
+            out[key] = spiceExpression(expressions.at(e));
+            continue;
+        }
         const double value = parseSpiceValue(tok[k + 2], where + ", " + key);
         if (bsim3) {
             if (key != "level") out[key] = value;
             continue;
         }
-        if (key == "cjo") key = "cj0";
         if (key == "level") {
             if (value != 1.0)
                 warn() << where << ": level " << value

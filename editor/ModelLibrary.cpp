@@ -1,6 +1,7 @@
 #include "ModelLibrary.hpp"
 
 #include <QDir>
+#include <algorithm>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -42,7 +43,8 @@ QString LibraryModel::title() const {
     const QStringList lines = description.split('\n');
     for (const QString& l : lines) {
         const QString t = l.trimmed();
-        if (t.startsWith(name + ' ', Qt::CaseInsensitive)) return t.mid(name.size() + 1).trimmed();
+        if (t.startsWith(name + ' ', Qt::CaseInsensitive))
+            return t.mid(name.size() + 1).remove(QRegularExpression(QStringLiteral("^[\\s:–-]+"))).trimmed();
     }
     return lines.value(0).trimmed();
 }
@@ -94,7 +96,8 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
             continue;
         }
         if (t.startsWith('*')) {
-            comment << t.mid(1).trimmed();
+            const QString c = t.mid(1).trimmed();
+            if (!c.contains(QRegularExpression(QStringLiteral("^[*=#~-]*$")))) comment << c;  // not a ruler line
             continue;
         }
         if (t.isEmpty()) {
@@ -151,6 +154,7 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
         comment.clear();
     }
     // a subcircuit takes along the top-level definitions it uses, and theirs
+    QSet<QString> helpers;  // subcircuits that others of the file use
     for (LibraryModel& m : out) {
         if (m.type != "subckt") continue;
         QSet<QString> used{m.name.toLower()};
@@ -170,12 +174,17 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
                 const QString n = b.name.toLower();
                 if (used.contains(n) || !words.contains(n)) continue;
                 used.insert(n);
+                helpers.insert(n);
                 extra << b.lines.join('\n');
                 todo << b.lines.join('\n');
             }
         }
         if (!extra.isEmpty()) m.text += '\n' + extra.join('\n');
     }
+    // parts of other subcircuits are not offered on their own
+    out.erase(std::remove_if(out.begin(), out.end(),
+                             [&](const LibraryModel& m) { return m.type == "subckt" && helpers.contains(m.name.toLower()); }),
+              out.end());
     return out;
 }
 

@@ -9,7 +9,8 @@ namespace esim {
 
 class Resistor final : public Device {
 public:
-    Resistor(std::string name, int a, int b, double r);
+    // noisy = false: no thermal noise (as the noiseless resistors of op amp macromodels)
+    Resistor(std::string name, int a, int b, double r, bool noisy = true);
     void setup(Circuit& ckt) override;
     void stamp(StampContext& ctx) override;
     void noiseSources(std::vector<NoiseSource>& out) const override;
@@ -18,6 +19,7 @@ private:
     int a_, b_;
     double g_;
     double kT_ = 0.0;
+    bool noisy_ = true;
 };
 
 class Capacitor final : public Device {

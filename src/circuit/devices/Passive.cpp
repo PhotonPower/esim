@@ -9,14 +9,15 @@ namespace esim {
 
 // --- Resistor --------------------------------------------------------------
 
-Resistor::Resistor(std::string name, int a, int b, double r)
-    : Device(std::move(name)), a_(a), b_(b), g_(1.0 / r) {
+Resistor::Resistor(std::string name, int a, int b, double r, bool noisy)
+    : Device(std::move(name)), a_(a), b_(b), g_(1.0 / r), noisy_(noisy) {
     if (!(r != 0.0)) throw std::runtime_error(this->name() + ": resistance must not be zero");
 }
 
 void Resistor::setup(Circuit& ckt) { kT_ = kBoltzmann * (ckt.options.temp + 273.15); }
 
 void Resistor::noiseSources(std::vector<NoiseSource>& out) const {
+    if (!noisy_) return;
     out.push_back({name(), a_, b_, 4.0 * kT_ * std::abs(g_), 0.0});  // thermal
 }
 

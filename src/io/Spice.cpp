@@ -2,7 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
+#include <cmath>
+#include <charconv>
 #include <cstring>
 #include <memory>
 #include <regex>
@@ -30,10 +31,12 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a);
 }
 
+// shortest text that reads back as v; independent of the locale (snprintf
+// would write "0,5" in a process with a German locale, as the editor)
 std::string numberText(double v) {
     char buf[40];
-    std::snprintf(buf, sizeof buf, "%.17g", v);
-    return buf;
+    const auto r = std::to_chars(buf, buf + sizeof buf, v);
+    return std::string(buf, r.ptr);
 }
 
 // A number in SPICE notation ("4.7k", "1meg", "10uF"): suffixes ignore case,
@@ -691,6 +694,31 @@ private:
         return json();  // linear: the caller
     }
 
+    // A PSpice VSWITCH: between Voff and Von the resistance goes smoothly
+    // (on a log scale, with zero slope at both ends) from Roff to Ron:
+    //   R = exp(Lm + 3 Lr (vc - Vm) / (2 Vd) - 2 Lr (vc - Vm)^3 / Vd^3)
+    // with Lm = ln sqrt(Ron Roff), Lr = ln(Ron / Roff), Vm = (Von + Voff) / 2,
+    // Vd = Von - Voff. As a behavioural current source.
+    json vswitch(const std::string& name, const std::vector<std::string>& n, const json& mn) {
+        const auto param = [&](const char* k, double fallback) {
+            if (!mn.contains(k)) return fallback;
+            if (!mn[k].is_number()) throw std::runtime_error(std::string("VSWITCH ") + k + " must be a number");
+            return mn[k].get<double>();
+        };
+        const double ron = param("ron", 1.0), roff = param("roff", 1e6), von = param("von", 1.0), voff = param("voff", 0.0);
+        if (!(ron > 0) || !(roff > 0) || von == voff) throw std::runtime_error("VSWITCH needs RON, ROFF > 0 and VON != VOFF");
+        const double lm = std::log(std::sqrt(ron * roff)), lr = std::log(ron / roff), vm = (von + voff) / 2, vd = von - voff;
+        const std::string vc = "v(" + n[2] + "," + n[3] + ")";
+        const std::string x = "(" + vc + " - " + numberText(vm) + ")";
+        const std::string g = "exp(-(" + numberText(lm) + " + " + numberText(3 * lr / (2 * vd)) + " * " + x + " - " +
+                              numberText(2 * lr / (vd * vd * vd)) + " * " + x + "^3))";
+        const std::string on = vd > 0 ? vc + " >= " + numberText(von) : vc + " <= " + numberText(von);
+        const std::string off = vd > 0 ? vc + " <= " + numberText(voff) : vc + " >= " + numberText(voff);
+        return {{"type", "B"}, {"name", name}, {"nodes", {n[0], n[1]}},
+                {"i", "v(" + n[0] + "," + n[1] + ") * if(" + on + ", " + numberText(1 / ron) + ", if(" + off + ", " +
+                          numberText(1 / roff) + ", " + g + "))"}};
+    }
+
     json element(const Def* d, const Line& l) {
         const std::vector<std::string> t = tokens(l.text);
         const char kind = static_cast<char>(std::toupper(static_cast<unsigned char>(l.text[0])));
@@ -714,9 +742,36 @@ private:
                 need(2);
                 json c = {{"type", std::string(1, kind)}, {"name", name}, {"nodes", {node(0), node(1)}}};
                 const char* key = kind == 'R' ? "r" : kind == 'C' ? "c" : "l";
-                if (pos.size() > 2) c["value"] = value(pos[2]);
-                else if (named.contains(key)) c["value"] = named[key];
-                else throw std::runtime_error("no value: " + l.text);
+                // PSpice: "R1 a b [model] value"; the model scales the value (R=, C=, L=),
+                // T_ABS near absolute zero makes a resistor noiseless
+                size_t at = 2;
+                if (pos.size() > 3 && !isNumber(pos[2]) && pos[2][0] != '{' && pos[2][0] != '\'') {
+                    const Line* m = modelLine(d, pos[2]);
+                    if (!m) throw std::runtime_error("model " + pos[2] + " not found");
+                    std::vector<std::string> mp;
+                    json mn = json::object();
+                    splitParams(tokens(m->text), 3, mp, mn);
+                    double scale = 1.0;
+                    for (auto it = mn.begin(); it != mn.end(); ++it) {
+                        if (it.key() == key && it->is_number()) scale = it->get<double>();
+                        else if (it.key() == "t_abs" && it->is_number() && it->get<double>() <= -273.0 && kind == 'R')
+                            c["noise"] = false;
+                        else if (warnedModels_.insert(lower(pos[2]) + "." + it.key()).second)
+                            out_.warnings.push_back(where(l) + ": " + it.key() + " of model " + pos[2] + " ignored");
+                    }
+                    const json v = value(pos[3]);
+                    c["value"] = scale == 1.0 ? v
+                                 : v.is_number() ? json(v.get<double>() * scale)
+                                                 : json("(" + v.get<std::string>() + ")*" + numberText(scale));
+                    at = 4;
+                } else if (pos.size() > 2) {
+                    c["value"] = value(pos[2]);
+                } else if (named.contains(key)) {
+                    c["value"] = named[key];
+                } else {
+                    throw std::runtime_error("no value: " + l.text);
+                }
+                (void)at;
                 if (kind != 'R' && named.contains("ic")) c["ic"] = named["ic"];
                 unused({key, "ic"});
                 return c;
@@ -794,6 +849,7 @@ private:
                 std::vector<std::string> mp;
                 json mn = json::object();
                 splitParams(mt, 3, mp, mn);
+                if (lower(mt[2]) == "vswitch") return vswitch(name, {node(0), node(1), node(2), node(3)}, mn);
                 for (const char* k : {"ron", "roff", "vt", "vh"})
                     if (mn.contains(k)) c[k] = mn[k];
                 if (pos.size() > 5 && lower(pos[5]) == "on") c["initial"] = "on";
@@ -832,6 +888,7 @@ private:
     std::vector<std::unique_ptr<Def>> defs_;
     std::map<const Def*, std::map<std::string, std::string>> modelNames_;
     std::set<std::string> taken_;
+    std::set<std::string> warnedModels_;
     SpiceDefinitions out_;
 };
 
