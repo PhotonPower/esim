@@ -35,8 +35,9 @@ werden mit dem Bauteil \code{X} eingesetzt:
     überschreibt einzelne Werte mit \code{"parameters": {...}}.
   \item[Inhalt]
     Alle Bauteile, auch weitere Instanzen (Schachtelung bis 20 Ebenen),
-    dazu eigene \code{models}, \code{variables}, \code{equations} und
-    \code{events}. Ein Bauteil mit thermischem Zustand oder eigener
+    dazu eigene \code{variables}, \code{equations} und \code{events}.
+    Modelle stehen in \code{models} der Datei; eigene Modelle hat nur eine
+    SPICE-Teilschaltung (Abschnitt~\ref{sec:spice-subckt}). Ein Bauteil mit thermischem Zustand oder eigener
     Kennlinie lässt sich so als Modell kapseln und mehrfach verwenden.
   \item[Plan]
     Der Editor legt den Plan der Teilschaltung unter \code{"schematic"} in

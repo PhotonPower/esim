@@ -1,0 +1,681 @@
+\chapter{Befehlsreferenz}
+\label{kap:referenz}
+
+Dieser Anhang listet vollständig, was esim versteht: die Programme mit
+allen Optionen, jeden Schlüssel der Eingabedatei mit erlaubten Werten und
+Standardwerten, alle Ausdrücke und alle Befehle des Editors. Die
+Erklärungen stehen in den Kapiteln, auf die verwiesen wird; hier geht es
+ums Nachschlagen.
+
+\paragraph{Lesart der Tabellen.}
+»Pflicht« heißt, dass der Schlüssel angegeben werden muss. Ein Standardwert
+gilt, wenn der Schlüssel fehlt. Wo zwei Namen durch »|« getrennt sind, sind
+beide gleichwertig (Synonyme). »Zahl« bedeutet: JSON-Zahl, Zeichenkette mit
+SI-Präfix oder Ausdruck aus Parametern (Abschnitt~\ref{sec:zahlen});
+»Ausdruck« bedeutet: Zeichenkette mit einem Ausdruck nach
+Abschnitt~\ref{sec:ausdruecke}.
+
+% ---------------------------------------------------------------------------
+\section{Programme}
+
+\subsection{esim}
+
+\begin{shell}
+esim <datei.json> [-o <ordner>] [--summary <datei.json>] [-j <n>] [--progress]
+esim -h | --help
+\end{shell}
+
+\begin{longtable}{@{}P{4.2cm}P{2.6cm}P{7.0cm}@{}}
+  \toprule
+  Option & Standard & Wirkung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{<datei.json>} & Pflicht & Eingabedatei \\
+  \code{-o <ordner>} & aktuelles Verzeichnis & Ordner der Ergebnisdateien \\
+  \code{--summary <datei>} & keine & Zusammenfassung aller Ergebnisse als JSON (Abschnitt~\ref{sec:summary}) \\
+  \code{-j <n>} | \code{--threads <n>} & alle Kerne & gleichzeitige Läufe einer Studie \\
+  \code{--progress} & aus & Zeilen \code{progress <analyse> <anteil>} auf stderr \\
+  \code{-h} | \code{--help} & & kurze Hilfe \\
+\end{longtable}
+
+Rückgabewert 0 bei Erfolg, 1 bei einem Fehler. Ergebnisdateien:
+\datei{<ordner>/<dateiname>.<analyse>.csv} (Tabelle in
+Abschnitt~\ref{sec:ausgaenge}ff.).
+
+\subsection{esim-editor}
+
+\begin{shell}
+esim-editor [datei.json] [--subcircuit <name>] [--run] [--snapshot <bild.png>]
+\end{shell}
+
+\begin{longtable}{@{}P{4.2cm}P{9.6cm}@{}}
+  \toprule
+  Option & Wirkung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{datei.json} & Datei öffnen \\
+  \code{--subcircuit <name>} & den Plan dieser Teilschaltung zeigen \\
+  \code{--run} & gleich simulieren \\
+  \code{--snapshot <bild.png>} & Fenster (nach der Simulation) als Bild sichern und beenden \\
+\end{longtable}
+
+\subsection{tools/spice2json.py}
+
+\begin{shell}
+python3 tools/spice2json.py <netzliste.cir> [-o <datei.json>]
+\end{shell}
+
+\begin{longtable}{@{}P{4.2cm}P{9.6cm}@{}}
+  \toprule
+  Argument & Wirkung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{<netzliste>} & SPICE-Netzliste (\datei{.cir}, \datei{.sp}, \datei{.net}) \\
+  \code{-o} | \code{--output <datei>} & JSON-Datei; ohne Angabe die Standardausgabe \\
+\end{longtable}
+
+\subsection{tools/plot.py}
+
+\begin{shell}
+python3 tools/plot.py <datei.csv> [<datei.csv> ...] [-o <bild>] [--cols <regex>]
+                      [--separate] [--group] [--logx] [--logy]
+\end{shell}
+
+\begin{longtable}{@{}P{4.2cm}P{9.6cm}@{}}
+  \toprule
+  Argument & Wirkung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{<datei.csv> ...} & eine oder mehrere Ergebnisdateien (übereinandergelegt) \\
+  \code{-o} | \code{--output <bild>} & Bild schreiben (PNG, PDF, SVG) statt ein Fenster zu öffnen \\
+  \code{--cols <regex>} & nur Spalten, deren Name auf den regulären Ausdruck passt \\
+  \code{--separate} & ein Feld je Größe \\
+  \code{--group} & erste Spalte als Parameter eines Sweeps behandeln \\
+  \code{--logx}, \code{--logy} & logarithmische Achsen \\
+\end{longtable}
+
+\subsection{Python-Modul esim}
+
+\begin{longtable}{@{}P{5.2cm}P{8.6cm}@{}}
+  \toprule
+  Name & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{run(netlist, ...)} & simuliert, liefert \code{Result}; weitere Argumente \code{parameters}, \code{analyses}, \code{outputs}, \code{esim}, \code{keep}, \code{threads} (Kapitel~\ref{kap:python}) \\
+  \code{load_netlist(pfad)} & Eingabedatei mit Kommentaren als \code{dict} \\
+  \code{EsimError} & Ausnahme mit der Fehlermeldung des Simulators \\
+  \code{Result.analyses}, \code{.op}, \code{.dc}, \code{.ac}, \code{.tran}, \code{.pss}, \code{.noise}, \code{.sens}, \code{[name]}, \code{.log}, \code{.title} & Analysen und Protokoll \\
+  \code{Analysis.type}, \code{.name}, \code{.data}, \code{[spalte]}, \code{.columns}, \code{.values}, \code{.measures}, \code{.stats}, \code{.sweep}, \code{.statistics}, \code{.parameters}, \code{.sensitivities}, \code{.fourier}, \code{.info}, \code{.runs()} & Ergebnisse einer Analyse \\
+  Umgebungsvariable \code{ESIM_BIN} & Pfad des Programms \code{esim} \\
+\end{longtable}
+
+% ---------------------------------------------------------------------------
+\section{Oberste Ebene der Eingabedatei}
+
+\begin{longtable}{@{}P{3.0cm}P{4.3cm}P{6.5cm}@{}}
+  \toprule
+  Schlüssel & Wert & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{title} & Text & Titel \\
+  \code{parameters} & \code{{"name": Zahl, ...}} & Parameter (Abschnitt~\ref{sec:parameter}) \\
+  \code{functions} & \code{{"f(a, b)": "Ausdruck", ...}} & eigene Funktionen \\
+  \code{tables} & \code{{"name": {...}, ...}} & Kennlinien (Abschnitt~\ref{sec:ref-tabellen}) \\
+  \code{models} & \code{{"name": Objekt | SPICE-Zeile | Liste von Zeilen}} & Modelle (Abschnitt~\ref{sec:ref-modelle}) \\
+  \code{subcircuits} & \code{{"name": Objekt | SPICE-Text | Liste von Zeilen}} & Teilschaltungen (Abschnitt~\ref{sec:ref-teil}) \\
+  \code{components} & Liste von Bauteilen & Abschnitt~\ref{sec:ref-bauteile} \\
+  \code{variables} & \code{{"name": ...}} & Unbekannte (Abschnitt~\ref{sec:ref-gleichungen}) \\
+  \code{equations} & Liste von Gleichungen und Schleifen & eigene Gleichungen \\
+  \code{events} & Liste von Ereignissen & Zuweisungen bei Ereignissen \\
+  \code{analyses} & Liste von Analysen & Abschnitt~\ref{sec:ref-analysen} \\
+  \code{outputs} & Liste von Ausdrücken & Ausgänge; ohne Angabe alle Knoten, Zweigströme, Variablen \\
+  \code{options} & Objekt & Abschnitt~\ref{sec:ref-optionen} \\
+  \code{nodeset} & \code{{"knoten": Zahl, ...}} & Startwerte für den Arbeitspunkt \\
+  \code{ic} & \code{{"knoten": Zahl, ...}} & Spannungen bei $t=0$ für \code{"uic": true} \\
+  \code{schematic} & Objekt & Schaltplan des Editors; vom Simulator überlesen \\
+\end{longtable}
+
+% ---------------------------------------------------------------------------
+\section{Bauteile}
+\label{sec:ref-bauteile}
+
+Gemeinsame Schlüssel aller Bauteile:
+
+\begin{longtable}{@{}P{3.0cm}P{4.3cm}P{6.5cm}@{}}
+  \toprule
+  Schlüssel & Wert & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{type} & Text, Pflicht & Bauteiltyp (unten), Groß/klein egal \\
+  \code{name} & Text & Name; ohne Angabe Typbuchstabe und laufende Nummer \\
+  \code{nodes} & Liste von Knotennamen, Pflicht (außer \code{K}) & Anschlüsse in der Reihenfolge der Tabellen \\
+  \code{model} & Text & Modell aus \code{models} (D, Q, J, M) \\
+\end{longtable}
+
+\subsection*{Passive Bauteile und Quellen}
+
+\begin{longtable}{@{}P{2.7cm}P{3.0cm}P{3.6cm}P{4.5cm}@{}}
+  \toprule
+  \code{type} & \code{nodes} & Schlüssel & Standard / Bemerkung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{R} | \code{resistor} & a, b & \code{value} | \code{r} & Pflicht \\
+   & & \code{noise} & \code{true}; \code{false}: rauschfrei \\
+  \code{C} | \code{capacitor} & a, b & \code{value} | \code{c} & Pflicht \\
+   & & \code{ic} & Anfangsspannung (nur \code{uic}) \\
+  \code{L} | \code{inductor} & a, b & \code{value} | \code{l} & Pflicht \\
+   & & \code{ic} & Anfangsstrom (nur \code{uic}) \\
+  \code{V} | \code{vsource} & $+$, $-$ & \code{dc} | \code{value} & Wert von \code{wave} bei $t=0$, sonst 0 \\
+  \code{I} | \code{isource} & von, nach & \code{wave} & Kurvenform (Abschnitt~\ref{sec:ref-wave}) \\
+   & & \code{ac} & 0 \\
+   & & \code{acphase} & 0 (Grad) \\
+  \code{E} | \code{vcvs} & $+$, $-$, St$+$, St$-$ & \code{gain} & Pflicht \\
+  \code{G} | \code{vccs} & von, nach, St$+$, St$-$ & \code{gm} | \code{gain} & Pflicht \\
+  \code{F} | \code{cccs} & von, nach & \code{control} & Pflicht: Name einer V-Quelle oder Spule \\
+   & & \code{gain} & Pflicht \\
+  \code{H} | \code{ccvs} & $+$, $-$ & \code{control} & Pflicht \\
+   & & \code{r} | \code{gain} & Pflicht (\ohm) \\
+  \code{B} | \code{behavioral} & $+$, $-$ & genau eines von \code{i}, \code{v}, \code{q}, \code{phi} & Ausdruck: Strom, Spannung, Ladung, Fluss \\
+  \code{K} | \code{coupling} & – & \code{inductors} & Pflicht: Liste von zwei Spulennamen \\
+   & & \code{k} & Pflicht, $-1 < k < 1$ \\
+\end{longtable}
+
+\subsection*{Leitung, Schalter, ideale Diode, Teilschaltung}
+
+\begin{longtable}{@{}P{2.7cm}P{3.0cm}P{3.6cm}P{4.5cm}@{}}
+  \toprule
+  \code{type} & \code{nodes} & Schlüssel & Standard / Bemerkung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{T} | \code{tline} & a$+$, a$-$, b$+$, b$-$ & \code{z0} & Pflicht (ohne \code{l}/\code{c}) \\
+   & & \code{td} & Laufzeit; oder \code{f} mit \code{nl} \\
+   & & \code{f}, \code{nl} & Frequenz; \code{nl} Standard 0,25 \\
+   & & \code{l}, \code{c} & Beläge je Länge (statt \code{z0}, \code{td}) \\
+   & & \code{len} & 1 \\
+   & & \code{r}, \code{g} & 0, 0 (je Länge) \\
+   & & \code{segments} & automatisch (höchstens 200) \\
+  \code{S} | \code{switch} & a, b oder a, b, St$+$, St$-$ & \code{control} & Ausdruck; Pflicht bei zwei Knoten, verboten bei vier \\
+   & & \code{vt} | \code{threshold} & 0 \\
+   & & \code{vh} | \code{hysteresis} & 0 \\
+   & & \code{ron}, \code{roff} & $10^{-3}$\,\ohm, $10^{9}$\,\ohm \\
+   & & \code{initial} & \code{"off"}; oder \code{"on"} \\
+  \code{ideal_diode} & Anode, Kathode & \code{vf} & 0 \\
+   & & \code{ron}, \code{roff} & $10^{-3}$\,\ohm, $10^{9}$\,\ohm \\
+  \code{X} | \code{subcircuit} & wie \code{ports} & \code{subcircuit} & Pflicht: Name \\
+   & & \code{parameters} & \code{{"name": Zahl}}, überschreibt Standardwerte \\
+\end{longtable}
+
+\subsection*{Halbleiter}
+
+\begin{longtable}{@{}P{3.2cm}P{3.4cm}P{7.2cm}@{}}
+  \toprule
+  \code{type} & \code{nodes} & Schlüssel \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{D} | \code{diode} & Anode, Kathode & \code{model} und/oder Diodenparameter \\
+  \code{Q} | \code{bjt} | \code{npn} | \code{pnp} & C, B, E & \code{model} und/oder BJT-Parameter; Polarität aus \code{type} oder Modell \\
+  \code{J} | \code{jfet} | \code{njf} | \code{pjf} & D, G, S & \code{model} und/oder JFET-Parameter \\
+  \code{M} | \code{mosfet} | \code{nmos} | \code{pmos} & D, G, S [, B] & \code{model}, \code{level}, \code{w}, \code{l}, MOS-Parameter; bei BSIM3 auch \code{ad}, \code{as}, \code{pd}, \code{ps}, \code{m} \\
+\end{longtable}
+
+Parameter am Bauteil überschreiben die des Modells. Ohne Bulk-Knoten liegt
+der Bulk eines MOSFET an der Source.
+
+% ---------------------------------------------------------------------------
+\section{Kurvenformen (wave)}
+\label{sec:ref-wave}
+
+\begin{longtable}{@{}P{2.6cm}P{3.6cm}P{7.6cm}@{}}
+  \toprule
+  \code{type} & Schlüssel & Standard \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{dc} & \code{value} & Pflicht \\
+  \code{sin} | \code{sine} & \code{amplitude}, \code{freq} & Pflicht \\
+   & \code{offset}, \code{delay}, \code{damping}, \code{phase} & 0 (\code{phase} in Grad, \code{damping} in 1/s) \\
+  \code{pulse} & \code{v1}, \code{v2} & Pflicht \\
+   & \code{delay} & 0 \\
+   & \code{width}, \code{period} & unendlich (ohne \code{period}: Einzelpuls) \\
+   & \code{rise}, \code{fall} & 0,1\,\% der Periode (sonst der Breite, sonst 1\,ns) \\
+  \code{pwl} & \code{points} & Pflicht: \code{[[t, wert], ...]} \\
+\end{longtable}
+
+% ---------------------------------------------------------------------------
+\section{Modelle}
+\label{sec:ref-modelle}
+
+Ein Modell ist ein Objekt mit \code{type} und Parametern, eine SPICE-Zeile
+\code{.model NAME TYP(...)} oder eine Liste solcher Zeilen.
+
+\begin{longtable}{@{}P{3.6cm}P{10.2cm}@{}}
+  \toprule
+  \code{type} & Parameter (Bedeutung und Standardwerte in Kapitel~\ref{kap:format-modelle}) \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{diode} | \code{D} & \code{is n rs cj0 vj m fc tt bv ibv eg xti kf af} \\
+  \code{npn}, \code{pnp} & \code{is bf br nf nr vaf var ikf ikr ise ne isc nc rb rc re cje vje mje cjc vjc mjc tf tr fc eg xti xtb kf af} \\
+  \code{njf}, \code{pjf} & \code{vto beta lambda is cgs cgd pb fc kf af} \\
+  \code{nmos}, \code{pmos}, Level 1 & \code{vto kp gamma phi lambda w l tox cgso cgdo cgbo cbd cbs pb mj fc is tcv kf af} \\
+  \quad \code{"level": "ekv"} & zusätzlich \code{theta ucrit} \\
+  \quad \code{"level": 3} & zusätzlich \code{theta eta vmax nfs kappa xj ld delta u0 nsub nss tpg} \\
+  \quad \code{"level": "bsim3"} (SPICE \code{LEVEL=8}, \code{49}, \code{53}) & siehe unten \\
+\end{longtable}
+
+\paragraph{BSIM3.}
+Ausgewertet werden:
+\code{a0 a1 a2 acde ags alpha0 alpha1 at b0 b1 beta0 binunit capmod cdsc
+cdscb cdscd cf cgbo cgdl cgdo cgsl cgso cit cj cjsw cjswg ckappa clc cle
+delta dlc drout dsub dvt0 dvt0w dvt1 dvt1w dvt2 dvt2w dwb dwc dwg eta0 etab
+gamma1 gamma2 js jsw k1 k2 k3 k3b keta kf af kt1 kt1l kt2 lint ll llc lln
+lw lwc lwl lwlc lwn mj mjsw mjswg mobmod moin nfactor ngate nj nlx noff
+npeak nsub pb pbsw pbswg pclm pdibl1 pdibl2 pdiblb prt prwb prwg pscbe1
+pscbe2 pvag rdsw tnom tox toxm u0 ua ua1 ub ub1 uc uc1 ute vbm vbx vfb vfbcv
+voff voffcv vsat vth0 w0 wint wl wlc wln wr ww wwc wwl wwlc wwn xj xl xpart
+xt xti xw}; am Bauteil \code{w l ad as pd ps m}. Die größenabhängigen
+Parameter gibt es zusätzlich mit den Vorsilben \code{l}, \code{w} und
+\code{p} (z.\,B. \code{lvth0}). Synonyme: \code{vtho} = \code{vth0},
+\code{nch} = \code{npeak}, \code{pdiblc1}/\code{pdiblc2}/\code{pdiblcb} =
+\code{pdibl1}/\code{pdibl2}/\code{pdiblb}, \code{cjo} = \code{cj}.
+Ohne Wirkung, aber ohne Warnung angenommen: \code{noimod version paramchk
+lmin lmax wmin wmax tcj tcjsw tcjswg tpb tpbsw tpbswg elm rsh hdif nqsmod
+acnqsmod noia noib noic em ef lref wref acm ijth wmlt lmlt nrd nrs geo level
+lelm welm pelm tox1 dtoxcv}.
+
+% ---------------------------------------------------------------------------
+\section{Teilschaltungen}
+\label{sec:ref-teil}
+
+\begin{longtable}{@{}P{3.0cm}P{4.3cm}P{6.5cm}@{}}
+  \toprule
+  Schlüssel & Wert & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{ports} & Liste von Knotennamen, Pflicht & Anschlüsse nach außen \\
+  \code{parameters} & \code{{"name": Zahl}} & Standardwerte der Parameter \\
+  \code{components} & Liste & Bauteile, auch Instanzen (bis 20 Ebenen) \\
+  \code{variables}, \code{equations}, \code{events} & wie oben & eigene Gleichungen und Ereignisse \\
+  \code{schematic} & Objekt & Plan des Editors \\
+\end{longtable}
+
+Statt eines Objekts darf der SPICE-Text einer \code{.subckt} stehen
+(Zeichenkette oder Liste von Zeilen, Abschnitt~\ref{sec:spice-subckt}).
+Namen von außen: \code{<instanz>.<name>}, geschachtelt
+\code{<instanz>.<instanz>.<name>}.
+
+% ---------------------------------------------------------------------------
+\section{Gleichungen, Ereignisse, Tabellen}
+\label{sec:ref-gleichungen}
+
+\subsection*{variables}
+
+\begin{longtable}{@{}P{4.6cm}P{9.2cm}@{}}
+  \toprule
+  Form & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{"x": Zahl} & Anfangswert (Zustand) bzw. Startwert \\
+  \code{"x": null} & Zustand startet im Gleichgewicht \\
+  \code{"x": {"init": Zahl}} & Anfangswert \\
+  \code{"x": {"guess": Zahl}} & nur Startwert für Newton \\
+  \code{"x": {"discrete": Zahl}} & diskrete Variable mit Startwert \\
+  \code{"abstol": Zahl} & zusätzlich in einem Objekt: eigene absolute Toleranz \\
+  \code{"T[n]": ...} & Vektor \code{T[1]} … \code{T[n]}; Werte als Zahl oder Liste je Element \\
+\end{longtable}
+
+Von \code{init}, \code{guess} und \code{discrete} darf höchstens eines
+stehen.
+
+\subsection*{equations}
+
+\begin{longtable}{@{}P{6.0cm}P{7.8cm}@{}}
+  \toprule
+  Form & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{"links = rechts"} & eine Gleichung; \code{der(...)} für Zeitableitungen \\
+  \code{{"for": "i", "from": a, "to": b, "equation": "..."}} & eine Gleichung je Indexwert \\
+  \code{{"for": "i", "from": a, "to": b, "equations": [...]}} & mehrere Einträge je Indexwert, auch Schleifen \\
+\end{longtable}
+
+\subsection*{events}
+
+\begin{longtable}{@{}P{3.0cm}P{4.3cm}P{6.5cm}@{}}
+  \toprule
+  Schlüssel & Wert & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{when} & Ausdruck mit Vergleich & feuert, wenn die Bedingung wahr wird \\
+  \code{every} & Zahl $>0$ & feuert periodisch \\
+  \code{start} & Zahl, Standard: eine Periode & erster Zeitpunkt von \code{every} \\
+  \code{at} & Zahl oder Liste & feuert zu diesen Zeiten \\
+  \code{set} & \code{{"ziel": "Ausdruck"}} & Zuweisungen an Zustände, diskrete Variablen, \code{v(knoten)}, \code{i(spule)} \\
+\end{longtable}
+
+Genau einer der Auslöser \code{when}, \code{every}, \code{at}.
+
+\subsection*{tables}
+\label{sec:ref-tabellen}
+
+\begin{longtable}{@{}P{3.0cm}P{4.3cm}P{6.5cm}@{}}
+  \toprule
+  Schlüssel & Standard & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{x}, \code{y} & – & Stützstellen als zwei Listen \\
+  \code{points} & – & Stützstellen als Liste von \code{[x, y]} \\
+  \code{file} & – & Textdatei mit Spalten, relativ zur Eingabedatei \\
+  \code{xcol}, \code{ycol} & 0, 1 & Spalten der Datei (ab 0) \\
+  \code{interp} & \code{"linear"} & oder \code{"cubic"} (monoton, PCHIP) \\
+  \code{extrap} & \code{"hold"} & oder \code{"linear"} \\
+\end{longtable}
+
+\subsection*{functions}
+
+\code{"name(a, b, ...)": "Ausdruck"} – Aufruf in Ausdrücken als
+\code{name(...)}; keine Rekursion, keine eingebauten Namen.
+
+% ---------------------------------------------------------------------------
+\section{Analysen}
+\label{sec:ref-analysen}
+
+Alle Analysen haben \code{type} (Pflicht) und \code{name}. Dazu kommen
+\code{outputs} bei \code{op}, \code{dc}, \code{ac}, \code{tran} und
+\code{pss}; \code{measure} bei \code{dc}, \code{ac}, \code{tran} und
+\code{pss}; \code{save} (Standard \code{true}) bei \code{dc}, \code{ac},
+\code{tran}, \code{pss} und \code{noise}; \code{param_sweep} oder
+\code{monte_carlo} bei allen außer \code{sens} und \code{fit}.
+
+\begin{longtable}{@{}P{1.8cm}P{3.6cm}P{3.4cm}P{5.0cm}@{}}
+  \toprule
+  \code{type} & Schlüssel & Standard & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{op} & – & & Arbeitspunkt \\
+  \addlinespace[0.8ex]
+  \code{dc} & \code{source} & Pflicht & V- oder I-Quelle \\
+   & \code{start}, \code{stop}, \code{step} & Pflicht & Bereich \\
+  \addlinespace[0.8ex]
+  \code{ac} & \code{fstart}, \code{fstop} & Pflicht & Frequenzbereich \\
+   & \code{sweep} & \code{"dec"} & \code{"dec"}, \code{"oct"}, \code{"lin"} \\
+   & \code{points} & 10 & je Dekade/Oktave bzw. insgesamt \\
+  \addlinespace[0.8ex]
+  \code{tran} & \code{tstop} & Pflicht & Endzeit \\
+   & \code{tstep} & \code{tstop/50} & größter Schritt (Auflösung) \\
+   & \code{hmax}, \code{hmin}, \code{hinit} & aus \code{tstep}, 0, 0 & Schrittweiten \\
+   & \code{method} & \code{"bdf"} & \code{"bdf"}, \code{"gear2"}, \code{"trap"}, \code{"be"} \\
+   & \code{max_order} & 5 & höchste BDF-Ordnung \\
+   & \code{uic} & \code{false} & ohne Arbeitspunkt starten \\
+   & \code{output_step} & – & festes Ausgaberaster \\
+   & \code{max_events} & 100000 & Höchstzahl der Ereignisse \\
+   & \code{fourier} & – & Abschnitt~\ref{sec:ref-fourier} \\
+  \addlinespace[0.8ex]
+  \code{noise} & \code{output} & Pflicht & \code{v(k)}, \code{v(a,b)}, \code{i(b)} \\
+   & \code{input} & – & Quelle für das eingangsbezogene Rauschen \\
+   & \code{fstart}, \code{fstop}, \code{sweep}, \code{points} & wie \code{ac} & \\
+  \addlinespace[0.8ex]
+  \code{pss} & \code{period} & Pflicht & Periode der Anregung \\
+   & \code{periods} & 1 & ausgegebene Perioden \\
+   & \code{tol} & $10^{-4}$ & relative Abweichung \\
+   & \code{max_iterations} & 60 & \\
+   & \code{tstab} & 0 & Vorlauf vor der Suche \\
+   & alle Schlüssel von \code{tran} außer \code{tstop} & & \\
+  \addlinespace[0.8ex]
+  \code{sens} & \code{analysis} & Pflicht & eingebettete Analyse \\
+   & \code{parameters} & alle & Liste von Parameternamen \\
+   & \code{delta} & $10^{-3}$ & relative Änderung \\
+  \addlinespace[0.8ex]
+  \code{fit} & \code{analysis} & Pflicht & \code{dc}, \code{ac} oder \code{tran} \\
+   & \code{output} & Pflicht & verglichene Größe \\
+   & \code{data} & Pflicht & \code{x}/\code{y}, \code{points} oder \code{file}/\code{xcol}/\code{ycol} \\
+   & \code{parameters} & Pflicht & \code{{"p": {"start", "min", "max", "log"}}} \\
+   & \code{residual} & \code{"lin"} & \code{"lin"}, \code{"rel"}, \code{"log"} \\
+   & \code{max_iterations} & 50 & \\
+   & \code{tol} & $10^{-8}$ & Abbruch der Iteration \\
+\end{longtable}
+
+\subsection*{param\_sweep}
+
+Ein Objekt oder eine Liste von Objekten (verschachtelt, das erste außen):
+
+\begin{longtable}{@{}P{3.0cm}P{3.4cm}P{7.4cm}@{}}
+  \toprule
+  Schlüssel & Standard & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{param} & Pflicht & Name aus \code{parameters} \\
+  \code{values} & – & Liste der Werte, oder: \\
+  \code{start}, \code{stop}, \code{points} & – & Bereich mit mindestens 2 Punkten \\
+  \code{scale} & \code{"lin"} & oder \code{"log"} \\
+\end{longtable}
+
+\subsection*{monte\_carlo}
+
+\begin{longtable}{@{}P{3.0cm}P{3.4cm}P{7.4cm}@{}}
+  \toprule
+  Schlüssel & Standard & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{runs} & 100 & Zahl der Läufe \\
+  \code{seed} & 1 & Startwert des Zufallsgenerators \\
+  \code{vary} & Pflicht & \code{{"param": {...}}} je gestreutem Parameter: \\
+  \quad\code{tol} & – & relative Toleranz, oder: \\
+  \quad\code{sigma} & – & absolute Standardabweichung \\
+  \quad\code{dist} & \code{"uniform"} (mit \code{sigma}: \code{"gauss"}) & \code{"uniform"} oder \code{"gauss"} \\
+\end{longtable}
+
+Monte Carlo braucht \code{measure}; die Kurven der Läufe werden nur mit
+\code{"save": true} gespeichert.
+
+\subsection*{measure}
+\label{sec:ref-measure}
+
+\code{{"name": {"funktion": "Ausdruck", option: wert, ...}, ...}} mit genau
+einer Funktion:
+
+\begin{longtable}{@{}P{3.6cm}P{10.2cm}@{}}
+  \toprule
+  Funktion & Optionen \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{min max pp argmin argmax avg rms integ final} & \code{from}, \code{to} \\
+  \code{at} & \code{x} (Pflicht), \code{from}, \code{to} \\
+  \code{cross} & \code{level} (Pflicht), \code{n} (1), \code{edge} (\code{"rise"}, \code{"fall"}, \code{"both"}), \code{from}, \code{to} \\
+  \code{period freq duty} & \code{level} (Mitte), \code{from}, \code{to} \\
+  \code{rise fall} & \code{low}, \code{high} (10\,\%, 90\,\% des Hubs), \code{from}, \code{to} \\
+  \code{f3db f3db_low} & \code{from}, \code{to} \\
+  \code{thd harmonic} & \code{fundamental}, \code{n}, \code{from}, \code{to} \\
+\end{longtable}
+
+\subsection*{fourier}
+\label{sec:ref-fourier}
+
+\begin{longtable}{@{}P{3.0cm}P{3.4cm}P{7.4cm}@{}}
+  \toprule
+  Schlüssel & Standard & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{freq} & Pflicht & Grundfrequenz \\
+  \code{harmonics} & 9 & Zahl der Harmonischen \\
+  \code{periods} & 1 & ausgewertete Perioden am Ende \\
+  \code{outputs} & die Ausgänge & ausgewertete Größen \\
+  \code{from} & 0 & frühester Zeitpunkt \\
+\end{longtable}
+
+% ---------------------------------------------------------------------------
+\section{Optionen}
+\label{sec:ref-optionen}
+
+\begin{longtable}{@{}P{3.4cm}P{2.6cm}P{7.8cm}@{}}
+  \toprule
+  Schlüssel & Standard & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{reltol} & $10^{-4}$ & relative Toleranz \\
+  \code{vntol} & $10^{-6}$ & absolute Toleranz für Spannungen (V) \\
+  \code{abstol} & $10^{-12}$ & absolute Toleranz für Ströme (A) \\
+  \code{vartol} & $10^{-9}$ & absolute Toleranz für Variablen \\
+  \code{lte_floor} & 0,1 & Bezugsgröße des Zeitschrittfehlers \\
+  \code{trtol} & 1 & Faktor auf den zulässigen Zeitschrittfehler \\
+  \code{gmin} & $10^{-12}$ & Leitwert parallel zu pn-Übergängen (S) \\
+  \code{temp} & 27 & Temperatur der Schaltung (°C) \\
+  \code{tnom} & 27 & Temperatur der Modellparameter (°C) \\
+  \code{maxiter_dc} & 100 & Newton-Iterationen im Arbeitspunkt \\
+  \code{maxiter_tran} & 20 & Newton-Iterationen je Zeitschritt \\
+  \code{reuse_jacobian} & \code{true} & zerlegte Matrix im Schritt weiterverwenden \\
+  \code{index_reduction} & \code{true} & Index über 2 automatisch reduzieren \\
+\end{longtable}
+
+% ---------------------------------------------------------------------------
+\section{Ausdrücke}
+
+\begin{longtable}{@{}P{3.6cm}P{10.2cm}@{}}
+  \toprule
+  Element & Schreibweise \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  Operatoren & \code{+ - * /}, \code{^} | \code{**}, \code{< <= > >= == !=}, \code{&& || !}, Klammern \\
+  Funktionen (1 Arg.) & \code{sin cos tan asin acos atan sinh cosh tanh exp log ln log10 sqrt abs sign} \\
+  Funktionen (2 Arg.) & \code{atan2(y, x) min(a, b) max(a, b) pow(a, b)} \\
+  Fallunterscheidung & \code{if(bedingung, dann, sonst)} \\
+  Besondere & \code{der(x)} (nur Gleichungen), \code{delay(x, td)}, \code{sum(i, von, bis, ausdruck)} \\
+  Namen & \code{t} | \code{time}, \code{pi}, Parameter, Variablen, \code{T[i]}, Tabellen, eigene Funktionen \\
+  Schaltung & \code{v(knoten)}, \code{v(a, b)}, \code{i(bauteil)}, mit \code{instanz.} für Teilschaltungen \\
+  Ausgänge & zusätzlich \code{T[*]} für alle Elemente eines Vektors \\
+  SI-Präfixe & \code{f p n u}, \texttt{µ}, \code{m k K M meg G T} (Abschnitt~\ref{sec:zahlen}) \\
+\end{longtable}
+
+% ---------------------------------------------------------------------------
+\section{Befehle des Editors}
+
+\subsection*{Menüs}
+
+\begin{longtable}{@{}P{2.6cm}P{6.6cm}P{4.6cm}@{}}
+  \toprule
+  Menü & Befehl & Kürzel \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  Datei & Neu & \tasten{Strg}{N} \\
+   & Öffnen \dots & \tasten{Strg}{O} \\
+   & Zuletzt geöffnet \pfad\ \textit{Datei}, Liste leeren & \\
+   & Beispiele \pfad\ \textit{Beispiel} & \\
+   & Sichern & \tasten{Strg}{S} \\
+   & Sichern unter \dots & \tasten{Umschalt+Strg}{S} \\
+   & Beenden & \tasten{Strg}{Q} \\
+  Bearbeiten & Widerrufen & \tasten{Strg}{Z} \\
+   & Wiederholen & \tasten{Strg}{Y} \\
+   & Ausschneiden, Kopieren, Einfügen & \tasten{Strg}{X}, \tasten{Strg}{C}, \tasten{Strg}{V} \\
+   & Alles auswählen & \tasten{Strg}{A} \\
+   & Kommentar ein/aus & \tasten{Strg}{/} \\
+   & Auswahl in Teilschaltung umwandeln \dots & \tasten{Strg}{G} \\
+   & Modellbibliothek \dots & \tasten{Strg}{L} \\
+  Simulation & Starten & \tasten{Strg}{R} \\
+   & Stoppen & \tasten{Strg}{.} \\
+  Ansicht & Schaltplan, Text & \\
+   & Schaltplan einpassen & (\taste{F} im Plan) \\
+   & Bauteile, Eigenschaften, Ergebnisse, Protokoll, Probleme & \\
+   & Kurven: alles zeigen & \tasten{Strg}{0} \\
+  Hilfe & Über ESIM Editor & \\
+\end{longtable}
+
+\subsection*{Kontextmenü im Plan}
+
+\begin{longtable}{@{}P{6.6cm}P{2.6cm}P{4.6cm}@{}}
+  \toprule
+  Befehl & Kürzel & erscheint \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  Teilschaltung „…“ öffnen / SPICE-Text zeigen & Doppelklick & auf einer Instanz \\
+  Eigenschaften von \textit{Bauteil} & Doppelklick & auf einem Bauteil \\
+  Strom i(\textit{Bauteil}) zeigen & \tasten{Alt}{Klick} & auf einem Bauteil \\
+  Spannung v(\textit{Netz}) zeigen & \tasten{Alt}{Klick} & auf einem Netz \\
+  Umbenennen \dots & Doppelklick & auf einem Label \\
+  Drehen & \taste{R} & immer \\
+  Spiegeln & \taste{X} & immer \\
+  Verdoppeln & \tasten{Strg}{D} & immer \\
+  Löschen & \taste{Entf} & immer \\
+  In Teilschaltung umwandeln \dots & \tasten{Strg}{G} & immer \\
+  Leitung zeichnen & \taste{W} & immer \\
+  Masse & \taste{G} & immer \\
+  Netzlabel \dots & \taste{N} & immer \\
+  Port \dots & \taste{P} & in Teilschaltungen \\
+  Bauteil \dots & \taste{A} & immer \\
+  Alles zeigen & \taste{F} & immer \\
+  Zur Hauptschaltung & \tasten{Strg}{$\uparrow$} & in Teilschaltungen \\
+\end{longtable}
+
+\subsection*{Einträge der Bauteilliste}
+
+Leitung zeichnen, Masse, Netzlabel, Port der Teilschaltung (nur in
+Teilschaltungen), Widerstand, Kondensator, Spule, Spannungsquelle,
+Sinusquelle, Pulsquelle, Stromquelle, Diode, Ideale Diode, NPN-Transistor,
+PNP-Transistor, N-MOSFET, P-MOSFET, N-JFET, P-JFET, Spannungsgesteuerte
+Spannungsquelle, Spannungsgesteuerte Stromquelle, Stromgesteuerte
+Stromquelle, Stromgesteuerte Spannungsquelle, Verhaltensquelle (Spannung),
+Verhaltensquelle (Strom), Schalter (spannungsgesteuert), Leitung, Kopplung
+zweier Spulen, je eine Teilschaltung der Datei, Modellbibliothek \dots, Neue
+Teilschaltung \dots; beim Suchen zusätzlich alle Modelle der Bibliothek.
+
+\subsection*{Kurven und Histogramme}
+
+Rechtsklick: \menue{Alles zeigen}, \menue{Als Bild speichern \dots};
+Auswahl \menue{Darstellung}: \menue{Histogramm}, \menue{Streuung über
+\textit{p}} (Monte Carlo), \menue{über \textit{p}} (Sweeps).
+
+\subsection*{Dialog Modellbibliothek}
+
+Suchfeld, Art (Alle Arten, Dioden, Bipolartransistoren, MOSFETs, JFETs,
+Teilschaltungen (SPICE)), \menue{Bibliotheken \dots} (\menue{Datei \dots},
+\menue{Ordner \dots}, \menue{Entfernen}), \menue{Im Plan platzieren},
+\menue{In die Datei übernehmen}, \menue{Verwenden}.

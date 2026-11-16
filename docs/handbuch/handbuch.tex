@@ -25,6 +25,7 @@
 \usepackage[hidelinks,pdfusetitle,bookmarksnumbered]{hyperref}
 
 \KOMAoptions{DIV=12}
+\makeatletter\renewcommand*{\@pnumwidth}{2.2em}\makeatother
 \RedeclareSectionCommand[tocnumwidth=2.2em]{chapter}
 \RedeclareSectionCommand[tocindent=2.2em,tocnumwidth=2.9em]{section}
 \RedeclareSectionCommand[tocindent=5.1em,tocnumwidth=3.6em]{subsection}
@@ -171,6 +172,7 @@
 \appendix
 \part*{Anhang}
 \addcontentsline{toc}{part}{Anhang}
+\input{kapitel/referenz}
 \input{kapitel/anhang}
 
 \end{document}
