@@ -38,12 +38,14 @@ sonst lädt CMake sie herunter.
 development with C++“, CMake, Qt 6 für MSVC 2022 64-bit aus dem Qt-Installer,
 optional Python 3 für die Tests; in der „x64 Native Tools Command Prompt“):
 
-    cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
+    cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
     cmake --build build --config Release
     ctest --test-dir build -C Release
     cmake --install build --config Release --prefix dist   # Editor mit esim, Qt-DLLs, Beispielen
 
-`dist` läuft dann allein (`dist\esim-editor.exe`). Ohne Qt wird nur der
+CMake nimmt das neueste installierte Visual Studio (2022 oder neuer); Qts
+Bibliotheken für MSVC 2022 passen auch zu neueren Versionen. `dist` läuft
+dann allein (`dist\esim-editor.exe`). Ohne Qt wird nur der
 Simulator gebaut. Die Programme verwenden intern UTF-8 (Manifest), Dateien
 und Ordner mit Umlauten gehen also. Im Editor heißen die Kürzel unter
 Windows Strg und Alt statt ⌘ und ⌥. Ein Arbeitsablauf für GitHub Actions
@@ -237,13 +239,13 @@ Warnung. Eine Datei enthält `components`, `equations` oder beides.
   "title": "Einweggleichrichter",
 
   "models": {
-    "1N4148": { "type": "diode", "is": 2.5e-9, "n": 1.75, "cj0": "4p", "tt": "20n" }
+    "DGEN": { "type": "diode", "is": 2.5e-9, "n": 1.75, "cj0": "4p", "tt": "20n" }
   },
 
   "components": [
     { "type": "V", "name": "V1", "nodes": ["in", "0"],
       "wave": { "type": "sin", "amplitude": 5, "freq": "1k" } },
-    { "type": "D", "name": "D1", "nodes": ["in", "out"], "model": "1N4148" },
+    { "type": "D", "name": "D1", "nodes": ["in", "out"], "model": "DGEN" },
     { "type": "R", "name": "R1", "nodes": ["out", "0"], "value": "10k" },
     { "type": "C", "name": "C1", "nodes": ["out", "0"], "value": "1u" }
   ],
@@ -656,11 +658,11 @@ Die Polarität eines Transistors ergibt sich aus dem `type` des Bauteils (`npn`,
 `pmos`, …) oder des Modells. Die Parameternamen und Standardwerte folgen SPICE.
 
 Ein Modell kann auch als SPICE-Zeile angegeben werden, wie sie Hersteller
-veröffentlichen:
+veröffentlichen (hier ein allgemeines Modell mit Lehrbuchwerten):
 
 ```jsonc
 "models": {
-  "Q2N2222": ".model Q2N2222 NPN(Is=14.34f Bf=255.9 Vaf=74.03 Ikf=.2847 Ise=14.34f Ne=1.307 Rb=10 Rc=1 Cje=22.01p Cjc=7.306p Tf=411.1p Tr=46.91n)"
+  "QGEN": ".model QGEN NPN(Is=1e-14 Bf=200 Br=2 Vaf=100 Ikf=0.3 Rb=10 Rc=1 Cje=10p Cjc=5p Tf=0.5n Tr=50n)"
 }
 ```
 

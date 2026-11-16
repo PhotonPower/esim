@@ -21,7 +21,9 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        # the newest Visual Studio of the runner, 64 bit (no fixed version:
+        # the images move on)
+        run: cmake -S . -B build
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test

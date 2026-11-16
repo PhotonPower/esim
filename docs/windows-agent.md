@@ -51,10 +51,14 @@ unter „Actions“ im Repository (`gh run list`, `gh run view --log-failed`).
 
 ## 3. Bauen, testen, ausliefern
 
-    cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
+    cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
     cmake --build build --config Release --parallel
     ctest --test-dir build -C Release --output-on-failure
     cmake --install build --config Release --prefix dist
+
+CMake wählt das installierte Visual Studio von selbst (kein `-G` nötig;
+eine feste Version wie „Visual Studio 17 2022“ scheitert, wenn eine andere
+installiert ist).
 
 Erwartet ohne ngspice: die Testgruppen `esim_tests`, `python_interface`,
 `bsim3_model`, `spice_import`, `editor` und `editor_gui`, alle bestanden.
