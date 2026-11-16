@@ -58,7 +58,9 @@ unter „Actions“ im Repository (`gh run list`, `gh run view --log-failed`).
 
 CMake wählt das installierte Visual Studio von selbst (kein `-G` nötig;
 eine feste Version wie „Visual Studio 17 2022“ scheitert, wenn eine andere
-installiert ist).
+installiert ist). Visual Studio 2026 braucht CMake ≥ 4.2; ein älteres
+CMake findet es nicht, dann hilft das mit Visual Studio gelieferte
+(`Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`).
 
 Erwartet ohne ngspice: die Testgruppen `esim_tests`, `python_interface`,
 `bsim3_model`, `spice_import`, `editor` und `editor_gui`, alle bestanden.
