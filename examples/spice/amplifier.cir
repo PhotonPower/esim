@@ -11,7 +11,7 @@ Vin in 0 DC 0 AC 1 SIN(0 10m 1k)
 Cin in b 10u
 R1 vcc b 47k
 R2 b 0 10k
-Q1 c b e Q2N2222
+Q1 c b e QGEN
 RC vcc c 4.7k
 RE e 0 1k
 CE e 0 100u
@@ -20,7 +20,7 @@ RL out 0 {rload}
 
 * low-pass behind the amplifier, used through a subcircuit
 X1 out filt rcfilter c={cfilt}
-D1 filt clamp D1N4148
+D1 filt clamp DGEN
 Vclamp clamp 0 DC 3
 
 .subckt rcfilter a b r=1k c=10n
@@ -28,10 +28,11 @@ Rf a b {r}
 Cf b 0 {c}
 .ends
 
-.model Q2N2222 NPN(Is=14.34f Xti=3 Eg=1.11 Vaf=74.03 Bf=255.9 Ne=1.307
-+ Ise=14.34f Ikf=.2847 Xtb=1.5 Br=6.092 Nc=2 Isc=0 Ikr=0 Rc=1 Cjc=7.306p
-+ Mjc=.3416 Vjc=.75 Fc=.5 Cje=22.01p Mje=.377 Vje=.75 Tr=46.91n Tf=411.1p Rb=10)
-.model D1N4148 D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 Tt=20n)
+* general models (textbook values, no particular parts)
+.model QGEN NPN(Is=1e-14 Bf=200 Br=2 Vaf=100
++ Ikf=0.3 Rb=10 Rc=1 Cje=10p Cjc=5p
++ Tf=0.5n Tr=50n)
+.model DGEN D(Is=2n Rs=0.5 N=1.75 Cjo=4p M=0.4 Tt=20n)
 
 .op
 .ac dec 20 10 10meg

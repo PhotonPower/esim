@@ -344,10 +344,10 @@ int main(int argc, char** argv) {
         if (e->text() == "NPN_GEN") modelField = e;
     check(modelField != nullptr, "model field shown");
     if (modelField) {
-        modelField->setText("BC547");  // from the examples
+        modelField->setText("npn");  // from the example astable_multivibrator
         emit modelField->editingFinished();
-        check(editor->toPlainText().contains("\"BC547\": \".model BC547B") && comp("Q1") && comp("Q1")->model == "BC547",
-              "model changed, card of BC547 copied from the example");
+        check(editor->toPlainText().contains("\"npn\": { \"type\": \"npn\"") && comp("Q1") && comp("Q1")->model == "npn",
+              "model changed, the model of an example copied");
     }
 
     {

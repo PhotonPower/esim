@@ -443,14 +443,14 @@ void testLibrary(const QString& examples) {
         check(ms[1].name == "DY" && ms[1].description.isEmpty(), "a card without comment");
     }
     const QVector<LibraryModel> js = parseJsonLibrary(readFile(QDir(examples).filePath("bjt_amplifier.json")), "x");
-    check(js.size() == 1 && js[0].name == "BC547" && js[0].type == "npn", "model of an esim file");
+    check(js.size() == 1 && js[0].name == "NPN_GEN" && js[0].type == "npn", "model of an esim file");
 
     ModelLibrary library;
     library.load({}, examples);
     check(library.problems().isEmpty(), "libraries read: " + library.problems().join("; "));
     const LibraryModel* q = library.find("NPN_GEN");
     check(q && q->type == "npn" && q->source == "Standard" && q->title().contains("Lehrbuch"), "NPN_GEN in the standard library");
-    check(library.find("1N4007") && library.find("1N4007")->source.startsWith("Beispiel"), "models of the examples");
+    check(library.find("D_RECT") && library.find("D_RECT")->source.startsWith("Beispiel"), "models of the examples");
 
     // every model of the standard library runs in esim
     QTemporaryDir dir;
@@ -484,7 +484,8 @@ void testLibrary(const QString& examples) {
     check(t.contains("\"models\": {\n    \"NPN_GEN\": \".model NPN_GEN NPN(") && errorFree(t), "card added:\n" + t);
     check(addModel(t, *q) == t, "a model is added only once");
     const QString amp = readFile(QDir(examples).filePath("bjt_amplifier.json"));
-    check(fileModels(addModel(amp, *q)) == QStringList({"BC547", "NPN_GEN"}), "added to an existing models section");
+    const LibraryModel* d = library.find("D_GEN");
+    check(d && fileModels(addModel(amp, *d)) == QStringList({"NPN_GEN", "D_GEN"}), "added to an existing models section");
     const LibraryModel* n18 = library.find("n18");
     const QString long_ = n18 ? addModel(rc, *n18) : QString();
     check(long_.contains("\"n18\": [\n      \".model n18 NMOS") && errorFree(long_), "a long card added as lines");

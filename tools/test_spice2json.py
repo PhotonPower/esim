@@ -40,7 +40,7 @@ check(by_name["x1"] == {"type": "X", "name": "x1", "subcircuit": "rcfilter",
                         "nodes": ["out", "filt"], "parameters": {"c": "cfilt"}}, "subcircuit instance")
 check(net["subcircuits"]["rcfilter"]["ports"] == ["a", "b"] and
       net["subcircuits"]["rcfilter"]["parameters"] == {"r": 1e3, "c": 1e-8}, ".subckt")
-check(net["models"]["q2n2222"].lower().startswith(".model q2n2222 npn"), ".model kept as a SPICE line")
+check(net["models"]["qgen"].lower().startswith(".model qgen npn"), ".model kept as a SPICE line")
 check([a["type"] for a in net["analyses"]] == ["op", "ac", "noise", "tran"], "analyses")
 check(net["analyses"][3]["fourier"] == {"freq": 1e3, "outputs": ["v(out)"]}, ".four")
 check(net["analyses"][2]["output"] == "v(out)" and net["analyses"][2]["input"] == "vin", ".noise")
@@ -51,10 +51,9 @@ res = esim.run(net)
 check(1.3 < res.op.values["v(out)"] + 1.4 < 1.5 or True, "runs")  # v(out) is 0 at DC (coupling capacitor)
 by_hand = {
     "models": {
-        "q": ".model q NPN(Is=14.34f Xti=3 Eg=1.11 Vaf=74.03 Bf=255.9 Ne=1.307 Ise=14.34f Ikf=.2847 "
-             "Xtb=1.5 Br=6.092 Nc=2 Isc=0 Ikr=0 Rc=1 Cjc=7.306p Mjc=.3416 Vjc=.75 Fc=.5 Cje=22.01p "
-             "Mje=.377 Vje=.75 Tr=46.91n Tf=411.1p Rb=10)",
-        "d": ".model d D(Is=2.52n Rs=.568 N=1.752 Cjo=4p M=.4 Tt=20n)"},
+        "q": ".model q NPN(Is=1e-14 Bf=200 Br=2 Vaf=100 Ikf=0.3 Rb=10 Rc=1 Cje=10p Cjc=5p "
+             "Tf=0.5n Tr=50n)",
+        "d": ".model d D(Is=2n Rs=0.5 N=1.75 Cjo=4p M=0.4 Tt=20n)"},
     "components": [
         {"type": "V", "name": "VCC", "nodes": ["vcc", "0"], "dc": 12},
         {"type": "V", "name": "Vin", "nodes": ["in", "0"], "dc": 0, "ac": 1},

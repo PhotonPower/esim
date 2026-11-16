@@ -2,8 +2,9 @@
   "title": "Bridge rectifier with smoothing capacitor and zener regulator",
 
   "models": {
-    "1N4007": { "type": "diode", "is": 7.03e-9, "n": 1.81, "rs": 0.034, "cj0": "10p",
-                "vj": 0.73, "m": 0.41, "tt": "4.3u" },
+    // a general rectifier diode (textbook values, no particular part)
+    "D_RECT": { "type": "diode", "is": "1n", "n": 1.8, "rs": 0.03, "cj0": "10p",
+                "vj": 0.7, "m": 0.4, "tt": "5u" },
     "Z5V1":   { "type": "diode", "is": 1e-14, "bv": 5.1, "ibv": "5m" }
   },
 
@@ -13,10 +14,10 @@
     // The source floats: tie it to ground with a large resistor.
     { "type": "R", "name": "Rref", "nodes": ["ac2", "0"], "value": "1meg" },
 
-    { "type": "D", "name": "D1", "nodes": ["ac1", "plus"], "model": "1N4007" },
-    { "type": "D", "name": "D2", "nodes": ["ac2", "plus"], "model": "1N4007" },
-    { "type": "D", "name": "D3", "nodes": ["0", "ac1"],    "model": "1N4007" },
-    { "type": "D", "name": "D4", "nodes": ["0", "ac2"],    "model": "1N4007" },
+    { "type": "D", "name": "D1", "nodes": ["ac1", "plus"], "model": "D_RECT" },
+    { "type": "D", "name": "D2", "nodes": ["ac2", "plus"], "model": "D_RECT" },
+    { "type": "D", "name": "D3", "nodes": ["0", "ac1"],    "model": "D_RECT" },
+    { "type": "D", "name": "D4", "nodes": ["0", "ac2"],    "model": "D_RECT" },
 
     { "type": "C", "name": "C1", "nodes": ["plus", "0"], "value": "470u" },
     { "type": "R", "name": "Rz", "nodes": ["plus", "reg"], "value": 220 },

@@ -1512,8 +1512,8 @@ void testDeviceModels() {
     // --- models in SPICE syntax ---
     Netlist sp = parseNetlistText(R"json({
         "models": {
-            "Q2N2222": ".model Q2N2222 NPN(Is=14.34f Xti=3 Eg=1.11 Vaf=74.03 Bf=255.9 Ne=1.307\n+ Ise=14.34f Ikf=.2847 Xtb=1.5 Br=6.092 Nc=2 Isc=0 Ikr=0 Rc=1 Cjc=7.306p Mjc=.3416\n+ Vjc=.75 Fc=.5 Cje=22.01p Mje=.377 Vje=.75 Tr=46.91n Tf=411.1p Itf=.6 Vtf=1.7 Xtf=3 Rb=10)",
-            "D1N4148": ".MODEL D1N4148 D (IS=2.52n RS=.568 N=1.752 CJO=4p M=.4 TT=20n BV=100 IBV=100u)"
+            "QGEN": ".model QGEN NPN(Is=1e-14 Xti=3 Eg=1.11 Vaf=100 Bf=200\n+ Ikf=0.3 Br=2 Rb=10 Rc=1 Cje=10p Cjc=5p\n+ Tf=0.5n Tr=50n Itf=.6 Vtf=1.7 Xtf=3)",
+            "DGEN": ".MODEL DGEN D (IS=2n RS=.5 N=1.75 CJO=4p M=.4 TT=20n BV=100 IBV=100u)"
         },
         "components": [
             {"type": "V", "name": "VCC", "nodes": ["vcc", "0"], "dc": 12},
@@ -1521,15 +1521,15 @@ void testDeviceModels() {
             {"type": "R", "name": "R2", "nodes": ["b", "0"], "value": "10k"},
             {"type": "R", "name": "RC", "nodes": ["vcc", "c"], "value": "4.7k"},
             {"type": "R", "name": "RE", "nodes": ["e", "0"], "value": "1k"},
-            {"type": "Q", "name": "Q1", "nodes": ["c", "b", "e"], "model": "Q2N2222"},
+            {"type": "Q", "name": "Q1", "nodes": ["c", "b", "e"], "model": "QGEN"},
             {"type": "R", "name": "RD", "nodes": ["vcc", "k"], "value": "10k"},
-            {"type": "D", "name": "D1", "nodes": ["k", "0"], "model": "D1N4148"}
+            {"type": "D", "name": "D1", "nodes": ["k", "0"], "model": "DGEN"}
         ]})json");
     const Vector xs = solveOperatingPoint(*sp.circuit, sp.options);
     const double ve = probe(*sp.circuit, xs, "v(e)");
-    checkTrue(ve > 1.3 && ve < 1.6, "SPICE model: bias point of the 2N2222 stage");
+    checkTrue(ve > 1.3 && ve < 1.6, "SPICE model: bias point of the transistor stage");
     checkNear(probe(*sp.circuit, xs, "v(b)") - ve, 0.65, 0.05, "SPICE model: base-emitter voltage");
-    checkNear(probe(*sp.circuit, xs, "v(k)"), 0.62, 0.05, "SPICE model: forward voltage of the 1N4148");
+    checkNear(probe(*sp.circuit, xs, "v(k)"), 0.62, 0.05, "SPICE model: forward voltage of the diode");
     checkTrue(throws([&] {
                   parseNetlistText(R"json({"models": {"m": ".model m JFET(beta=1)"},
                       "components": [{"type": "R", "nodes": ["a", "0"], "value": 1}]})json");

@@ -21,7 +21,7 @@ QString quoted(const QString& name) { return QRegularExpression::escape(name); }
 
 // Where in the text a message of the parser points to. The messages name
 // what they are about: "component 'R1': unknown parameter \"colour\"",
-// "subcircuit \"amp\": ...", "model \"Q2N2222\": ...", "tran: tstop must be > 0".
+// "subcircuit \"amp\": ...", "model \"QGEN\": ...", "tran: tstop must be > 0".
 int locate(const QStringList& lines, const QString& message) {
     int anchor = -1;
     static const QRegularExpression component(R"(component '([^']+)')");
