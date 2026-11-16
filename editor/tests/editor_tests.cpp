@@ -3,9 +3,11 @@
 // the right line) and the preparation of curves from CSV files.
 
 #include <QCoreApplication>
+#include <QRegularExpression>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
+#include <QProcess>
 #include <QTextStream>
 #include <cmath>
 #include <cstdio>
@@ -13,6 +15,7 @@
 #include "Checker.hpp"
 #include "Format.hpp"
 #include "JsonSpan.hpp"
+#include "ModelLibrary.hpp"
 #include "ResultData.hpp"
 #include "Schematic.hpp"
 
@@ -353,6 +356,99 @@ void testSubcircuits(const QString& examples) {
           "read back");
 }
 
+// A small circuit that uses the model, for the check and a run of esim.
+QString circuitWith(const LibraryModel& m) {
+    const bool bsim3 = m.text.contains(QRegularExpression("level\\s*=\\s*(8|49|53)", QRegularExpression::CaseInsensitiveOption));
+    const bool p = m.type == "pnp" || m.type == "pmos" || m.type == "pjf";
+    const QString supply = p ? "-1.8" : "1.8";
+    QString device;
+    if (m.kind() == 'd')
+        device = R"({ "type": "D", "name": "D1", "nodes": ["out", "0"], "model": "%1" })";
+    else if (m.kind() == 'q')
+        device = R"({ "type": "Q", "name": "Q1", "nodes": ["out", "b", "0"], "model": "%1" },
+    { "type": "R", "name": "RB", "nodes": ["vcc", "b"], "value": "1meg" })";
+    else if (m.kind() == 'm')
+        device = bsim3 ? R"({ "type": "M", "name": "M1", "nodes": ["out", "vcc", "0", "0"], "model": "%1", "w": "1u", "l": "0.18u" })"
+                       : R"({ "type": "M", "name": "M1", "nodes": ["out", "vcc", "0"], "model": "%1" })";
+    else
+        device = R"({ "type": "J", "name": "J1", "nodes": ["out", "0", "0"], "model": "%1" })";
+    return QString(R"({
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["vcc", "0"], "dc": %2 },
+    { "type": "R", "name": "R1", "nodes": ["vcc", "out"], "value": "10k" },
+    %3
+  ],
+  "analyses": [{ "type": "op" }]
+}
+)").arg(supply, device.arg(m.name));
+}
+
+void testLibrary(const QString& examples) {
+    const QString lib = "* header\n\n"
+                        "* QX Fast switch\n* second line\n"
+                        ".MODEL QX npn(IS=1f BF=100\n"
+                        "+\tVAF=50 ; a comment\n"
+                        "* between\n"
+                        "+ CJE=1p)\n"
+                        ".model DY D (IS=2n)\n"
+                        ".model SW1 SW(RON=1)\n"
+                        ".subckt inner a b\n.model DIN D(IS=1n)\n.ends\n";
+    const QVector<LibraryModel> ms = parseSpiceLibrary(lib, "test.lib");
+    check(ms.size() == 2, QString("two models (switch and model inside a subcircuit skipped): %1").arg(ms.size()));
+    if (ms.size() == 2) {
+        check(ms[0].name == "QX" && ms[0].type == "npn" && ms[0].kind() == 'q', "name and type of a card");
+        check(ms[0].text == ".MODEL QX npn(IS=1f BF=100\n+ VAF=50\n+ CJE=1p)", "card with continuations: " + ms[0].text);
+        check(ms[0].title() == "Fast switch" && ms[0].description.contains("second line"), "description: " + ms[0].title());
+        check(ms[1].name == "DY" && ms[1].description.isEmpty(), "a card without comment");
+    }
+    const QVector<LibraryModel> js = parseJsonLibrary(readFile(QDir(examples).filePath("bjt_amplifier.json")), "x");
+    check(js.size() == 1 && js[0].name == "BC547" && js[0].type == "npn", "model of an esim file");
+
+    ModelLibrary library;
+    library.load({}, examples);
+    check(library.problems().isEmpty(), "libraries read: " + library.problems().join("; "));
+    const LibraryModel* q = library.find("NPN_GEN");
+    check(q && q->type == "npn" && q->source == "Standard" && q->title().contains("Lehrbuch"), "NPN_GEN in the standard library");
+    check(library.find("1N4007") && library.find("1N4007")->source.startsWith("Beispiel"), "models of the examples");
+
+    // every model of the standard library runs in esim
+    QTemporaryDir dir;
+    int standard = 0;
+    for (const LibraryModel& m : library.models()) {
+        if (m.source != "Standard") continue;
+        ++standard;
+        const QString text = addModel(circuitWith(m), m);
+        check(fileModels(text) == QStringList{m.name}, m.name + ": model added");
+        const CheckResult r = checkText(text, dir.path());
+        bool errors = !r.ok;
+        for (const Diagnostic& d : r.diagnostics) errors = errors || d.severity == Diagnostic::Error;
+        check(!errors, m.name + ": " + describe(r));
+#ifdef ESIM_BINARY
+        const QString file = dir.filePath(m.name + ".json");
+        QFile f(file);
+        if (f.open(QIODevice::WriteOnly)) f.write(text.toUtf8());
+        f.close();
+        QProcess esim;
+        esim.start(ESIM_BINARY, {file, "-o", dir.path()});
+        esim.waitForFinished(30000);
+        check(esim.exitStatus() == QProcess::NormalExit && esim.exitCode() == 0,
+              m.name + ": esim runs the operating point: " + QString::fromUtf8(esim.readAllStandardError()));
+#endif
+    }
+    check(standard >= 8, QString("standard library: %1 models").arg(standard));
+
+    // added once, in the file's own layout
+    const QString rc = readFile(QDir(examples).filePath("rc_lowpass.json"));
+    const QString t = addModel(rc, *q);
+    check(t.contains("\"models\": {\n    \"NPN_GEN\": \".model NPN_GEN NPN(") && errorFree(t), "card added:\n" + t);
+    check(addModel(t, *q) == t, "a model is added only once");
+    const QString amp = readFile(QDir(examples).filePath("bjt_amplifier.json"));
+    check(fileModels(addModel(amp, *q)) == QStringList({"BC547", "NPN_GEN"}), "added to an existing models section");
+    const LibraryModel* n18 = library.find("n18");
+    const QString long_ = n18 ? addModel(rc, *n18) : QString();
+    check(long_.contains("\"n18\": [\n      \".model n18 NMOS") && errorFree(long_), "a long card added as lines");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -372,6 +468,8 @@ int main(int argc, char** argv) {
     testSchematic(examples);
     std::printf("[test] subcircuits\n");
     testSubcircuits(examples);
+    std::printf("[test] model library\n");
+    testLibrary(examples);
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

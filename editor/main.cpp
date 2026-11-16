@@ -1,5 +1,7 @@
 #include <QApplication>
 #include <QFileOpenEvent>
+#include <QLibraryInfo>
+#include <QTranslator>
 
 #include "MainWindow.hpp"
 
@@ -29,6 +31,10 @@ int main(int argc, char** argv) {
     QApplication::setOrganizationName("esim");
     QApplication::setApplicationName("ESIM Editor");
     QApplication::setApplicationVersion("0.1.0");
+    // The interface is German; Qt's own texts (Cancel, Save, ...) as well.
+    QTranslator qtTexts;
+    if (qtTexts.load(QStringLiteral("qtbase_de"), QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
+        QApplication::installTranslator(&qtTexts);
 
     MainWindow window;
     app.window = &window;

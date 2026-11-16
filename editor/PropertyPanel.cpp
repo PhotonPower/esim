@@ -12,6 +12,7 @@
 #include <QVBoxLayout>
 
 #include "JsonSpan.hpp"
+#include "ModelLibrary.hpp"
 #include "Symbols.hpp"
 #include "Theme.hpp"
 
@@ -107,7 +108,10 @@ PropertyPanel::PropertyPanel(QWidget* parent) : QWidget(parent) {
     showComponent(QString(), nullptr, tr("Ein Bauteil im Plan oder im Text auswählen."));
 }
 
-void PropertyPanel::setModelNames(const QStringList& names) { models_ = names; }
+void PropertyPanel::setModels(const QStringList& fileModels, const ModelLibrary* library) {
+    fileModels_ = fileModels;
+    library_ = library;
+}
 
 bool PropertyPanel::editing() const {
     const QWidget* f = QApplication::focusWidget();
@@ -126,17 +130,53 @@ void PropertyPanel::focusFirstField() {
 QLineEdit* PropertyPanel::addField(const QString& key, const QString& value, bool present) {
     auto* edit = new QLineEdit(value);
     if (!present) edit->setPlaceholderText(tr("nicht gesetzt"));
-    if (key == "model" && !models_.isEmpty()) {
-        auto* completer = new QCompleter(models_, edit);
-        completer->setCaseSensitivity(Qt::CaseInsensitive);
-        edit->setCompleter(completer);
-    }
     const int index = index_;
     connect(edit, &QLineEdit::editingFinished, this, [this, edit, key, index, value]() {
         if (edit->text() == value || index != index_) return;
         emit memberChanged(index, key, fieldJson(edit->text()));
     });
-    form_->addRow(key, edit);
+    if (key != "model") {
+        form_->addRow(key, edit);
+        if (!firstField_) firstField_ = edit;
+        return edit;
+    }
+    // the model: names of the file and of the library, the library at hand
+    QStringList names = fileModels_;
+    if (library_)
+        for (const LibraryModel& m : library_->models())
+            if ((!kind_ || m.kind() == kind_) && !names.contains(m.name)) names << m.name;
+    auto* completer = new QCompleter(names, edit);
+    completer->setCaseSensitivity(Qt::CaseInsensitive);
+    completer->setFilterMode(Qt::MatchContains);
+    edit->setCompleter(completer);
+    auto* browse = new QToolButton;
+    browse->setText(QString::fromUtf8("…"));
+    browse->setToolTip(tr("Modell aus der Bibliothek wählen"));
+    const char kind = kind_;
+    connect(browse, &QToolButton::clicked, this, [this, index, kind]() { emit browseModels(index, kind); });
+    auto* row = new QWidget;
+    auto* rl = new QHBoxLayout(row);
+    rl->setContentsMargins(0, 0, 0, 0);
+    rl->addWidget(edit, 1);
+    rl->addWidget(browse);
+    form_->addRow(key, row);
+    // what the model is
+    QString about;
+    if (!value.isEmpty()) {
+        const LibraryModel* m = library_ ? library_->find(value) : nullptr;
+        if (fileModels_.contains(value)) about = tr("in der Datei");
+        else if (m) about = tr("aus der Bibliothek, wird übernommen");
+        else about = tr("nicht definiert");
+        if (m && !m->title().isEmpty()) about = m->title() + " · " + about;
+    }
+    if (!about.isEmpty()) {
+        auto* label = new QLabel(about);
+        label->setWordWrap(true);
+        QPalette pal = label->palette();
+        pal.setColor(QPalette::WindowText, Theme::textSecondary());
+        label->setPalette(pal);
+        form_->addRow(QString(), label);
+    }
     if (!firstField_) firstField_ = edit;
     return edit;
 }
@@ -156,6 +196,7 @@ void PropertyPanel::showComponent(const QString& text, const SComponent* c, cons
         return;
     }
     index_ = c->index;
+    kind_ = c->kind;
     shownName_ = c->name;
     title_->setText(QString::fromUtf8("%1 · %2").arg(c->name, kindTitle(*c)));
     message_->hide();

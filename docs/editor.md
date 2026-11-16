@@ -80,6 +80,26 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
   mehreren Instanzen fragt der ⌥-Klick nach, die Werte an den Labels stehen
   nur bei einer einzigen Instanz.
 
+**Schritt 3b (Modellbibliothek)** – erledigt:
+- Quellen: die Standardbibliothek (`editor/library/standard.lib`, ins
+  Programm eingebaut), die Modelle der Beispiele, eigene Dateien und
+  Ordner (Einstellung unter „Bibliotheken …“). SPICE-Dateien liefern ihre
+  `.model`-Karten (Fortsetzungszeilen, Kommentare; Modelle innerhalb einer
+  `.subckt` und unbekannte Typen werden übergangen), esim-Dateien ihren
+  Abschnitt `"models"`.
+- Der Kommentar über einer Karte ist ihre Beschreibung.
+- Wählen: Dialog „Modellbibliothek“ (⌘L), Suche in „Bauteile“, Feld „model“
+  der Eigenschaften (Vorschläge, „…“). Das Modell wird beim Platzieren oder
+  Zuweisen in `"models"` kopiert (lange Karten als Liste von Zeilen).
+- Standardbibliothek: nur allgemeine Modelle mit Lehrbuchwerten (Dioden,
+  Bipolartransistoren, MOSFETs Level 1 und BSIM3 0,18 µm); jedes wird im
+  Test von esim gerechnet. Karten von Herstellern sind nicht dabei, weil
+  ihre Lizenz für die Weitergabe offen ist; sie kommen aus den Dateien der
+  Hersteller, die man als eigene Bibliothek einbindet.
+- Nicht enthalten: Herstellermodelle als `.subckt` (z. B. viele MOSFETs und
+  Operationsverstärker). Dafür müsste esim SPICE-Teilschaltungen lesen
+  (`tools/spice2json.py` kann Netzlisten übersetzen).
+
 ### Wie Plan und Text zusammenhängen
 
 Der Text ist maßgeblich. Nach jeder Textänderung (entprellt) liest der Plan
@@ -115,8 +135,8 @@ schreibt die Knoten des Plans.
 ## Nächste Schritte
 
 **Schritt 3 (Rest)**
-- Modellbibliothek (SPICE-Karten), Darstellung von Monte Carlo (Histogramm)
-  und Messgrößen über Sweeps.
+- Darstellung von Monte Carlo (Histogramm) und Messgrößen über Sweeps.
+- SPICE-Teilschaltungen (`.subckt`) aus Herstellerbibliotheken übernehmen.
 - Eine Auswahl im Plan in eine neue Teilschaltung umwandeln.
 
 **Schritt 4: Windows 11**

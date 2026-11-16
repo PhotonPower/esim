@@ -158,6 +158,16 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
   neuer Port-Name erweitert die Ports. „Neue Teilschaltung …“ in der
   Bauteilliste legt eine an. Steht der Textcursor in einem Bauteil einer
   Teilschaltung, zeigt der Plan diese.
+- Modellbibliothek (⌘L, oder Suche in „Bauteile“, z. B. „NPN_GEN“): Modelle
+  aus der Standardbibliothek, aus den Beispielen und aus eigenen
+  Bibliotheken (SPICE-Dateien der Hersteller mit `.model`-Karten oder
+  esim-Dateien, einzeln oder ganze Ordner). Ein gewähltes Modell wird in
+  `"models"` der Datei kopiert, die damit vollständig bleibt. Im Feld
+  „model“ der Eigenschaften schlägt der Editor passende Modelle vor; „…“
+  öffnet die Bibliothek. Die Standardbibliothek
+  ([`editor/library/standard.lib`](editor/library/standard.lib)) enthält
+  allgemeine Lehrbuchmodelle; Bauteile bestimmter Hersteller kommen aus
+  deren SPICE-Dateien.
   Nach einer Simulation stehen die Spannungen des Arbeitspunkts an den
   Labels; ⌥-Klick auf eine Leitung oder ein Bauteil zeigt Spannung oder
   Strom als Kurve.

@@ -6,6 +6,8 @@
 #include <QDir>
 #include <QFile>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QTreeWidget>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
@@ -16,6 +18,8 @@
 #include "Checker.hpp"
 #include "CodeEditor.hpp"
 #include "MainWindow.hpp"
+#include "ModelBrowser.hpp"
+#include "PartPalette.hpp"
 #include "PropertyPanel.hpp"
 #include "Schematic.hpp"
 #include "SchematicView.hpp"
@@ -224,6 +228,69 @@ int main(int argc, char** argv) {
     QApplication::processEvents();
     check(view->schematic().scope.isEmpty() && view->selectedComponents() == QStringList{"U3"},
           "cursor in U3 goes back with U3 selected");
+
+    std::printf("[test] model library\n");
+    {
+        QFile f(path);
+        check(f.open(QIODevice::WriteOnly), "test file again");
+        f.write("{\n  \"components\": [],\n  \"analyses\": [{ \"type\": \"op\" }]\n}\n");
+    }
+    check(w.openFile(path), "empty file opened");
+    QApplication::processEvents();
+    view->repaint();
+    auto* palette = w.findChild<PartPalette*>();
+    // the palette offers library models while searching: find the id of NPN_GEN
+    QString id;
+    for (QListWidget* list : palette->findChildren<QListWidget*>())
+        for (int k = 0; k < list->count(); ++k)
+            if (list->item(k)->text().startsWith("NPN_GEN")) id = list->item(k)->data(Qt::UserRole).toString();
+    check(id.startsWith("lib:"), "NPN_GEN in the part list: " + id);
+    emit palette->partChosen(id);
+    click(0, 0);
+    key(Qt::Key_Escape);
+    const QString t = editor->toPlainText();
+    check(comp("Q1") && comp("Q1")->model == "NPN_GEN", "Q1 placed with the model");
+    check(t.contains("\"NPN_GEN\": \".model NPN_GEN") && t.contains("\"model\": \"NPN_GEN\""),
+          "card copied into the file:\n" + t);
+    // a second one does not copy the card again
+    emit palette->partChosen(id);
+    click(6, 0);
+    key(Qt::Key_Escape);
+    check(editor->toPlainText().count("\"NPN_GEN\": ") == 1 && comp("Q2"), "card copied once");
+
+    // the model field of the properties takes a library name as well
+    click(0, 0);
+    auto* props2 = w.findChild<PropertyPanel*>();
+    QLineEdit* modelField = nullptr;
+    for (QLineEdit* e : props2->findChildren<QLineEdit*>())
+        if (e->text() == "NPN_GEN") modelField = e;
+    check(modelField != nullptr, "model field shown");
+    if (modelField) {
+        modelField->setText("BC547");  // from the examples
+        emit modelField->editingFinished();
+        check(editor->toPlainText().contains("\"BC547\": \".model BC547B") && comp("Q1") && comp("Q1")->model == "BC547",
+              "model changed, card of BC547 copied from the example");
+    }
+
+    {
+        ModelLibrary library;
+        library.load({}, QStringLiteral(ESIM_SOURCE_DIR "/examples"));
+        ModelBrowser browser(&library, QString(), 'q', false);
+        browser.show();
+        auto* tree = browser.findChild<QTreeWidget*>();
+        auto* search = browser.findChild<QLineEdit*>();
+        check(tree && tree->topLevelItemCount() >= 4, "browser lists the bipolar transistors");
+        if (search && tree) {
+            search->setText("lehrbuch");
+            check(tree->topLevelItemCount() == 2, QString("search in the descriptions: %1").arg(tree->topLevelItemCount()));
+            search->clear();
+        }
+        if (!qEnvironmentVariableIsEmpty("ESIM_SNAPSHOT_DIR")) {
+            tree->setCurrentItem(tree->topLevelItem(0));
+            QApplication::processEvents();
+            browser.grab().save(qEnvironmentVariable("ESIM_SNAPSHOT_DIR") + "/library.png");
+        }
+    }
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     // no question about unsaved changes

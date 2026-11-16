@@ -380,6 +380,7 @@ bool readSchematic(const QString& text, Schematic& out, QString* error, const QS
                 for (const JValue& v : n->items) c.nodes << v.text(text);
             const QString type = c.type.toLower();
             const QString model = member(text, o, "model");
+            c.model = model;
             const QString modelType = s.modelTypes.value(model);
             const auto polarity = [&](const char* a, const char* b) {
                 const QString pa = QString::fromLatin1(a), pb = QString::fromLatin1(b);

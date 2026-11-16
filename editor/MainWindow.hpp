@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "Checker.hpp"
+#include "ModelLibrary.hpp"
 #include "Schematic.hpp"
 
 class CodeEditor;
@@ -78,6 +79,12 @@ private:
     void renameComponent(int index, const QString& name);
     void probe(const QString& quantity);
     void enterScope(const QString& scope);
+    // models
+    void openLibrary();
+    void placeLibraryModel(const LibraryModel& m);
+    // The text with the named models of the library copied into "models",
+    // where the file does not define them yet.
+    QString importModels(QString text, const QStringList& names) const;
     void newSubcircuit();
     void updateOperatingPoint();
     // In a subcircuit: the name of a quantity in the simulation for one of its
@@ -118,6 +125,7 @@ private:
     bool syncingCursor_ = false;   // the text cursor is moved to a component
     QString scope_;                // the subcircuit shown, "" the main circuit
     QHash<QString, double> op_;    // operating point of the last run
+    ModelLibrary library_;
     SimulationRun* run_;
     std::unique_ptr<QTemporaryDir> outDir_;
     QString file_;

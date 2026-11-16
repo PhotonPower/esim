@@ -51,6 +51,7 @@ struct SComponent {
     QString variant;      // detail of the symbol: "pnp", "pmos", "sin", "i", ...
     QStringList ports;    // subcircuit: its ports; coupling: the two inductors
     QString subcircuit;   // X: the name of the subcircuit
+    QString model;        // "model" of the component, if any
     QString extra;        // further members as JSON ("\"value\": \"1k\""), for new components and copies
     Placement place;
     bool placed = false;  // the position is in the file

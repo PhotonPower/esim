@@ -30,6 +30,7 @@
 
 #include "CodeEditor.hpp"
 #include "JsonSpan.hpp"
+#include "ModelBrowser.hpp"
 #include "PartPalette.hpp"
 #include "PlotWidget.hpp"
 #include "PropertyPanel.hpp"
@@ -198,11 +199,27 @@ MainWindow::MainWindow() {
         palette_->focusSearch();
     });
     connect(palette_, &PartPalette::partChosen, this, &MainWindow::choosePart);
+    library_.load(QSettings().value("library/paths").toStringList(), examplesDir());
+    palette_->setLibrary(&library_.models());
     connect(props_, &PropertyPanel::memberChanged, this, [this](int index, const QString& key, const QString& json) {
-        applyText(setComponentMember(editor_->toPlainText(), index, key, json, scope_));
+        QString text = editor_->toPlainText();
+        if (key == "model") {
+            JValue v;
+            if (parseJsonc(json, v) && v.isString()) text = importModels(text, {v.string});
+        }
+        applyText(setComponentMember(text, index, key, json, scope_));
         refreshSchematic();
     });
     connect(props_, &PropertyPanel::renameRequested, this, &MainWindow::renameComponent);
+    connect(props_, &PropertyPanel::browseModels, this, [this](int index, char kind) {
+        ModelBrowser browser(&library_, examplesDir(), kind, true, this);
+        const bool done = browser.exec() == QDialog::Accepted && browser.chosen();
+        palette_->setLibrary(&library_.models());  // libraries may have changed
+        if (!done) return;
+        const QString name = browser.chosen()->name;
+        applyText(setComponentMember(importModels(editor_->toPlainText(), {name}), index, "model", jsonQuote(name), scope_));
+        refreshSchematic();
+    });
     connect(props_, &PropertyPanel::showInText, this, [this](int index) { revealInText(index, true); });
     connect(editor_->document(), &QTextDocument::modificationChanged, this, &QWidget::setWindowModified);
     connect(checkTimer_, &QTimer::timeout, this, [this]() {
@@ -306,6 +323,8 @@ void MainWindow::createActions() {
     edit->addAction(tr("Alles auswählen"), QKeySequence::SelectAll, editor_, &QPlainTextEdit::selectAll);
     edit->addSeparator();
     edit->addAction(tr("Kommentar ein/aus"), QKeySequence(Qt::CTRL | Qt::Key_Slash), editor_, &CodeEditor::toggleComment);
+    edit->addSeparator();
+    edit->addAction(tr("Modellbibliothek …"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::openLibrary);
 
     QMenu* sim = menuBar()->addMenu(tr("&Simulation"));
     runAction_ = sim->addAction(tr("&Starten"), QKeySequence(Qt::CTRL | Qt::Key_R), this, &MainWindow::runSimulation);
@@ -652,7 +671,7 @@ void MainWindow::refreshSchematic() {
     schematic_->setStale(false);
     schematic_->setSchematic(s);
     palette_->setSubcircuits(s.subcircuits);
-    props_->setModelNames(s.modelTypes.keys());
+    props_->setModels(s.modelTypes.keys(), &library_);
 
     // where drawing and text disagree
     schematicDiagnostics_.clear();
@@ -697,7 +716,11 @@ void MainWindow::applyText(const QString& text) {
 }
 
 void MainWindow::applySchematic(const Schematic& after) {
-    applyText(writeSchematic(editor_->toPlainText(), after));
+    // new components with a model of the library bring its card along
+    QStringList models;
+    for (const SComponent& c : after.components)
+        if (c.index < 0 && !c.model.isEmpty()) models << c.model;
+    applyText(writeSchematic(importModels(editor_->toPlainText(), models), after));
     refreshSchematic();
 }
 
@@ -775,6 +798,11 @@ void MainWindow::choosePart(const QString& id) {
     else if (id == "label") schematic_->startLabel();
     else if (id == "port") schematic_->startPort();
     else if (id == "newsub") newSubcircuit();
+    else if (id == "library") openLibrary();
+    else if (id.startsWith("lib:")) {
+        const int k = id.mid(4).toInt();
+        if (k >= 0 && k < library_.models().size()) placeLibraryModel(library_.models()[k]);
+    }
     else if (id.startsWith("sub:")) schematic_->startPlacing(makeSubcircuit(id.mid(4), s));
     else
         for (const PartTemplate& t : partTemplates())
@@ -927,4 +955,51 @@ void MainWindow::updateOperatingPoint() {
         }
     }
     schematic_->setOperatingPoint(local);
+}
+
+// --- models ----------------------------------------------------------------------
+
+QString MainWindow::importModels(QString text, const QStringList& names) const {
+    const QStringList defined = fileModels(text);
+    for (const QString& name : names) {
+        if (defined.contains(name)) continue;
+        const LibraryModel* m = library_.find(name);
+        if (m && m->name == name) text = addModel(text, *m);
+    }
+    return text;
+}
+
+void MainWindow::placeLibraryModel(const LibraryModel& m) {
+    const QString id = m.type;  // the templates "d", "npn", "pmos", ... carry these ids
+    for (const PartTemplate& t : partTemplates()) {
+        if (t.id != id) continue;
+        SComponent c = makeComponent(t, schematic_->schematic());
+        c.model = m.name;
+        c.summary = m.name;
+        c.extra = QStringLiteral("\"model\": %1").arg(jsonQuote(m.name));
+        if (m.text.contains(QRegularExpression(QStringLiteral(R"(level\s*=\s*(8|49|53)\b)"),
+                                               QRegularExpression::CaseInsensitiveOption)))
+            c.nodes = QStringList(QVector<QString>(4));  // BSIM3: with bulk
+        showPlan_->setChecked(true);
+        schematic_->startPlacing(c);
+        return;
+    }
+}
+
+void MainWindow::openLibrary() {
+    ModelBrowser browser(&library_, examplesDir(), 0, false, this);
+    const bool done = browser.exec() == QDialog::Accepted && browser.chosen();
+    palette_->setLibrary(&library_.models());  // libraries may have changed
+    if (!done) return;
+    const LibraryModel m = *browser.chosen();
+    if (browser.action() == ModelBrowser::Place) {
+        placeLibraryModel(m);
+    } else if (browser.action() == ModelBrowser::AddToFile) {
+        const QString text = editor_->toPlainText();
+        const QString changed = importModels(text, {m.name});
+        status_->setText(changed == text ? tr("„%1“ ist schon in der Datei").arg(m.name)
+                                         : tr("„%1“ in \"models\" übernommen").arg(m.name));
+        applyText(changed);
+        refreshSchematic();
+    }
 }

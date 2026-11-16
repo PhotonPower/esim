@@ -5,6 +5,7 @@
 
 #include "Schematic.hpp"
 
+class ModelLibrary;
 class QFormLayout;
 class QLabel;
 class QLineEdit;
@@ -20,7 +21,8 @@ public:
 
     // c == nullptr: nothing (or several things) selected, `message` says which.
     void showComponent(const QString& text, const SComponent* c, const QString& message = QString());
-    void setModelNames(const QStringList& names);
+    // Models offered for the "model" field: those of the file and of the library.
+    void setModels(const QStringList& fileModels, const ModelLibrary* library);
     void focusFirstField();
     bool editing() const;  // a field has the keyboard focus
 
@@ -28,6 +30,7 @@ signals:
     void memberChanged(int index, const QString& key, const QString& json);  // json empty: remove
     void renameRequested(int index, const QString& name);
     void showInText(int index);
+    void browseModels(int index, char kind);  // the "…" button of the model field
 
 private:
     QLineEdit* addField(const QString& key, const QString& value, bool present);
@@ -38,7 +41,9 @@ private:
     QFormLayout* form_;
     QLineEdit* name_ = nullptr;
     QLineEdit* firstField_ = nullptr;
-    QStringList models_;
+    QStringList fileModels_;
+    const ModelLibrary* library_ = nullptr;
+    char kind_ = 0;
     int index_ = -1;
     QString shownName_;
 };

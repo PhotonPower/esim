@@ -9,6 +9,7 @@
 #include <QPainterPath>
 #include <QVBoxLayout>
 
+#include "ModelLibrary.hpp"
 #include "Schematic.hpp"
 #include "Symbols.hpp"
 #include "Theme.hpp"
@@ -17,7 +18,7 @@ namespace {
 
 constexpr int kIcon = 28;
 
-enum Role { IdRole = Qt::UserRole, SearchRole };
+enum Role { IdRole = Qt::UserRole, SearchRole, LibraryRole };
 
 // draws into a square icon, scaled to fit the drawing's box (grid units)
 QIcon icon(const QRectF& box, const std::function<void(QPainter&)>& draw) {
@@ -67,7 +68,9 @@ PartPalette::PartPalette(QWidget* parent) : QWidget(parent) {
     connect(search_, &QLineEdit::textChanged, this, [this](const QString& text) {
         for (int k = 0; k < list_->count(); ++k) {
             QListWidgetItem* item = list_->item(k);
-            item->setHidden(!item->data(SearchRole).toString().contains(text, Qt::CaseInsensitive));
+            // library models only while searching: there are many
+            item->setHidden(!item->data(SearchRole).toString().contains(text, Qt::CaseInsensitive) ||
+                            (item->data(LibraryRole).toBool() && text.trimmed().size() < 2));
         }
     });
     connect(search_, &QLineEdit::returnPressed, this, [this]() {
@@ -89,6 +92,11 @@ void PartPalette::setSubcircuits(const QMap<QString, QStringList>& subcircuits) 
 void PartPalette::setScope(const QString& scope) {
     if (scope == scope_) return;
     scope_ = scope;
+    rebuild();
+}
+
+void PartPalette::setLibrary(const QVector<LibraryModel>* models) {
+    library_ = models;
     rebuild();
 }
 
@@ -179,10 +187,31 @@ void PartPalette::rebuild() {
         add("sub:" + it.key(), QString::fromUtf8("Teilschaltung „%1“").arg(it.key()), "subcircuit x " + it.key(),
             componentIcon(c));
     }
+    add("library", tr("Modellbibliothek …"), "modell model bibliothek library spice",
+        icon(QRectF(-2.2, -2.2, 4.4, 4.4), [](QPainter& p) {
+            for (int k = 0; k < 3; ++k) p.drawRect(QRectF(-1.6 + 1.1 * k, -1.6, 0.9, 3.2));
+        }));
     add("newsub", tr("Neue Teilschaltung …"), "subcircuit teilschaltung neu new",
         icon(QRectF(-2.2, -2.2, 4.4, 4.4), [](QPainter& p) {
             p.drawRect(QRectF(-1.5, -1.5, 3, 3));
             p.drawLine(QPointF(0, -0.8), QPointF(0, 0.8));
             p.drawLine(QPointF(-0.8, 0), QPointF(0.8, 0));
         }));
+    if (!library_) return;
+    // components with a model of the library
+    QHash<QString, SComponent> byType;
+    for (const PartTemplate& t : partTemplates())
+        if (!t.variant.isEmpty() || t.id == "d") byType.insert(t.id, makeComponent(t, none));
+    for (int k = 0; k < library_->size(); ++k) {
+        const LibraryModel& m = (*library_)[k];
+        const QString id = m.type == "d" ? QStringLiteral("d") : m.type;
+        if (!byType.contains(id)) continue;
+        const QString title = m.title().isEmpty() ? m.type.toUpper() : m.title();
+        add(QStringLiteral("lib:%1").arg(k), QString::fromUtf8("%1 · %2").arg(m.name, title),
+            m.type + " " + m.source + " " + m.description, componentIcon(byType.value(id)));
+        QListWidgetItem* item = list_->item(list_->count() - 1);
+        item->setData(LibraryRole, true);
+        item->setToolTip(m.description.isEmpty() ? m.source : m.description + "\n\n" + m.source);
+        item->setHidden(filter.trimmed().size() < 2 || !item->data(SearchRole).toString().contains(filter, Qt::CaseInsensitive));
+    }
 }
