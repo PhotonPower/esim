@@ -8,6 +8,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QTreeWidget>
+#include <QTimer>
 #include <QComboBox>
 #include <QProcess>
 #include <QStackedWidget>
@@ -234,6 +235,77 @@ int main(int argc, char** argv) {
     QApplication::processEvents();
     check(view->schematic().scope.isEmpty() && view->selectedComponents() == QStringList{"U3"},
           "cursor in U3 goes back with U3 selected");
+
+    std::printf("[test] selection into a subcircuit\n");
+    {
+        // V1 and R1 to ground through R2, drawn; R1 and R2 go into a subcircuit
+        QFile f(path);
+        check(f.open(QIODevice::WriteOnly), "test file for the extraction");
+        f.write("{\n  \"components\": [],\n  \"analyses\": [{ \"type\": \"op\" }]\n}\n");
+    }
+    check(w.openFile(path), "file opened");
+    QApplication::processEvents();
+    view->repaint();
+    view->startPlacing(makeComponent(part("v"), view->schematic()));
+    click(0, 0);
+    key(Qt::Key_Escape);
+    view->startPlacing(makeComponent(part("r"), view->schematic()));
+    click(6, 0);
+    click(10, 0);
+    key(Qt::Key_Escape);
+    view->startGround();
+    click(0, 2);
+    click(10, 2);
+    key(Qt::Key_Escape);
+    view->startWire();
+    click(0, -2);
+    click(6, -2);  // ends at the pin of R1
+    key(Qt::Key_Escape);
+    view->startWire();
+    click(6, 2);
+    click(10, -2);  // R1 bottom to R2 top
+    key(Qt::Key_Escape);
+    const QString drawn = editor->toPlainText();
+    // frame around R1 and R2
+    QTest::mousePress(view, Qt::LeftButton, {}, at(4, -4));
+    QTest::mouseMove(view, at(8, 0));
+    QTest::mouseMove(view, at(12, 4));
+    QTest::mouseRelease(view, Qt::LeftButton, {}, at(12, 4));
+    check(view->selection().comps == QSet<QString>({"R1", "R2"}), "R1 and R2 selected by a frame");
+    // the dialog for the name: accept the proposal
+    QTimer::singleShot(200, []() {
+        if (QWidget* d = QApplication::activeModalWidget()) QMetaObject::invokeMethod(d, "accept");
+    });
+    key(Qt::Key_G, Qt::ControlModifier);
+    QApplication::processEvents();
+    const QString done = editor->toPlainText();
+    check(done.contains("\"teil1\": {") && done.contains("\"subcircuit\": \"teil1\"") && !comp("R1"),
+          "⌘G made teil1:\n" + done);
+    check(errorFree(done), "the result passes the check");
+    {
+        // the connections stay: V1 still drives R1 and R2 (nodes of the drawing)
+        Schematic top;
+        readSchematic(done, top);
+        const Connectivity cn = connectSchematic(top);
+        const int v1 = top.find("V1"), x1 = top.find("X1");
+        check(v1 >= 0 && x1 >= 0 && cn.pinNodes[v1][0] == cn.pinNodes[x1][0],
+              "V1 still connected to the subcircuit: " + (v1 >= 0 ? cn.pinNodes[v1].join(",") : QString()) + " / " +
+                  (x1 >= 0 ? cn.pinNodes[x1].join(",") : QString()));
+    }
+    if (!qEnvironmentVariableIsEmpty("ESIM_SNAPSHOT_DIR")) {
+        const QString dir = qEnvironmentVariable("ESIM_SNAPSHOT_DIR");
+        view->fitAll();
+        view->grab().save(dir + "/extract_top.png");
+        w.showSubcircuit("teil1");
+        QApplication::processEvents();
+        view->fitAll();
+        view->grab().save(dir + "/extract_sub.png");
+        w.showSubcircuit(QString());
+        QApplication::processEvents();
+    }
+    editor->undo();
+    QTest::qWait(300);
+    check(editor->toPlainText() == drawn && comp("R1") && comp("R2"), "one undo brings everything back");
 
     std::printf("[test] model library\n");
     {

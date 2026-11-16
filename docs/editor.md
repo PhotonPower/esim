@@ -119,6 +119,18 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
   `.subckt`-Zeile. Doppelklick zeigt den SPICE-Text (eine SPICE-Teilschaltung
   hat keinen eigenen Plan).
 
+**Schritt 3e (Auswahl → Teilschaltung)** – erledigt:
+- ⌘G (oder Rechtsklick) macht aus den ausgewählten Bauteilen, Leitungen,
+  Labels und Massen eine neue Teilschaltung; abgefragt wird nur der Name.
+- Ports sind die Netze, die Ausgewähltes mit dem Rest verbinden (Masse nie),
+  von links nach rechts. Die Grenze liegt dort, wo ein nicht ausgewähltes
+  Element ein ausgewähltes berührt: Innen sitzt dort der Port, außen ein
+  Label mit dem Netznamen, sodass die Verbindungen bleiben.
+- Die Bauteile wandern mit ihrem Text (Knoten wie im Plan), die Zeichnung
+  mit; an ihrer Stelle steht eine Instanz mit Labels an den Anschlüssen.
+  Alles ist eine Textänderung: ⌘Z nimmt es in einem Schritt zurück.
+- Test: derselbe Arbeitspunkt vor und nach dem Auslagern (esim gerechnet).
+
 ### Wie Plan und Text zusammenhängen
 
 Der Text ist maßgeblich. Nach jeder Textänderung (entprellt) liest der Plan
@@ -152,9 +164,6 @@ einem anderen Knoten, als die Leitung im Plan), steht eine Warnung in
 schreibt die Knoten des Plans.
 
 ## Nächste Schritte
-
-**Schritt 3 (Rest)**
-- Eine Auswahl im Plan in eine neue Teilschaltung umwandeln.
 
 **Schritt 4: Windows 11**
 - esim und Editor mit MSVC bauen (Pfade mit Umlauten: `std::filesystem::path`),

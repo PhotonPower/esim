@@ -574,6 +574,89 @@ R1 x 0 1
 #endif
 }
 
+// v(out) of the operating point, computed by esim; NaN if it fails
+double opValue(const QString& text, const QString& quantity) {
+#ifdef ESIM_BINARY
+    QTemporaryDir dir;
+    QFile f(dir.filePath("c.json"));
+    if (f.open(QIODevice::WriteOnly)) f.write(text.toUtf8());
+    f.close();
+    QProcess esim;
+    esim.start(ESIM_BINARY, {dir.filePath("c.json"), "-o", dir.path(), "--summary", dir.filePath("s.json")});
+    esim.waitForFinished(30000);
+    QFile summary(dir.filePath("s.json"));
+    if (esim.exitCode() != 0 || !summary.open(QIODevice::ReadOnly)) return std::nan("");
+    const QString j = QString::fromUtf8(summary.readAll());
+    const QRegularExpression re("\"" + QRegularExpression::escape(quantity) + "\":\\s*([-0-9.eE+]+)");
+    const auto m = re.match(j);
+    return m.hasMatch() ? m.captured(1).toDouble() : std::nan("");
+#else
+    Q_UNUSED(text);
+    Q_UNUSED(quantity);
+    return 0.0;
+#endif
+}
+
+void testExtraction() {
+    // source, R1 lying, R2 standing to ground; "out" between R1 and R2
+    const QString empty = "{\n  \"components\": [],\n  \"analyses\": [{ \"type\": \"op\" }],\n  \"outputs\": [\"v(out)\"]\n}\n";
+    Schematic s;
+    readSchematic(empty, s);
+    const auto part = [](const char* id) {
+        for (const PartTemplate& p : partTemplates())
+            if (p.id == id) return p;
+        return partTemplates().first();
+    };
+    SComponent v = makeComponent(part("v"), s);
+    v.place.at = QPoint(0, 0);
+    s.components << v;
+    SComponent r1 = makeComponent(part("r"), s);
+    r1.place.at = QPoint(4, -2);
+    r1.place.rot = 270;
+    s.components << r1;
+    SComponent r2 = makeComponent(part("r"), s);
+    r2.place.at = QPoint(8, 0);
+    s.components << r2;
+    s.wires.push_back({{QPoint(0, -2), QPoint(2, -2)}});
+    s.wires.push_back({{QPoint(6, -2), QPoint(8, -2)}});
+    s.grounds.push_back({QPoint(0, 2), 0});
+    s.grounds.push_back({QPoint(8, 2), 0});
+    s.labels.push_back({"out", QPoint(8, -2), 0});
+    const QString drawn = writeSchematic(empty, s);
+    const double before = opValue(drawn, "v(out)");
+    check(errorFree(drawn) && std::abs(before - 0.5) < 1e-9, QString("divider drawn: v(out) = %1").arg(before));
+
+    Schematic now;
+    readSchematic(drawn, now);
+    ItemSet sel;
+    sel.comps = {"R1", "R2"};
+    sel.wires = {1};
+    sel.grounds = {1};
+    check(extractSubcircuit(drawn, now, sel, "teil 1").text.isEmpty(), "a name with a blank is refused");
+    const Extraction e = extractSubcircuit(drawn, now, sel, "teil1");
+    check(!e.text.isEmpty(), "extracted: " + e.error);
+    check(e.ports == QStringList({"n1", "out"}), "ports: the net to the source, then out: " + e.ports.join(","));
+    check(errorFree(e.text), "result passes the check:\n" + e.text);
+    const double after = opValue(e.text, "v(out)");
+    check(std::abs(after - before) < 1e-12, QString("same v(out) as before: %1\n").arg(after) + e.text);
+
+    Schematic top, sub;
+    check(readSchematic(e.text, top) && top.find("R1") < 0 && top.find(e.instance) >= 0 &&
+              top.components[top.find(e.instance)].nodes == QStringList({"n1", "out"}),
+          "the instance replaces R1 and R2");
+    check(connectSchematic(top).conflicts.isEmpty(), "main drawing agrees with the text");
+    int outs = 0;
+    for (const SLabel& l : top.labels) outs += l.name == "out" && l.at == QPoint(8, -2) ? 1 : 0;
+    check(outs == 1, "no second label on top of an existing one");
+    check(readSchematic(e.text, sub, nullptr, "teil1") && sub.components.size() == 2 && sub.hasSection,
+          "the subcircuit has R1, R2 and a drawing");
+    int ports = 0;
+    for (const SLabel& l : sub.labels) ports += l.port ? 1 : 0;
+    check(ports == 2 && sub.grounds.size() == 1 && sub.wires.size() == 1, "ports, ground and wire inside");
+    check(connectSchematic(sub).conflicts.isEmpty(), "subcircuit drawing agrees with its text");
+    check(extractSubcircuit(e.text, top, sel, "teil1").text.isEmpty(), "the name is taken now");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -599,6 +682,8 @@ int main(int argc, char** argv) {
     testLibrary(examples);
     std::printf("[test] SPICE subcircuits in the library\n");
     testSpiceLibrary();
+    std::printf("[test] selection into a subcircuit\n");
+    testExtraction();
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

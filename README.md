@@ -156,7 +156,10 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
   Teilschaltungen haben einen eigenen Plan: Doppelklick auf eine Instanz
   öffnet ihn, ⌘↑ führt zurück; Ports (Taste P) verbinden mit außen, ein
   neuer Port-Name erweitert die Ports. „Neue Teilschaltung …“ in der
-  Bauteilliste legt eine an. Steht der Textcursor in einem Bauteil einer
+  Bauteilliste legt eine an. ⌘G macht aus den ausgewählten Bauteilen (mit ihren
+  Leitungen) eine Teilschaltung: Ports werden die Netze, die nach außen
+  führen; an ihrer Stelle steht eine Instanz, Labels halten die
+  Verbindungen. Steht der Textcursor in einem Bauteil einer
   Teilschaltung, zeigt der Plan diese.
 - Modellbibliothek (⌘L, oder Suche in „Bauteile“, z. B. „NPN_GEN“): Modelle
   aus der Standardbibliothek, aus den Beispielen und aus eigenen

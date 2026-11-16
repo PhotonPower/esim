@@ -86,6 +86,7 @@ private:
     // where the file does not define them yet.
     QString importModels(QString text, const QStringList& names) const;
     void newSubcircuit();
+    void extractSelection();
     void updateOperatingPoint();
     // In a subcircuit: the name of a quantity in the simulation for one of its
     // instances ("v(out)" -> "v(U1.out)", a port -> the node outside).

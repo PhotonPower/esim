@@ -146,6 +146,26 @@ bool locateComponent(const QString& text, int pos, QString& scope, int& index);
 // Adds an empty subcircuit with these ports; the text unchanged if the name exists.
 QString addSubcircuit(const QString& text, const QString& name, const QStringList& ports);
 
+// Items of a drawing (a selection): components by name, the others by index.
+struct ItemSet {
+    QSet<QString> comps;
+    QSet<int> wires, labels, grounds;
+    bool isEmpty() const { return comps.isEmpty() && wires.isEmpty() && labels.isEmpty() && grounds.isEmpty(); }
+};
+
+// Moves the selected items of drawing `s` into a new subcircuit `name` and
+// puts an instance in their place. The ports are the nets that connect the
+// selection with the rest (ground is global and never a port), ordered from
+// left to right; inside, each sits at a pin where its net leaves. The
+// instance gets a label at each pin, so that the rest stays connected.
+struct Extraction {
+    QString text;       // the changed text; empty on failure
+    QString error;
+    QStringList ports;
+    QString instance;   // name of the new instance
+};
+Extraction extractSubcircuit(const QString& text, const Schematic& s, const ItemSet& selection, const QString& name);
+
 // Instances of a subcircuit in the main circuit, with their nodes.
 struct Instance {
     QString name;

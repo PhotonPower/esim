@@ -35,6 +35,7 @@ public:
     // Selects components (by name) without emitting selectionChanged.
     void selectComponents(const QStringList& names);
     QStringList selectedComponents() const;
+    const ItemSet& selection() const { return sel_; }
 
     void startPlacing(const SComponent& c);
     void startGround();
@@ -55,6 +56,7 @@ signals:
     void partChooserRequested();
     void openSubcircuit(const QString& name);  // double click on an instance
     void leaveRequested();                     // ⌘↑: back to the main circuit
+    void extractRequested();                   // the selection into a new subcircuit
 
 protected:
     void paintEvent(QPaintEvent* e) override;
@@ -71,11 +73,7 @@ protected:
     void focusOutEvent(QFocusEvent* e) override;
 
 public:
-    struct Selection {
-        QSet<QString> comps;  // by name
-        QSet<int> wires, labels, grounds;
-        bool isEmpty() const { return comps.isEmpty() && wires.isEmpty() && labels.isEmpty() && grounds.isEmpty(); }
-    };
+    using Selection = ItemSet;  // components by name, the others by index
     enum class ItemType { None, Component, Wire, Label, Ground };
     struct Hit {
         ItemType type = ItemType::None;

@@ -591,6 +591,8 @@ void SchematicView::contextMenu(QMouseEvent* e) {
     menu.addAction(tr("Spiegeln\tX"), this, [this]() { transformSelection(1); })->setEnabled(any);
     menu.addAction(tr("Verdoppeln\t⌘D"), this, &SchematicView::duplicateSelection)->setEnabled(any);
     menu.addAction(tr("Löschen\t⌫"), this, &SchematicView::deleteSelection)->setEnabled(any);
+    menu.addAction(tr("In Teilschaltung umwandeln …\t⌘G"), this, &SchematicView::extractRequested)
+        ->setEnabled(!comps.isEmpty());
     menu.addSeparator();
     menu.addAction(tr("Leitung zeichnen\tW"), this, &SchematicView::startWire);
     menu.addAction(tr("Masse\tG"), this, &SchematicView::startGround);

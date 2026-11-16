@@ -193,6 +193,7 @@ MainWindow::MainWindow() {
     connect(schematic_, &SchematicView::probe, this, &MainWindow::probe);
     connect(schematic_, &SchematicView::openSubcircuit, this, &MainWindow::enterScope);
     connect(schematic_, &SchematicView::leaveRequested, this, [this]() { enterScope(QString()); });
+    connect(schematic_, &SchematicView::extractRequested, this, &MainWindow::extractSelection);
     connect(schematic_, &SchematicView::partChooserRequested, this, [this]() {
         paletteDock_->show();
         paletteDock_->raise();
@@ -324,6 +325,8 @@ void MainWindow::createActions() {
     edit->addSeparator();
     edit->addAction(tr("Kommentar ein/aus"), QKeySequence(Qt::CTRL | Qt::Key_Slash), editor_, &CodeEditor::toggleComment);
     edit->addSeparator();
+    edit->addAction(tr("Auswahl in Teilschaltung umwandeln …"), QKeySequence(Qt::CTRL | Qt::Key_G), this,
+                    &MainWindow::extractSelection);
     edit->addAction(tr("Modellbibliothek …"), QKeySequence(Qt::CTRL | Qt::Key_L), this, &MainWindow::openLibrary);
 
     QMenu* sim = menuBar()->addMenu(tr("&Simulation"));
@@ -1035,4 +1038,33 @@ void MainWindow::openLibrary() {
         applyText(changed);
         refreshSchematic();
     }
+}
+
+void MainWindow::extractSelection() {
+    const Schematic& s = schematic_->schematic();
+    const ItemSet sel = schematic_->selection();
+    if (sel.comps.isEmpty()) {
+        status_->setText(tr("Erst Bauteile im Plan auswählen, dann ⌘G"));
+        return;
+    }
+    // a free name to start with
+    QString name;
+    for (int k = 1; name.isEmpty() || s.subcircuits.contains(name); ++k) name = QStringLiteral("teil%1").arg(k);
+    bool ok = false;
+    name = QInputDialog::getText(this, tr("In Teilschaltung umwandeln"),
+                                 tr("%n Bauteil(e) werden zu einer Teilschaltung. Name:", "", int(sel.comps.size())),
+                                 QLineEdit::Normal, name, &ok)
+               .trimmed();
+    if (!ok || name.isEmpty()) return;
+    const Extraction e = extractSubcircuit(editor_->toPlainText(), s, sel, name);
+    if (e.text.isEmpty()) {
+        QMessageBox::warning(this, tr("In Teilschaltung umwandeln"), e.error);
+        return;
+    }
+    applyText(e.text);
+    schematic_->selectComponents({e.instance});
+    refreshSchematic();
+    status_->setText(e.ports.isEmpty() ? tr("Teilschaltung „%1“ ohne Ports angelegt (%2)").arg(name, e.instance)
+                                       : tr("Teilschaltung „%1“ mit den Ports %2 angelegt; Doppelklick auf %3 öffnet sie")
+                                             .arg(name, e.ports.join(", "), e.instance));
 }

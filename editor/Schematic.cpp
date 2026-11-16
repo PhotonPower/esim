@@ -913,6 +913,232 @@ QString addSubcircuit(const QString& text, const QString& name, const QStringLis
                          QStringLiteral("\n") + indent + QStringLiteral("}"));
 }
 
+Extraction extractSubcircuit(const QString& text, const Schematic& s, const ItemSet& sel, const QString& name) {
+    Extraction out;
+    if (name.trimmed().isEmpty() || name.contains(QRegularExpression(QStringLiteral("[\\s\"/]")))) {
+        out.error = QStringLiteral("Der Name darf nicht leer sein und keine Leerzeichen, \" oder / enthalten");
+        return out;
+    }
+    if (s.subcircuits.contains(name)) {
+        out.error = QStringLiteral("Eine Teilschaltung „%1“ gibt es schon").arg(name);
+        return out;
+    }
+    QVector<int> chosen;
+    for (int k = 0; k < s.components.size(); ++k)
+        if (sel.comps.contains(s.components[k].name)) chosen << k;
+    if (chosen.isEmpty()) {
+        out.error = QStringLiteral("Es ist kein Bauteil ausgewählt");
+        return out;
+    }
+    for (int k : chosen)
+        if (s.components[k].index < 0 || s.components[k].begin < 0) {
+            out.error = QStringLiteral("Der Plan ist nicht auf dem Stand des Texts");
+            return out;
+        }
+    const Connectivity c = connectSchematic(s);
+
+    // nets: inside (a selected pin) and outside (an unselected pin or label)
+    const int nets = int(c.netNames.size());
+    QVector<bool> inside(nets, false), outside(nets, false);
+    QVector<QPointF> where(nets, QPointF(1e9, 1e9));  // leftmost selected pin, for the order
+    for (int k = 0; k < s.components.size(); ++k) {
+        const bool picked = sel.comps.contains(s.components[k].name);
+        for (int p = 0; p < c.pinNet[k].size(); ++p) {
+            const int n = c.pinNet[k][p];
+            (picked ? inside : outside)[n] = true;
+            const QPoint at = c.pinPos[k][p];
+            if (picked && (at.x() < where[n].x() || (at.x() == where[n].x() && at.y() < where[n].y()))) where[n] = at;
+        }
+    }
+    for (int k = 0; k < s.labels.size(); ++k)
+        if (!sel.labels.contains(k)) outside[c.labelNet[k]] = true;
+    QVector<int> portNets;
+    for (int n = 0; n < nets; ++n)
+        if (inside[n] && outside[n] && !isGroundName(c.netNames[n])) portNets << n;
+    std::sort(portNets.begin(), portNets.end(), [&](int a, int b) {
+        return where[a].x() != where[b].x() ? where[a].x() < where[b].x() : where[a].y() < where[b].y();
+    });
+    for (int n : portNets) out.ports << c.netNames[n];
+
+    // the drawing inside, moved to the origin
+    Schematic inner;
+    QRect box;
+    for (int k : chosen) {
+        const SComponent& comp = s.components[k];
+        QRect r = comp.place.transform().mapRect(symbolOf(comp).body).toAlignedRect();
+        for (const QPoint& p : c.pinPos[k]) r |= QRect(p, QSize(1, 1));
+        box = box.isNull() ? r : box.united(r);
+    }
+    const QPoint shift(-box.left() + 2, -box.top() + 2);
+    for (int k : chosen) {
+        SComponent comp = s.components[k];
+        comp.place.at += shift;
+        inner.components << comp;
+    }
+    for (int k : sel.wires) {
+        SWire w = s.wires.value(k);
+        for (QPoint& p : w.pts) p += shift;
+        inner.wires << w;
+    }
+    for (int k : sel.labels) {
+        SLabel l = s.labels.value(k);
+        l.at += shift;
+        inner.labels << l;
+    }
+    for (int k : sel.grounds) {
+        SGround g = s.grounds.value(k);
+        g.at += shift;
+        inner.grounds << g;
+    }
+    // where the rest touches the selection on a port net: there the net leaves.
+    // Inside a port sits there, outside a label (pointing back into the gap).
+    struct Contact {
+        int net;
+        QPoint at;
+        QPoint out;  // direction away from the selection
+    };
+    QVector<Contact> contacts;
+    QHash<QPoint, QPoint> selectedPins;  // position -> its outward direction
+    for (int k : chosen)
+        for (int p = 0; p < c.pinPos[k].size(); ++p)
+            selectedPins.insert(c.pinPos[k][p], s.components[k].place.mapDir(symbolOf(s.components[k]).pins[p].dir));
+    const auto sign = [](int v) { return v > 0 ? 1 : v < 0 ? -1 : 0; };
+    // the outward direction at p if p lies on the selection, else (0, 0)
+    const auto onSelection = [&](QPoint p) -> QPoint {
+        if (selectedPins.contains(p)) return selectedPins.value(p);
+        for (int k : sel.wires) {
+            const QVector<QPoint>& w = s.wires.value(k).pts;
+            for (int i = 0; i + 1 < w.size(); ++i) {
+                const QPoint a = w[i], b = w[i + 1];
+                const bool on = a.x() == b.x() ? p.x() == a.x() && p.y() >= std::min(a.y(), b.y()) && p.y() <= std::max(a.y(), b.y())
+                                               : p.y() == a.y() && p.x() >= std::min(a.x(), b.x()) && p.x() <= std::max(a.x(), b.x());
+                if (!on) continue;
+                // at an end: onwards along the wire; in between: across it
+                if (p == w.first()) return QPoint(sign(p.x() - w[1].x()), sign(p.y() - w[1].y()));
+                if (p == w.last()) return QPoint(sign(p.x() - w[w.size() - 2].x()), sign(p.y() - w[w.size() - 2].y()));
+                return a.x() == b.x() ? QPoint(-1, 0) : QPoint(0, -1);
+            }
+        }
+        return QPoint();
+    };
+    QSet<QPoint> seen;
+    const auto contact = [&](int net, QPoint p) {
+        if (!portNets.contains(net) || seen.contains(p)) return;
+        const QPoint out = onSelection(p);
+        if (out.isNull()) return;
+        seen.insert(p);
+        contacts.push_back({net, p, out});
+    };
+    for (int k = 0; k < s.components.size(); ++k)
+        if (!sel.comps.contains(s.components[k].name))
+            for (int p = 0; p < c.pinPos[k].size(); ++p) contact(c.pinNet[k][p], c.pinPos[k][p]);
+    for (int k = 0; k < s.wires.size(); ++k)
+        if (!sel.wires.contains(k))
+            for (const QPoint& v : s.wires[k].pts) contact(c.wireNet[k], v);
+    for (int k = 0; k < s.labels.size(); ++k)
+        if (!sel.labels.contains(k)) contact(c.labelNet[k], s.labels[k].at);
+    for (int n : portNets) {
+        bool placed = false;
+        for (const Contact& ct : contacts)
+            if (ct.net == n) {
+                inner.labels.push_back({c.netNames[n], ct.at + shift, labelRot(ct.out), true});
+                placed = true;
+            }
+        if (placed) continue;
+        // no contact in the drawing (a name only): at a selected pin
+        for (int k : chosen) {
+            const int p = int(c.pinNet[k].indexOf(n));
+            if (p < 0) continue;
+            inner.labels.push_back({c.netNames[n], c.pinPos[k][p] + shift,
+                                    labelRot(s.components[k].place.mapDir(symbolOf(s.components[k]).pins[p].dir)), true});
+            break;
+        }
+    }
+
+    // the definition: the components as written, with the nodes of the drawing
+    QString result = text;
+    {
+        JValue root;
+        parseJsonc(text, root);
+        const JValue* subs = root.get("subcircuits");
+        if (subs && !subs->isObject()) {
+            out.error = QStringLiteral("\"subcircuits\" ist kein Objekt");
+            return out;
+        }
+        const QString outer = subs ? memberIndent(text, *subs) : memberIndent(text, root) + QStringLiteral("  ");
+        const QString in1 = outer + QStringLiteral("  "), in2 = in1 + QStringLiteral("  ");
+        QStringList comps;
+        for (int k : chosen) {
+            QString obj = text.mid(s.components[k].begin, s.components[k].end - s.components[k].begin);
+            if (c.pinNodes[k].size() == s.components[k].nodes.size() && c.pinNodes[k] != s.components[k].nodes) {
+                // the drawing says otherwise than the text: the drawing counts
+                JValue o;
+                parseJsonc(obj, o);
+                if (const JValue* nodes = o.get("nodes")) {
+                    QStringList q;
+                    for (const QString& node : c.pinNodes[k]) q << jsonQuote(node);
+                    obj = replaceValue(obj, *nodes, QStringLiteral("[") + q.join(", ") + QStringLiteral("]"));
+                }
+            }
+            comps << obj;
+        }
+        QStringList quoted;
+        for (const QString& p : out.ports) quoted << jsonQuote(p);
+        const QString def = QStringLiteral("{\n") + in1 + QStringLiteral("\"ports\": [") + quoted.join(", ") +
+                            QStringLiteral("],\n") + in1 + QStringLiteral("\"components\": [\n") + in2 +
+                            comps.join(QStringLiteral(",\n") + in2) + QStringLiteral("\n") + in1 + QStringLiteral("],\n") +
+                            in1 + QStringLiteral("\"schematic\": ") + sectionJson(inner, in1) + QStringLiteral("\n") + outer +
+                            QStringLiteral("}");
+        if (subs) {
+            result = setMember(text, *subs, name, def);
+        } else {
+            const QString top = memberIndent(text, root);
+            result = setMember(text, root, QStringLiteral("subcircuits"),
+                               QStringLiteral("{\n") + outer + jsonQuote(name) + QStringLiteral(": ") + def +
+                                   QStringLiteral("\n") + top + QStringLiteral("}"));
+        }
+    }
+
+    // the drawing outside: the selection gives way to an instance with labels
+    Schematic after = s;
+    for (int k = int(after.components.size()) - 1; k >= 0; --k)
+        if (sel.comps.contains(after.components[k].name)) after.components.removeAt(k);
+    const auto drop = [](auto& list, const QSet<int>& which) {
+        QList<int> idx(which.begin(), which.end());
+        std::sort(idx.begin(), idx.end(), std::greater<int>());
+        for (int k : idx)
+            if (k < list.size()) list.removeAt(k);
+    };
+    drop(after.wires, sel.wires);
+    drop(after.labels, sel.labels);
+    drop(after.grounds, sel.grounds);
+    // the rest keeps its connections: a label at each contact
+    for (const Contact& ct : contacts) {
+        bool named = false;  // a label of that name is there already
+        for (int l = 0; l < s.labels.size(); ++l)
+            named = named || (!sel.labels.contains(l) && s.labels[l].at == ct.at && s.labels[l].name == c.netNames[ct.net]);
+        if (!named)
+            after.labels.push_back({c.netNames[ct.net], ct.at, labelRot(-ct.out), s.ports.contains(c.netNames[ct.net])});
+    }
+    SComponent x;
+    x.type = QStringLiteral("X");
+    x.kind = 'x';
+    x.subcircuit = name;
+    x.ports = out.ports;
+    x.name = after.freeName(QStringLiteral("X"));
+    x.summary = name;
+    x.nodes = QStringList(QVector<QString>(out.ports.size()));
+    x.place.at = QPoint(box.center().x(), box.center().y());
+    x.placed = true;
+    const Symbol sym = symbolOf(x);
+    for (int p = 0; p < sym.pins.size(); ++p)
+        after.labels.push_back({out.ports[p], x.place.map(sym.pins[p].pos), labelRot(sym.pins[p].dir), s.ports.contains(out.ports[p])});
+    after.components << x;
+    out.instance = x.name;
+    out.text = writeSchematic(result, after);
+    return out;
+}
+
 QVector<Instance> instancesOf(const QString& text, const QString& subcircuit) {
     QVector<Instance> out;
     JValue root;
