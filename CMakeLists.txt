@@ -12,6 +12,7 @@ endif()
 
 option(ESIM_BUILD_TESTS "Build the test suite" ON)
 option(ESIM_BUILD_EXAMPLES "Build the C++ examples" ON)
+option(ESIM_BUILD_EDITOR "Build the editor (needs Qt 6.5 or later)" ON)
 
 # --- Dependencies: Eigen (linear algebra) and nlohmann/json (input files) ---
 # Installed packages are preferred; otherwise both are downloaded.
@@ -124,5 +125,15 @@ if(ESIM_BUILD_TESTS)
     add_test(NAME spice_import
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/test_spice2json.py)
+  endif()
+endif()
+
+# --- the editor (after the tests, so that its test is registered) -------------
+if(ESIM_BUILD_EDITOR)
+  find_package(Qt6 6.5 QUIET COMPONENTS Widgets Concurrent)
+  if(Qt6_FOUND)
+    add_subdirectory(editor)
+  else()
+    message(STATUS "Qt 6 not found, the editor is not built")
   endif()
 endif()

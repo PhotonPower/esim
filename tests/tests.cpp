@@ -2,6 +2,7 @@
 // Returns a non-zero exit code if any check fails.
 
 #include <Eigen/Dense>
+#include <clocale>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -2949,6 +2950,81 @@ void testInputErrors() {
               "duplicate names are rejected");
 }
 
+// What the editor relies on: the drawing in "schematic" is accepted without a
+// warning, warnings can be collected, and runs report their progress.
+void testEditorSupport() {
+    std::ostringstream warnings;
+    std::ostream* previous = setWarningStream(&warnings);
+    Netlist nl = parseNetlistText(R"json({
+        "parameters": {"R": "1k"},
+        "subcircuits": {"div": {"ports": ["a", "b"], "schematic": {"wires": []},
+                                "components": [{"type": "R", "nodes": ["a", "b"], "value": 1}]}},
+        "components": [
+            {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": 1},
+            {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "R", "colour": "red"},
+            {"type": "C", "name": "C1", "nodes": ["out", "0"], "value": "1u"},
+            {"type": "X", "name": "X1", "nodes": ["out", "0"], "subcircuit": "div"}
+        ],
+        "analyses": [{"type": "tran", "tstop": "5m"},
+                     {"type": "op", "param_sweep": {"param": "R", "values": ["1k", "2k", "4k"]}}],
+        "schematic": {"symbols": {"R1": {"x": 0, "y": 0}}, "wires": []}
+    })json");
+    setWarningStream(previous);
+    checkTrue(warnings.str().find("schematic") == std::string::npos, "no warning about \"schematic\"");
+    checkTrue(warnings.str().find("colour") != std::string::npos, "warnings go to the chosen stream");
+
+    RunConfig cfg;
+    cfg.outDir = (std::filesystem::temp_directory_path() / "esim_tests").string();
+    cfg.stem = "progress";
+    std::vector<std::pair<std::string, double>> seen;
+    cfg.progress = [&](const std::string& type, double f) { seen.emplace_back(type, f); };
+    std::ostringstream log;
+    runAnalyses(nl, cfg, log);
+    bool tranMonotone = true, sawTran = false;
+    double last = 0.0;
+    std::vector<double> series;
+    for (const auto& [type, f] : seen) {
+        if (type == "tran") {
+            sawTran = true;
+            tranMonotone = tranMonotone && f >= last && f <= 1.0 + 1e-12;
+            last = f;
+        } else {
+            series.push_back(f);
+        }
+    }
+    checkTrue(sawTran && tranMonotone, "transient progress grows to at most 1");
+    checkNear(last, 1.0, 1e-12, "transient progress ends at 1");
+    checkTrue(series.size() == 3, "one progress report per run of the sweep");
+    if (series.size() == 3) checkNear(series.back(), 1.0, 1e-12, "series progress ends at 1");
+
+    // Numbers do not depend on the locale of the process: the editor (as any
+    // Qt program) runs with the locale of the system, where "4.7" may be 4
+    // and "5, 1" the number 5.1 for strtod.
+    const std::string saved = std::setlocale(LC_NUMERIC, nullptr);
+    bool german = false;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "German_Germany.1252"})
+        if (std::setlocale(LC_NUMERIC, name)) {
+            german = true;
+            break;
+        }
+    if (german) {
+        Netlist de = parseNetlistText(R"json({
+            "components": [
+                {"type": "V", "name": "V1", "nodes": ["in", "0"], "dc": "1.5"},
+                {"type": "R", "name": "R1", "nodes": ["in", "out"], "value": "4.7k"},
+                {"type": "R", "name": "R2", "nodes": ["out", "0"], "value": 4.7e3}
+            ]
+        })json");
+        const Vector x = solveOperatingPoint(*de.circuit, de.options);
+        checkNear(probe(*de.circuit, x, "v(out)"), 0.75, 1e-12, "numbers read the same under a German locale");
+        checkNear(probe(*de.circuit, x, "if(v(out) >= 0.5, 2.5, 0)"), 2.5, 1e-12,
+                  "numbers and argument lists in expressions under a German locale");
+    } else {
+        std::cout << "  (no German locale installed: locale test skipped)\n";
+    }
+    std::setlocale(LC_NUMERIC, saved.c_str());
+}
+
 }  // namespace
 
 int main() {
@@ -2993,6 +3069,7 @@ int main() {
         {"parameter sweep", testParameterSweep},
         {"measurements", testMeasurements},
         {"input errors", testInputErrors},
+        {"editor support", testEditorSupport},
     };
     for (const auto& [name, fn] : tests) {
         std::cout << "[test] " << name << '\n';

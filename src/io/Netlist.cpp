@@ -30,6 +30,7 @@
 #include "circuit/devices/Switching.hpp"
 #include "expr/Expression.hpp"
 #include "io/Units.hpp"
+#include "core/ParseNumber.hpp"
 
 namespace esim {
 
@@ -61,10 +62,11 @@ const double kInf = std::numeric_limits<double>::infinity();
 // Hints about unknown keys, see parseNetlist(). Per thread: series of runs
 // read their netlists on several threads at once.
 thread_local bool g_warnings = true;
+thread_local std::ostream* g_warningStream = &std::cerr;
 
 std::ostream& warn() {
-    static std::ostream discard(nullptr);
-    return g_warnings ? std::cerr << "warning: " : discard;
+    static thread_local std::ostream discard(nullptr);
+    return g_warnings && g_warningStream ? *g_warningStream << "warning: " : discard;
 }
 
 std::string lower(std::string s) {
@@ -967,7 +969,7 @@ std::shared_ptr<const expr::Table> parseTable(const std::string& name, const jso
             std::vector<double> row;
             for (std::string field; fields >> field;) {
                 char* end = nullptr;
-                const double v = std::strtod(field.c_str(), &end);
+                const double v = parseDouble(field.c_str(), &end);
                 if (end == field.c_str() || *end != '\0') break;
                 row.push_back(v);
             }
@@ -1100,8 +1102,9 @@ void instantiate(Builder& b, const Scope& scope, const std::string& name, Params
         throw std::runtime_error(p.where() + ": subcircuits are nested more than 20 levels deep "
                                              "(does \"" + subName + "\" contain itself?)");
 
-    static const std::set<std::string> known = {"ports", "parameters", "components",
-                                                "variables", "equations", "events"};
+    // "schematic": drawing of the editor, not read by the simulator
+    static const std::set<std::string> known = {"ports", "parameters", "components", "variables",
+                                                "equations", "events", "schematic"};
     for (const auto& [k, v] : def.items())
         if (!known.count(k)) warn() << what << ": unknown key \"" << k << "\" ignored\n";
 
@@ -1162,7 +1165,7 @@ void instantiate(Builder& b, const Scope& scope, const std::string& name, Params
 // "meg" is mega; anything after the suffix is a unit.
 double parseSpiceValue(const std::string& token, const std::string& where) {
     char* end = nullptr;
-    const double v = std::strtod(token.c_str(), &end);
+    const double v = parseDouble(token.c_str(), &end);
     if (end == token.c_str())
         throw std::runtime_error(where + ": cannot read the value '" + token + "'");
     const std::string suffix = lower(end);
@@ -1290,7 +1293,7 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
     static const std::set<std::string> known = {"title",      "options",   "models",    "components",
                                                 "analyses",   "outputs",   "nodeset",   "ic",
                                                 "parameters", "variables", "equations", "events",
-                                                "subcircuits", "tables", "functions"};
+                                                "subcircuits", "tables", "functions", "schematic"};
     for (const auto& [k, v] : root.items())
         if (!known.count(k))
             warn() << "netlist: unknown top-level key \"" << k << "\" ignored\n";
@@ -1432,6 +1435,12 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
         }
     }
     return nl;
+}
+
+std::ostream* setWarningStream(std::ostream* out) {
+    std::ostream* previous = g_warningStream;
+    g_warningStream = out;
+    return previous;
 }
 
 Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir) {

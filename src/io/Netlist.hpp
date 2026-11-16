@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iosfwd>
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -29,6 +30,10 @@ struct Netlist {
 Netlist parseNetlist(const nlohmann::json& root, bool warnings = true,
                      const std::string& baseDir = "");
 Netlist parseNetlistText(const std::string& text);
+
+// Where the warnings of the parser go on the calling thread (default
+// std::cerr; nullptr: nowhere). Returns the previous destination.
+std::ostream* setWarningStream(std::ostream* out);
 Netlist loadNetlist(const std::string& path);
 
 // Number from a JSON value: a JSON number, a string like "4.7k", or a constant

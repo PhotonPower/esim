@@ -1,4 +1,5 @@
 #include "expr/Expression.hpp"
+#include "core/ParseNumber.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -200,7 +201,7 @@ private:
     AstPtr parseNumber() {
         const char* begin = s_.c_str() + pos_;
         char* end = nullptr;
-        double v = std::strtod(begin, &end);
+        double v = parseDouble(begin, &end);
         if (end == begin) fail("invalid number");
         pos_ += static_cast<size_t>(end - begin);
 

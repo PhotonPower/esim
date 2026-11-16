@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <iosfwd>
 #include <string>
 
@@ -16,6 +17,10 @@ struct RunConfig {
     // Runs of a series (parameter sweep, Monte Carlo, sensitivities, fit) that
     // are computed at the same time. 0: as many as the machine has cores.
     int threads = 0;
+    // If set, called with the type of the running analysis and its progress
+    // from 0 to 1: the simulated time of a transient, the completed runs of a
+    // series. Always on the calling thread.
+    std::function<void(const std::string& type, double fraction)> progress;
 };
 
 // Run all analyses of the netlist in order. Progress and the operating point

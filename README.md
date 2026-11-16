@@ -129,7 +129,33 @@ t, v = res.tran["time"], res.tran["v(out)"]
 
 Für eigene Programme schreibt `esim netz.json --summary ergebnis.json` eine
 maschinenlesbare Übersicht aller Analysen (Dateien, Arbeitspunktwerte,
-Messgrößen, Statistik).
+Messgrößen, Statistik). `--progress` meldet während Transienten und
+Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
+
+### Editor
+
+`esim-editor` (Qt 6, wird mitgebaut, wenn CMake Qt ≥ 6.5 findet, z. B. nach
+`brew install qt`) ist eine Oberfläche für die Eingabedateien:
+
+    open build/editor/esim-editor.app                       # macOS
+    build/editor/esim-editor.app/Contents/MacOS/esim-editor examples/rc_lowpass.json
+
+- Texteditor mit Hervorhebung, Zeilennummern und Einrückung; die Eingabe wird
+  beim Tippen mit dem Parser des Simulators geprüft, Fehler und Warnungen
+  stehen an ihrer Zeile und in der Liste „Probleme“.
+- ⌘R sichert und startet die Simulation (als eigener Prozess, ⌘. bricht ab),
+  mit Fortschrittsanzeige und Protokoll.
+- Ergebnisse: Analysen, Größen zum Ankreuzen, Werte (Arbeitspunkt,
+  Messgrößen) als Tabelle und Kurven in Feldern mit gemeinsamer x-Achse.
+  Scrollen oder Spreizen zoomt in x (mit ⌘ in y), Ziehen zoomt auf ein
+  Rechteck, Doppelklick zeigt alles; das Fadenkreuz zeigt die Werte.
+  Frequenzgänge erscheinen als Betrag in dB und Phase, Sweeps mit einer
+  Farbstufe je Lauf.
+- Ein Schaltplaneditor folgt; Planung in [`docs/editor.md`](docs/editor.md).
+
+Der Editor bringt das Programm `esim` in seinem Paket mit.
+`esim-editor datei.json --run --snapshot bild.png` rechnet und speichert das
+Fenster als Bild (für Tests und Dokumentation).
 
 ### SPICE-Netzlisten übernehmen
 
@@ -1068,6 +1094,7 @@ src/app/       Ablauf der Analysen aus der Eingabedatei, Messgrößen
 examples/      Eingabedateien und ein DAE in C++ (examples/dae)
 tools/         plot.py zum Zeichnen der Ergebnisse, spice2json.py für SPICE-Netzlisten
 python/        esim.py: Aufruf aus Python
+editor/        esim-editor: Oberfläche (Qt 6), prüft mit esimcircuit, rechnet mit esim
 tests/         Testsuite gegen analytische Lösungen
 ```
 
@@ -1156,6 +1183,10 @@ Jacobi-Matrizen als Triplets). Optional sind `eventFunctions()` und
 zeigt das; gelöst wird mit `runTransient()` aus `esimcore`:
 
     ./build/dae_robertson
+
+## Lizenz
+
+MIT, siehe [`LICENSE`](LICENSE).
 
 ## Grenzen und nächste Schritte
 

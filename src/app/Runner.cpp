@@ -25,6 +25,7 @@
 #include "core/StructuralIndex.hpp"
 #include "core/Transient.hpp"
 #include "io/Output.hpp"
+#include "core/ParseNumber.hpp"
 
 namespace esim {
 
@@ -533,6 +534,7 @@ void runTran(Context& c, const json& a) {
             table.row(t, row);
             measures.sample(t, [&](const Probe& p) { return p.value(x, t); });
             fourierBlock.sample(t, x);
+            if (c.cfg.progress) c.cfg.progress("tran", t / to.tstop);
         });
     } catch (...) {
         ckt.setTransientMode(false);
@@ -931,7 +933,9 @@ void runWith(Context& c, const Sweep& sweep, const json& inner, const std::strin
     for (const auto& [name, value] : parameters) root["parameters"][name] = value;
     Netlist sub = parseNetlist(root, /*warnings=*/false, c.nl.baseDir);
     std::ostringstream quiet;  // per-run progress is not reported
-    Context sc{sub, c.cfg, quiet, {}, &sweep, &out};  // sc.entry() stays silent inside a series
+    RunConfig cfg = c.cfg;     // nor is the progress of the runs (they are on other threads)
+    cfg.progress = nullptr;
+    Context sc{sub, cfg, quiet, {}, &sweep, &out};  // sc.entry() stays silent inside a series
     runOne(sc, inner, type);
 }
 
@@ -992,6 +996,7 @@ void runSeries(Context& c, Sweep& sweep, const json& inner, const std::string& t
             }
             sweep.merge(leading[first + j], buffers[j]);
             if (onDone) onDone(first + j, buffers[j]);
+            if (c.cfg.progress) c.cfg.progress(type, static_cast<double>(first + j + 1) / sets.size());
         }
     }
 }
@@ -1232,7 +1237,7 @@ void runFit(Context& c, const json& a) {
                 std::vector<double> row;
                 for (std::string field; fields >> field;) {
                     char* end = nullptr;
-                    const double v = std::strtod(field.c_str(), &end);
+                    const double v = parseDouble(field.c_str(), &end);
                     if (end == field.c_str() || *end != '\0') break;
                     row.push_back(v);
                 }

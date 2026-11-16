@@ -1,4 +1,5 @@
 #include "io/Units.hpp"
+#include "core/ParseNumber.hpp"
 
 #include <cctype>
 #include <cstdlib>
@@ -18,7 +19,7 @@ double parseValue(const std::string& text) {
 
     const char* begin = text.c_str();
     char* end = nullptr;
-    const double v = std::strtod(begin, &end);
+    const double v = parseDouble(begin, &end);
     if (end == begin) throw bad();
 
     std::string suffix(end);

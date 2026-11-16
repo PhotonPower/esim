@@ -13,13 +13,16 @@ namespace {
 
 void usage() {
     std::cout << "usage: esim <netlist.json> [-o <output directory>] [--summary <file.json>] [-j <n>]\n"
+                 "            [--progress]\n"
                  "\n"
                  "Runs the analyses listed in the netlist. Sweep and transient results\n"
                  "are written to <output directory>/<netlist name>.<analysis>.csv\n"
                  "(default output directory: current directory).\n"
                  "--summary writes a machine-readable description of all results\n"
                  "(files, operating point values, measurements) for use by other programs.\n"
-                 "-j <n> computes n runs of a parameter study at the same time (default: all cores).\n";
+                 "-j <n> computes n runs of a parameter study at the same time (default: all cores).\n"
+                 "--progress writes lines \"progress <analysis> <fraction>\" to stderr while a\n"
+                 "transient or a series of runs is computed (at most one per percent).\n";
 }
 
 }  // namespace
@@ -52,6 +55,15 @@ int main(int argc, char** argv) {
                 return 2;
             }
             cfg.threads = std::atoi(argv[++i]);
+        } else if (arg == "--progress") {
+            cfg.progress = [last = std::string(), percent = -1](const std::string& type,
+                                                                double fraction) mutable {
+                const int now = static_cast<int>(fraction * 100.0);
+                if (type == last && now == percent) return;
+                last = type;
+                percent = now;
+                std::cerr << "progress " << type << ' ' << fraction << std::endl;
+            };
         } else if (input.empty() && !arg.empty() && arg[0] != '-') {
             input = arg;
         } else {
