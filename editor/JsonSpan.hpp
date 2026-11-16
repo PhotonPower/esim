@@ -61,8 +61,9 @@ QString removeMember(const QString& text, const JValue& obj, const QString& key)
 // if it stood alone on that line.
 QString removeItem(const QString& text, const JValue& arr, int index);
 
-// Appends items (JSON texts) to array `arr`, each on a line of its own
-// with the indentation of the existing items.
+// Appends items (JSON texts) to array `arr`: each on a line of its own with
+// the indentation of the existing items, or on the same line if the array
+// is written on one line.
 QString appendItems(const QString& text, const JValue& arr, const QStringList& items);
 
 // Indentation (spaces and tabs) of the line that contains position pos.

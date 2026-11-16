@@ -64,6 +64,22 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
   Plan für alle Beispiele, Netzbildung, Bedienung mit Maus und Tastatur im
   echten Hauptfenster (`editor_gui_tests`).
 
+**Schritt 3a (Teilschaltungen im Plan)** – erledigt:
+- Jede Teilschaltung hat einen eigenen Plan unter `"schematic"` in ihrer
+  Definition. Doppelklick auf eine Instanz (oder „Teilschaltung öffnen“ im
+  Kontextmenü) öffnet ihn; die Leiste über dem Plan und ⌘↑ führen zurück.
+  Steht der Textcursor in einem Bauteil einer Teilschaltung, wechselt der
+  Plan dorthin.
+- Ports sind eigene Symbole (beidseitig spitz, Taste P) und verbinden wie
+  Labels über den Namen. Nicht gezeichnete Ports ergänzt der Editor links;
+  ein Port mit neuem Namen wird an `"ports"` angehängt (die Instanzen
+  bekommen dafür einen Anschluss mehr).
+- „Neue Teilschaltung …“ legt eine leere Teilschaltung mit Ports an.
+- Kurven und Arbeitspunkt im Plan einer Teilschaltung gelten für eine
+  Instanz: `v(out)` wird zu `v(U1.out)`, ein Port zum Knoten außen; bei
+  mehreren Instanzen fragt der ⌥-Klick nach, die Werte an den Labels stehen
+  nur bei einer einzigen Instanz.
+
 ### Wie Plan und Text zusammenhängen
 
 Der Text ist maßgeblich. Nach jeder Textänderung (entprellt) liest der Plan
@@ -83,6 +99,7 @@ Format:
       "components": { "R1": { "at": [4, -2], "rot": 270, "mirror": true } },
       "wires":   [ [[0, -2], [2, -2]] ],
       "labels":  [ { "name": "out", "at": [10, -2], "rot": 0 } ],
+      "ports":   [ { "name": "in", "at": [-4, 0] } ],      // nur in Teilschaltungen
       "grounds": [ { "at": [0, 2] } ]
     }
 
@@ -97,9 +114,10 @@ schreibt die Knoten des Plans.
 
 ## Nächste Schritte
 
-**Schritt 3**
-- Subcircuits als Symbole mit Hierarchie, Modellbibliothek (SPICE-Karten),
-  Darstellung von Monte Carlo (Histogramm) und Messgrößen über Sweeps.
+**Schritt 3 (Rest)**
+- Modellbibliothek (SPICE-Karten), Darstellung von Monte Carlo (Histogramm)
+  und Messgrößen über Sweeps.
+- Eine Auswahl im Plan in eine neue Teilschaltung umwandeln.
 
 **Schritt 4: Windows 11**
 - esim und Editor mit MSVC bauen (Pfade mit Umlauten: `std::filesystem::path`),
@@ -107,8 +125,6 @@ schreibt die Knoten des Plans.
 
 ## Offene Punkte
 
-- Teilschaltungen haben noch keinen eigenen Plan (ihre Bauteile stehen nur
-  im Text); Schritt 3.
 - Kopieren und Einfügen zwischen Dateien, Beschriftungen frei verschieben.
 - Die Bedienung ist mit simulierten Ereignissen getestet; Rückmeldungen
   aus der echten Benutzung fehlen noch.

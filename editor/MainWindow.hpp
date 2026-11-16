@@ -35,6 +35,7 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow();
     bool openFile(const QString& path);
+    void showSubcircuit(const QString& name) { enterScope(name); }
     // For tests and documentation: start the simulation right away (run), and
     // when it is done (or the check, without run) save the window as image
     // and quit. exitCode: 0 if the simulation succeeded.
@@ -76,10 +77,19 @@ private:
     void choosePart(const QString& id);
     void renameComponent(int index, const QString& name);
     void probe(const QString& quantity);
+    void enterScope(const QString& scope);
+    void newSubcircuit();
+    void updateOperatingPoint();
+    // In a subcircuit: the name of a quantity in the simulation for one of its
+    // instances ("v(out)" -> "v(U1.out)", a port -> the node outside).
+    QString instanceQuantity(const QString& quantity, const Instance& in) const;
 
     CodeEditor* editor_;
     SchematicView* schematic_;
     QSplitter* split_;
+    QWidget* planBox_;
+    QWidget* scopeBar_;
+    QLabel* scopeLabel_;
     PartPalette* palette_;
     PropertyPanel* props_;
     ResultsPanel* results_;
@@ -106,6 +116,8 @@ private:
     QTimer* schematicTimer_;
     bool writing_ = false;         // the schematic writes into the text
     bool syncingCursor_ = false;   // the text cursor is moved to a component
+    QString scope_;                // the subcircuit shown, "" the main circuit
+    QHash<QString, double> op_;    // operating point of the last run
     SimulationRun* run_;
     std::unique_ptr<QTemporaryDir> outDir_;
     QString file_;

@@ -32,17 +32,18 @@ int main(int argc, char** argv) {
 
     MainWindow window;
     app.window = &window;
-    // esim-editor [file.json] [--run] [--snapshot image.png]
+    // esim-editor [file.json] [--subcircuit name] [--run] [--snapshot image.png]
     QStringList args = QApplication::arguments();
     args.removeFirst();
     bool run = false;
-    QString snapshot, file;
+    QString snapshot, file, subcircuit;
     for (int k = 0; k < args.size(); ++k) {
         if (args[k] == "--run") run = true;
         else if (args[k] == "--snapshot" && k + 1 < args.size()) snapshot = args[++k];
+        else if (args[k] == "--subcircuit" && k + 1 < args.size()) subcircuit = args[++k];
         else if (!args[k].startsWith('-')) file = args[k];
     }
-    if (!file.isEmpty()) window.openFile(file);
+    if (!file.isEmpty() && window.openFile(file) && !subcircuit.isEmpty()) window.showSubcircuit(subcircuit);
     window.show();
     if (run || !snapshot.isEmpty()) window.automate(run && !file.isEmpty(), snapshot);
     return app.exec();

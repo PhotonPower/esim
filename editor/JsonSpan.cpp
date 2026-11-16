@@ -403,8 +403,12 @@ QString appendItems(const QString& text, const JValue& arr, const QStringList& i
         return out;
     }
     const JValue& last = arr.items.back();
-    const bool ownLine = onlySpaces(text, lineStart(text, last.begin), last.begin) &&
-                         lineStart(text, last.begin) != lineStart(text, arr.begin);
+    if (lineStart(text, last.begin) == lineStart(text, arr.begin)) {
+        // a list on one line, as ["a", "b"]: stays on its line
+        out.insert(last.end, QStringLiteral(", ") + items.join(QStringLiteral(", ")));
+        return out;
+    }
+    const bool ownLine = onlySpaces(text, lineStart(text, last.begin), last.begin);
     const QString indent = ownLine ? indentationAt(text, last.begin) : indentationAt(text, arr.begin) + QStringLiteral("  ");
     const QString joined = items.join(QStringLiteral(",\n") + indent);
     const int at = restOfLineFree(text, last.end) && lineEnd(text, last.end) < arr.end - 1 ? lineEnd(text, last.end)

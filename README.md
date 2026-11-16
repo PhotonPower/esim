@@ -153,6 +153,11 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
   N ein Netzlabel; Rechtsklick öffnet ein Menü. Leitungen an verschobenen
   Bauteilen gehen mit. Die Auswahl im Plan markiert das Bauteil im Text
   und umgekehrt; „Eigenschaften“ zeigt seine Werte als Formular.
+  Teilschaltungen haben einen eigenen Plan: Doppelklick auf eine Instanz
+  öffnet ihn, ⌘↑ führt zurück; Ports (Taste P) verbinden mit außen, ein
+  neuer Port-Name erweitert die Ports. „Neue Teilschaltung …“ in der
+  Bauteilliste legt eine an. Steht der Textcursor in einem Bauteil einer
+  Teilschaltung, zeigt der Plan diese.
   Nach einer Simulation stehen die Spannungen des Arbeitspunkts an den
   Labels; ⌥-Klick auf eine Leitung oder ein Bauteil zeigt Spannung oder
   Strom als Kurve.
@@ -171,7 +176,8 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
 
 Der Editor bringt das Programm `esim` in seinem Paket mit.
 `esim-editor datei.json --run --snapshot bild.png` rechnet und speichert das
-Fenster als Bild (für Tests und Dokumentation).
+Fenster als Bild (für Tests und Dokumentation); `--subcircuit name` zeigt
+dabei den Plan einer Teilschaltung.
 
 ### SPICE-Netzlisten übernehmen
 

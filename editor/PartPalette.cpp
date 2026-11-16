@@ -86,6 +86,12 @@ void PartPalette::setSubcircuits(const QMap<QString, QStringList>& subcircuits) 
     rebuild();
 }
 
+void PartPalette::setScope(const QString& scope) {
+    if (scope == scope_) return;
+    scope_ = scope;
+    rebuild();
+}
+
 void PartPalette::focusSearch() {
     search_->setFocus();
     search_->selectAll();
@@ -146,16 +152,37 @@ void PartPalette::rebuild() {
             f.closeSubpath();
             p.drawPath(f);
         }));
+    const auto flag = [](bool pointed) {
+        return icon(QRectF(-0.5, -1.6, 3.6, 3.2), [pointed](QPainter& p) {
+            QPainterPath f;
+            f.moveTo(0, 0);
+            f.lineTo(0.6, -0.7);
+            f.lineTo(pointed ? 2.5 : 3, -0.7);
+            if (pointed) f.lineTo(3, 0);
+            f.lineTo(pointed ? 2.5 : 3, 0.7);
+            f.lineTo(0.6, 0.7);
+            f.closeSubpath();
+            p.drawPath(f);
+        });
+    };
+    if (!scope_.isEmpty()) add("port", tr("Port der Teilschaltung  (P)"), "port anschluss pin", flag(true));
     Schematic none;
     for (const PartTemplate& t : partTemplates()) {
         SComponent c = makeComponent(t, none);
         add(t.id, t.title, t.type + " " + t.id, componentIcon(c));
     }
     for (auto it = subcircuits_.begin(); it != subcircuits_.end(); ++it) {
+        if (it.key() == scope_) continue;
         Schematic s;
         s.subcircuits = subcircuits_;
         const SComponent c = makeSubcircuit(it.key(), s);
         add("sub:" + it.key(), QString::fromUtf8("Teilschaltung „%1“").arg(it.key()), "subcircuit x " + it.key(),
             componentIcon(c));
     }
+    add("newsub", tr("Neue Teilschaltung …"), "subcircuit teilschaltung neu new",
+        icon(QRectF(-2.2, -2.2, 4.4, 4.4), [](QPainter& p) {
+            p.drawRect(QRectF(-1.5, -1.5, 3, 3));
+            p.drawLine(QPointF(0, -0.8), QPointF(0, 0.8));
+            p.drawLine(QPointF(-0.8, 0), QPointF(0.8, 0));
+        }));
 }

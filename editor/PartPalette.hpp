@@ -17,10 +17,14 @@ public:
     explicit PartPalette(QWidget* parent = nullptr);
 
     void setSubcircuits(const QMap<QString, QStringList>& subcircuits);
+    // "" in the main circuit; in a subcircuit the port is offered and the
+    // subcircuit itself is not (it cannot contain itself)
+    void setScope(const QString& scope);
     void focusSearch();
 
 signals:
-    // a template id (see partTemplates()), "sub:<name>", "wire", "ground" or "label"
+    // a template id (see partTemplates()), "sub:<name>", "wire", "ground",
+    // "label", "port" or "newsub" (a new subcircuit)
     void partChosen(const QString& id);
 
 protected:
@@ -34,4 +38,5 @@ private:
     QLineEdit* search_;
     QListWidget* list_;
     QMap<QString, QStringList> subcircuits_;
+    QString scope_;
 };

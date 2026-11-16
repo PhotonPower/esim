@@ -63,6 +63,27 @@ QString defaultName(char kind, int index) {
     return QString(QChar(kind ? kind : 'u').toUpper()) + QString::number(index + 1);
 }
 
+// the object holding "components" and "schematic": the file, or a subcircuit
+const JValue* scopeOf(const JValue& root, const QString& scope) {
+    if (!root.isObject()) return nullptr;
+    if (scope.isEmpty()) return &root;
+    const JValue* subs = root.get("subcircuits");
+    const JValue* def = subs && subs->isObject() ? subs->get(scope) : nullptr;
+    return def && def->isObject() ? def : nullptr;
+}
+
+const JValue* componentsOf(const JValue& root, const QString& scope) {
+    const JValue* obj = scopeOf(root, scope);
+    const JValue* comps = obj ? obj->get("components") : nullptr;
+    return comps && comps->isArray() ? comps : nullptr;
+}
+
+QString memberIndent(const QString& text, const JValue& obj) {
+    if (obj.keyBegins.empty()) return indentationAt(text, obj.begin) + QStringLiteral("  ");
+    return indentationAt(text, obj.keyBegins.front());
+}
+
+
 char kindOf(const QString& type) {
     static const QHash<QString, char> kinds = {
         {"r", 'r'}, {"resistor", 'r'}, {"c", 'c'}, {"capacitor", 'c'}, {"l", 'l'}, {"inductor", 'l'},
@@ -198,8 +219,23 @@ void autoPlace(Schematic& s) {
             if (node.isEmpty()) continue;
             const QPoint at = c.place.map(sym.pins[p].pos), dir = c.place.mapDir(sym.pins[p].dir);
             if (isGroundName(node)) s.grounds.push_back({at, groundRot(dir)});
-            else s.labels.push_back({node, at, labelRot(dir)});
+            else s.labels.push_back({node, at, labelRot(dir), s.ports.contains(node)});
         }
+    }
+}
+
+// Ports of a subcircuit that the drawing does not show yet, in a column on the left.
+void placePorts(Schematic& s) {
+    QStringList missing = s.ports;
+    for (const SLabel& l : s.labels)
+        if (l.port) missing.removeAll(l.name);
+    if (missing.isEmpty()) return;
+    const QRect used = s.bounds();
+    const int x = used.isValid() ? used.left() - 8 : 0;
+    int y = used.isValid() ? used.top() : 0;
+    for (const QString& p : missing) {
+        s.labels.push_back({p, QPoint(x, y), 0, true});
+        y += 3;
     }
 }
 
@@ -238,14 +274,24 @@ QRect Schematic::bounds(bool placedOnly) const {
                  QPoint(int(std::ceil(r.right())), int(std::ceil(r.bottom()))));
 }
 
-bool readSchematic(const QString& text, Schematic& out, QString* error) {
+bool readSchematic(const QString& text, Schematic& out, QString* error, const QString& scope) {
     JValue root;
     if (!parseJsonc(text, root, error)) return false;
     if (!root.isObject()) {
         if (error) *error = QStringLiteral("the file is no JSON object");
         return false;
     }
+    const JValue* home = scopeOf(root, scope);
+    if (!home) {
+        if (error) *error = QStringLiteral("no subcircuit \"%1\"").arg(scope);
+        return false;
+    }
     Schematic s;
+    s.scope = scope;
+    if (!scope.isEmpty())
+        if (const JValue* p = home->get("ports"); p && p->isArray())
+            for (const JValue& v : p->items) s.ports << v.text(text);
+    for (const QString& p : s.ports) s.textNodes.insert(p);
 
     if (const JValue* models = root.get("models"); models && models->isObject()) {
         static const QRegularExpression card(QStringLiteral(R"(^\s*\.model\s+\S+\s+([A-Za-z]+))"),
@@ -269,7 +315,7 @@ bool readSchematic(const QString& text, Schematic& out, QString* error) {
 
     // the drawing
     QHash<QString, Placement> placements;
-    if (const JValue* sec = root.get("schematic"); sec && sec->isObject()) {
+    if (const JValue* sec = home->get("schematic"); sec && sec->isObject()) {
         s.hasSection = true;
         bool ok;
         if (const JValue* comps = sec->get("components"); comps && comps->isObject()) {
@@ -296,13 +342,15 @@ bool readSchematic(const QString& text, Schematic& out, QString* error) {
                 if (wire.pts.size() >= 2) s.wires << wire;
             }
         }
-        if (const JValue* labels = sec->get("labels"); labels && labels->isArray()) {
+        for (const char* key : {"ports", "labels"}) {
+            const JValue* labels = sec->get(QString::fromLatin1(key));
+            if (!labels || !labels->isArray() || (key[0] == 'p' && scope.isEmpty())) continue;
             for (const JValue& l : labels->items) {
                 const JValue* at = l.get("at");
                 const QString name = member(text, l, "name");
                 if (!at || name.isEmpty()) continue;
                 const QPoint p = pointOf(*at, &ok);
-                if (ok) s.labels.push_back({name, p, rotOf(l)});
+                if (ok) s.labels.push_back({name, p, rotOf(l), key[0] == 'p'});
             }
         }
         if (const JValue* grounds = sec->get("grounds"); grounds && grounds->isArray()) {
@@ -316,7 +364,7 @@ bool readSchematic(const QString& text, Schematic& out, QString* error) {
     }
 
     // the components
-    if (const JValue* comps = root.get("components"); comps && comps->isArray()) {
+    if (const JValue* comps = home->get("components"); comps && comps->isArray()) {
         for (size_t i = 0; i < comps->items.size(); ++i) {
             const JValue& o = comps->items[i];
             if (!o.isObject()) continue;
@@ -412,6 +460,7 @@ bool readSchematic(const QString& text, Schematic& out, QString* error) {
         }
     }
     autoPlace(s);
+    placePorts(s);
     out = std::move(s);
     return true;
 }
@@ -639,15 +688,6 @@ QString componentJson(const SComponent& c, const QStringList& nodes) {
     return out + QStringLiteral(" }");
 }
 
-const JValue* componentsOf(const JValue& root) {
-    const JValue* comps = root.get("components");
-    return comps && comps->isArray() ? comps : nullptr;
-}
-
-QString rootIndent(const QString& text, const JValue& root) {
-    return root.keyBegins.empty() ? QStringLiteral("  ") : indentationAt(text, root.keyBegins.front());
-}
-
 }  // namespace
 
 QString sectionJson(const Schematic& s, const QString& indent) {
@@ -675,12 +715,13 @@ QString sectionJson(const Schematic& s, const QString& indent) {
         wires << QStringLiteral("[") + pts.join(QStringLiteral(", ")) + QStringLiteral("]");
     }
     list("wires", wires);
-    QStringList labels;
+    QStringList labels, ports;
     for (const SLabel& l : s.labels) {
         QString e = QStringLiteral("{ \"name\": %1, \"at\": %2").arg(jsonQuote(l.name), pointJson(l.at));
         if (l.rot) e += QStringLiteral(", \"rot\": %1").arg(l.rot);
-        labels << e + QStringLiteral(" }");
+        (l.port ? ports : labels) << e + QStringLiteral(" }");
     }
+    list("ports", ports);
     list("labels", labels);
     QStringList grounds;
     for (const SGround& g : s.grounds) {
@@ -695,9 +736,10 @@ QString sectionJson(const Schematic& s, const QString& indent) {
 
 QString writeSchematic(const QString& text, const Schematic& after) {
     JValue root;
-    if (!parseJsonc(text, root) || !root.isObject()) return text;
+    if (!parseJsonc(text, root) || !scopeOf(root, after.scope)) return text;
     const Connectivity conn = connectSchematic(after);
     QString out = text;
+    const QString& scope = after.scope;
 
     // 1. names and nodes of the components that stay, from the last to the first
     QSet<int> kept;
@@ -711,7 +753,7 @@ QString writeSchematic(const QString& text, const Schematic& after) {
         kept.insert(c.index);
         JValue now;
         parseJsonc(out, now);
-        const JValue* comps = componentsOf(now);
+        const JValue* comps = componentsOf(now, scope);
         if (!comps || c.index >= int(comps->items.size())) continue;
         const JValue& obj = comps->items[size_t(c.index)];
         if (!obj.isObject()) continue;
@@ -719,11 +761,13 @@ QString writeSchematic(const QString& text, const Schematic& after) {
         const JValue* name = obj.get("name");
         const QString current = name ? name->text(out) : defaultName(c.kind, c.index);
         if (c.name != current) changes.push_back({QStringLiteral("name"), jsonQuote(c.name)});
-        // nodes, if the symbol has one pin per node
-        if (c.kind && c.kind != 'k' && conn.pinNodes[k].size() == c.nodes.size()) {
+        // nodes, if the symbol has one pin per node (a subcircuit may have gained ports)
+        const int pins = int(conn.pinNodes[k].size());
+        if (c.kind && c.kind != 'k' && (pins == c.nodes.size() || (c.kind == 'x' && pins > c.nodes.size()))) {
             QStringList nodes;
-            for (int p = 0; p < c.nodes.size(); ++p)
-                nodes << (sameNode(c.nodes[p], conn.pinNodes[k][p]) ? c.nodes[p] : conn.pinNodes[k][p]);
+            for (int p = 0; p < pins; ++p)
+                nodes << (p < c.nodes.size() && sameNode(c.nodes[p], conn.pinNodes[k][p]) ? c.nodes[p]
+                                                                                          : conn.pinNodes[k][p]);
             if (nodes != c.nodes) changes.push_back({QStringLiteral("nodes"), nodesJson(nodes)});
         }
         // the member further back first, so that the positions of the others stay valid
@@ -739,12 +783,12 @@ QString writeSchematic(const QString& text, const Schematic& after) {
     {
         JValue now;
         parseJsonc(out, now);
-        const QString indent = rootIndent(out, now);
-        const QString section = sectionJson(after, indent);
-        if (const JValue* sec = now.get("schematic")) {
+        const JValue* obj = scopeOf(now, scope);
+        const QString section = sectionJson(after, memberIndent(out, *obj));
+        if (const JValue* sec = obj->get("schematic")) {
             if (QStringView(out).mid(sec->begin, sec->end - sec->begin) != section) out = replaceValue(out, *sec, section);
         } else {
-            out = setMember(out, now, QStringLiteral("schematic"), section);
+            out = setMember(out, *obj, QStringLiteral("schematic"), section);
         }
     }
 
@@ -752,12 +796,12 @@ QString writeSchematic(const QString& text, const Schematic& after) {
     {
         JValue now;
         parseJsonc(out, now);
-        const JValue* comps = componentsOf(now);
+        const JValue* comps = componentsOf(now, scope);
         const int n = comps ? int(comps->items.size()) : 0;
         for (int i = n - 1; i >= 0; --i) {
             if (kept.contains(i)) continue;
             parseJsonc(out, now);
-            out = removeItem(out, *componentsOf(now), i);
+            out = removeItem(out, *componentsOf(now, scope), i);
         }
     }
 
@@ -768,44 +812,101 @@ QString writeSchematic(const QString& text, const Schematic& after) {
     if (!added.isEmpty()) {
         JValue now;
         parseJsonc(out, now);
-        if (!componentsOf(now)) {
-            if (now.get("components")) return out;  // not an array: leave it to the check
-            out = setMember(out, now, QStringLiteral("components"), QStringLiteral("[]"));
+        if (!componentsOf(now, scope)) {
+            if (scopeOf(now, scope)->get("components")) return out;  // not an array: leave it to the check
+            out = setMember(out, *scopeOf(now, scope), QStringLiteral("components"), QStringLiteral("[]"));
             parseJsonc(out, now);
         }
-        out = appendItems(out, *componentsOf(now), added);
+        out = appendItems(out, *componentsOf(now, scope), added);
+    }
+
+    // 5. ports drawn with a new name extend the port list of the subcircuit
+    if (!scope.isEmpty()) {
+        QStringList fresh;
+        for (const SLabel& l : after.labels)
+            if (l.port && !after.ports.contains(l.name) && !fresh.contains(l.name)) fresh << jsonQuote(l.name);
+        if (!fresh.isEmpty()) {
+            JValue now;
+            parseJsonc(out, now);
+            const JValue* obj = scopeOf(now, scope);
+            const JValue* ports = obj->get("ports");
+            if (ports && ports->isArray()) out = appendItems(out, *ports, fresh);
+            else if (!ports) out = setMember(out, *obj, QStringLiteral("ports"), QStringLiteral("[") + fresh.join(", ") + "]");
+        }
     }
     return out;
 }
 
-QString setComponentMember(const QString& text, int index, const QString& key, const QString& json) {
+QString setComponentMember(const QString& text, int index, const QString& key, const QString& json,
+                           const QString& scope) {
     JValue root;
-    if (!parseJsonc(text, root) || !root.isObject()) return text;
-    const JValue* comps = componentsOf(root);
+    if (!parseJsonc(text, root)) return text;
+    const JValue* comps = componentsOf(root, scope);
     if (!comps || index < 0 || index >= int(comps->items.size()) || !comps->items[size_t(index)].isObject())
         return text;
     const JValue& obj = comps->items[size_t(index)];
     return json.isEmpty() ? removeMember(text, obj, key) : setMember(text, obj, key, json);
 }
 
-bool componentRange(const QString& text, int index, int& begin, int& end) {
+bool locateComponent(const QString& text, int pos, QString& scope, int& index) {
     JValue root;
     if (!parseJsonc(text, root) || !root.isObject()) return false;
-    const JValue* comps = componentsOf(root);
-    if (!comps || index < 0 || index >= int(comps->items.size())) return false;
-    begin = comps->items[size_t(index)].begin;
-    end = comps->items[size_t(index)].end;
-    return true;
+    QStringList scopes{QString()};
+    if (const JValue* subs = root.get("subcircuits"); subs && subs->isObject()) scopes += subs->keys;
+    for (const QString& sc : scopes) {
+        const JValue* comps = componentsOf(root, sc);
+        if (!comps) continue;
+        for (size_t k = 0; k < comps->items.size(); ++k) {
+            if (pos >= comps->items[k].begin && pos <= comps->items[k].end) {
+                scope = sc;
+                index = int(k);
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
-int componentAt(const QString& text, int pos) {
+QString addSubcircuit(const QString& text, const QString& name, const QStringList& ports) {
     JValue root;
-    if (!parseJsonc(text, root) || !root.isObject()) return -1;
-    const JValue* comps = componentsOf(root);
-    if (!comps) return -1;
-    for (size_t k = 0; k < comps->items.size(); ++k)
-        if (pos >= comps->items[k].begin && pos <= comps->items[k].end) return int(k);
-    return -1;
+    if (!parseJsonc(text, root) || !root.isObject()) return text;
+    QStringList quoted;
+    for (const QString& p : ports) quoted << jsonQuote(p);
+    const auto definition = [&](const QString& indent) {
+        const QString in = indent + QStringLiteral("  ");
+        return QStringLiteral("{\n") + in + QStringLiteral("\"ports\": [") + quoted.join(", ") + QStringLiteral("],\n") +
+               in + QStringLiteral("\"components\": []\n") + indent + QStringLiteral("}");
+    };
+    const JValue* subs = root.get("subcircuits");
+    if (subs && subs->isObject()) {
+        if (subs->get(name)) return text;
+        return setMember(text, *subs, name, definition(memberIndent(text, *subs)));
+    }
+    if (subs) return text;  // not an object: leave it to the check
+    const QString indent = memberIndent(text, root), in = indent + QStringLiteral("  ");
+    return setMember(text, root, QStringLiteral("subcircuits"),
+                     QStringLiteral("{\n") + in + jsonQuote(name) + QStringLiteral(": ") + definition(in) +
+                         QStringLiteral("\n") + indent + QStringLiteral("}"));
+}
+
+QVector<Instance> instancesOf(const QString& text, const QString& subcircuit) {
+    QVector<Instance> out;
+    JValue root;
+    if (!parseJsonc(text, root)) return out;
+    const JValue* comps = componentsOf(root, QString());
+    if (!comps) return out;
+    for (size_t k = 0; k < comps->items.size(); ++k) {
+        const JValue& o = comps->items[k];
+        if (!o.isObject() || kindOf(member(text, o, "type")) != 'x' || member(text, o, "subcircuit") != subcircuit)
+            continue;
+        Instance in;
+        in.name = member(text, o, "name");
+        if (in.name.isEmpty()) in.name = defaultName('x', int(k));
+        if (const JValue* n = o.get("nodes"); n && n->isArray())
+            for (const JValue& v : n->items) in.nodes << v.text(text);
+        out << in;
+    }
+    return out;
 }
 
 // --- palette ----------------------------------------------------------------------

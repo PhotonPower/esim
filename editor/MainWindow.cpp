@@ -18,6 +18,11 @@
 #include <QSaveFile>
 #include <QSettings>
 #include <QSplitter>
+#include <QHBoxLayout>
+#include <QInputDialog>
+#include <QRegularExpression>
+#include <QToolButton>
+#include <QVBoxLayout>
 #include <QStatusBar>
 #include <QTextBlock>
 #include <QTimer>
@@ -124,8 +129,27 @@ QIcon runIcon(bool stop) {
 MainWindow::MainWindow() {
     editor_ = new CodeEditor;
     schematic_ = new SchematicView;
+    // above the drawing of a subcircuit: where we are, and the way back
+    scopeBar_ = new QWidget;
+    auto* up = new QToolButton;
+    up->setText(tr("‹ Hauptschaltung"));
+    up->setToolTip(tr("Zurück zur Hauptschaltung (⌘↑)"));
+    up->setAutoRaise(true);
+    scopeLabel_ = new QLabel;
+    auto* bar = new QHBoxLayout(scopeBar_);
+    bar->setContentsMargins(6, 2, 6, 2);
+    bar->addWidget(up);
+    bar->addWidget(scopeLabel_, 1);
+    scopeBar_->hide();
+    connect(up, &QToolButton::clicked, this, [this]() { enterScope(QString()); });
+    planBox_ = new QWidget;
+    auto* planLayout = new QVBoxLayout(planBox_);
+    planLayout->setContentsMargins(0, 0, 0, 0);
+    planLayout->setSpacing(0);
+    planLayout->addWidget(scopeBar_);
+    planLayout->addWidget(schematic_, 1);
     split_ = new QSplitter(Qt::Horizontal);
-    split_->addWidget(schematic_);
+    split_->addWidget(planBox_);
     split_->addWidget(editor_);
     split_->setStretchFactor(0, 3);
     split_->setStretchFactor(1, 2);
@@ -166,6 +190,8 @@ MainWindow::MainWindow() {
         props_->focusFirstField();
     });
     connect(schematic_, &SchematicView::probe, this, &MainWindow::probe);
+    connect(schematic_, &SchematicView::openSubcircuit, this, &MainWindow::enterScope);
+    connect(schematic_, &SchematicView::leaveRequested, this, [this]() { enterScope(QString()); });
     connect(schematic_, &SchematicView::partChooserRequested, this, [this]() {
         paletteDock_->show();
         paletteDock_->raise();
@@ -173,7 +199,7 @@ MainWindow::MainWindow() {
     });
     connect(palette_, &PartPalette::partChosen, this, &MainWindow::choosePart);
     connect(props_, &PropertyPanel::memberChanged, this, [this](int index, const QString& key, const QString& json) {
-        applyText(setComponentMember(editor_->toPlainText(), index, key, json));
+        applyText(setComponentMember(editor_->toPlainText(), index, key, json, scope_));
         refreshSchematic();
     });
     connect(props_, &PropertyPanel::renameRequested, this, &MainWindow::renameComponent);
@@ -295,7 +321,7 @@ void MainWindow::createActions() {
     }
     connect(showPlan_, &QAction::toggled, this, [this](bool on) {
         if (!on && !showText_->isChecked()) showText_->setChecked(true);  // one of both stays
-        schematic_->setVisible(on);
+        planBox_->setVisible(on);
     });
     connect(showText_, &QAction::toggled, this, [this](bool on) {
         if (!on && !showPlan_->isChecked()) showPlan_->setChecked(true);
@@ -376,6 +402,10 @@ void MainWindow::newFile() {
 
 void MainWindow::loaded() {
     results_->clear();
+    op_.clear();
+    scope_.clear();
+    scopeBar_->hide();
+    palette_->setScope(QString());
     schematic_->setOperatingPoint({});
     schematic_->resetView();
     schematic_->selectComponents({});
@@ -598,7 +628,8 @@ void MainWindow::simulationFinished(bool ok, bool stopped) {
         return;
     }
     status_->setText(tr("Simulation fertig in %1 s").arg(seconds));
-    schematic_->setOperatingPoint(results_->operatingPoint());
+    op_ = results_->operatingPoint();
+    updateOperatingPoint();
     resultsDock_->show();
     resultsDock_->raise();
 }
@@ -609,7 +640,12 @@ void MainWindow::refreshSchematic() {
     schematicTimer_->stop();
     const QString text = editor_->toPlainText();
     Schematic s;
-    if (!readSchematic(text, s)) {
+    if (!readSchematic(text, s, nullptr, scope_)) {
+        Schematic main;
+        if (!scope_.isEmpty() && readSchematic(text, main)) {
+            enterScope(QString());  // the subcircuit is gone (renamed or deleted in the text)
+            return;
+        }
         schematic_->setStale(true);
         return;
     }
@@ -707,16 +743,27 @@ void MainWindow::schematicSelectionChanged(const QStringList& names) {
 }
 
 void MainWindow::textCursorMoved() {
-    // only when the user moves through the text, and the drawing is up to date
-    if (syncingCursor_ || writing_ || !editor_->hasFocus() || schematicTimer_->isActive()) return;
+    // not while the drawing moves the cursor or writes, and only when it is up to date
+    if (syncingCursor_ || writing_ || schematicTimer_->isActive()) return;
     const int pos = editor_->textCursor().position();
-    for (const SComponent& c : schematic_->schematic().components) {
-        if (c.begin < 0 || pos < c.begin || pos > c.end) continue;
-        if (schematic_->selectedComponents() != QStringList{c.name}) {
-            schematic_->selectComponents({c.name});
-            showProperties();
+    const auto select = [this, pos]() {
+        for (const SComponent& c : schematic_->schematic().components) {
+            if (c.begin < 0 || pos < c.begin || pos > c.end) continue;
+            if (schematic_->selectedComponents() != QStringList{c.name}) {
+                schematic_->selectComponents({c.name});
+                showProperties();
+            }
+            return true;
         }
-        return;
+        return false;
+    };
+    if (select()) return;
+    // a component of another level: the drawing goes there
+    QString scope;
+    int index = -1;
+    if (locateComponent(editor_->toPlainText(), pos, scope, index) && scope != scope_) {
+        enterScope(scope);
+        select();
     }
 }
 
@@ -726,6 +773,8 @@ void MainWindow::choosePart(const QString& id) {
     if (id == "wire") schematic_->startWire();
     else if (id == "ground") schematic_->startGround();
     else if (id == "label") schematic_->startLabel();
+    else if (id == "port") schematic_->startPort();
+    else if (id == "newsub") newSubcircuit();
     else if (id.startsWith("sub:")) schematic_->startPlacing(makeSubcircuit(id.mid(4), s));
     else
         for (const PartTemplate& t : partTemplates())
@@ -746,7 +795,7 @@ void MainWindow::renameComponent(int index, const QString& name) {
     if (k < 0) return;
     if (!after.hasSection) {
         // no drawing in the file yet: only the name changes
-        applyText(setComponentMember(editor_->toPlainText(), index, "name", jsonQuote(name)));
+        applyText(setComponentMember(editor_->toPlainText(), index, "name", jsonQuote(name), scope_));
         schematic_->selectComponents({});
         refreshSchematic();
     } else {
@@ -757,7 +806,26 @@ void MainWindow::renameComponent(int index, const QString& name) {
     showProperties();
 }
 
-void MainWindow::probe(const QString& quantity) {
+void MainWindow::probe(const QString& probed) {
+    QString quantity = probed;
+    if (!scope_.isEmpty()) {
+        const QVector<Instance> instances = instancesOf(editor_->toPlainText(), scope_);
+        if (instances.isEmpty()) {
+            status_->setText(tr("„%1“ wird in der Hauptschaltung nicht verwendet").arg(scope_));
+            return;
+        }
+        int pick = 0;
+        if (instances.size() > 1) {
+            QStringList names;
+            for (const Instance& in : instances) names << in.name;
+            bool ok = false;
+            const QString name = QInputDialog::getItem(this, tr("Instanz"), tr("Kurve aus welcher Instanz von „%1“?").arg(scope_),
+                                                       names, 0, false, &ok);
+            if (!ok) return;
+            pick = int(names.indexOf(name));
+        }
+        quantity = instanceQuantity(probed, instances[pick]);
+    }
     if (results_->empty()) {
         status_->setText(tr("Für Kurven zuerst simulieren (%1)").arg(runAction_->shortcut().toString(QKeySequence::NativeText)));
         return;
@@ -769,4 +837,94 @@ void MainWindow::probe(const QString& quantity) {
     } else {
         status_->setText(tr("%1 ist in keiner Analyse gespeichert – unter \"outputs\" eintragen").arg(quantity));
     }
+}
+
+// --- subcircuits ---------------------------------------------------------------
+
+void MainWindow::enterScope(const QString& scope) {
+    if (scope == scope_ && (scope.isEmpty() || scopeBar_->isVisible())) return;
+    scope_ = scope;
+    schematic_->selectComponents({});
+    schematic_->resetView();
+    palette_->setScope(scope);
+    if (scope.isEmpty()) {
+        scopeBar_->hide();
+    } else {
+        Schematic s;
+        readSchematic(editor_->toPlainText(), s, nullptr, scope);
+        scopeLabel_->setText(tr("Teilschaltung <b>%1</b> · Ports: %2").arg(scope.toHtmlEscaped(),
+                                                                            s.ports.join(", ").toHtmlEscaped()));
+        scopeBar_->show();
+    }
+    refreshSchematic();
+    updateOperatingPoint();
+    schematic_->setFocus();
+}
+
+void MainWindow::newSubcircuit() {
+    const QString text = editor_->toPlainText();
+    Schematic main;
+    readSchematic(text, main);
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Neue Teilschaltung"), tr("Name:"), QLineEdit::Normal,
+                                               QString(), &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (main.subcircuits.contains(name)) {
+        enterScope(name);
+        return;
+    }
+    const QString list = QInputDialog::getText(this, tr("Neue Teilschaltung"),
+                                               tr("Ports, durch Komma getrennt (z. B. in, out, vdd):"),
+                                               QLineEdit::Normal, QStringLiteral("in, out"), &ok);
+    if (!ok) return;
+    static const QRegularExpression separators(QStringLiteral("[,;\\s]+"));
+    QStringList ports = list.split(separators, Qt::SkipEmptyParts);
+    ports.removeDuplicates();
+    ports.removeIf([](const QString& p) { return isGroundName(p); });  // ground is global, never a port
+    const QString changed = addSubcircuit(text, name, ports);
+    if (changed == text) {
+        status_->setText(tr("Die Teilschaltung lässt sich nicht anlegen: \"subcircuits\" ist kein Objekt"));
+        return;
+    }
+    applyText(changed);
+    enterScope(name);
+}
+
+QString MainWindow::instanceQuantity(const QString& quantity, const Instance& in) const {
+    static const QRegularExpression probe(QStringLiteral("^([vi])\\((.*)\\)$"));
+    const auto m = probe.match(quantity);
+    if (!m.hasMatch()) return quantity;
+    const QString what = m.captured(1), name = m.captured(2);
+    if (what == "v") {
+        const int port = int(schematic_->schematic().ports.indexOf(name));
+        if (port >= 0) return QStringLiteral("v(%1)").arg(in.nodes.value(port));  // the node outside
+        if (isGroundName(name)) return quantity;
+    }
+    return QStringLiteral("%1(%2.%3)").arg(what, in.name, name);
+}
+
+void MainWindow::updateOperatingPoint() {
+    if (scope_.isEmpty()) {
+        schematic_->setOperatingPoint(op_);
+        return;
+    }
+    // in a subcircuit: the values of its only instance
+    QHash<QString, double> local;
+    const QVector<Instance> instances = instancesOf(editor_->toPlainText(), scope_);
+    if (instances.size() == 1 && !op_.isEmpty()) {
+        const Schematic& s = schematic_->schematic();
+        QSet<QString> names(s.ports.begin(), s.ports.end());
+        for (const SLabel& l : s.labels) names.insert(l.name);
+        for (const QString& n : names) {
+            const QString v = QStringLiteral("v(%1)").arg(n);
+            const QString global = instanceQuantity(v, instances.first());
+            if (op_.contains(global)) local.insert(v, op_.value(global));
+        }
+        for (const SComponent& c : s.components) {
+            const QString i = QStringLiteral("i(%1)").arg(c.name);
+            const QString global = instanceQuantity(i, instances.first());
+            if (op_.contains(global)) local.insert(i, op_.value(global));
+        }
+    }
+    schematic_->setOperatingPoint(local);
 }

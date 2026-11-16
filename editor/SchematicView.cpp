@@ -175,7 +175,7 @@ double labelTextWidth(const QString& name) {
 
 // the box of a label's text (grid units)
 QRectF labelBox(const SLabel& l) {
-    const double w = labelTextWidth(l.name) + 0.8, h = 1.1;
+    const double w = labelTextWidth(l.name) + (l.port ? 1.4 : 0.8), h = 1.1;
     const QPointF a(l.at);
     switch (l.rot) {
         case 90: return QRectF(a.x() - w / 2, a.y() + 0.5, w, h);
@@ -310,6 +310,37 @@ void SchematicView::startLabel() {
                              .trimmed();
     if (!ok || name.isEmpty()) return;
     ghostLabel_.name = name;
+    ghostLabel_.port = false;
+    ghostKind_ = Ghost::Label;
+    mode_ = Mode::Place;
+    setCursor(Qt::CrossCursor);
+    setFocus();
+    update();
+}
+
+void SchematicView::startPort() {
+    if (model_.scope.isEmpty()) {
+        QToolTip::showText(QCursor::pos(), tr("Ports gibt es nur im Plan einer Teilschaltung."), this);
+        return;
+    }
+    if (!canEdit()) return;
+    // the ports not drawn yet come first
+    QStringList names;
+    for (const QString& p : model_.ports) {
+        bool drawn = false;
+        for (const SLabel& l : model_.labels) drawn = drawn || (l.port && l.name == p);
+        if (!drawn) names << p;
+    }
+    for (const QString& p : model_.ports)
+        if (!names.contains(p)) names << p;
+    bool ok = false;
+    const QString name = QInputDialog::getItem(this, tr("Port"),
+                                               tr("Name des Ports (ein neuer Name erweitert die Ports der Teilschaltung):"),
+                                               names, 0, true, &ok)
+                             .trimmed();
+    if (!ok || name.isEmpty()) return;
+    ghostLabel_.name = name;
+    ghostLabel_.port = true;
     ghostKind_ = Ghost::Label;
     mode_ = Mode::Place;
     setCursor(Qt::CrossCursor);
@@ -541,6 +572,11 @@ void SchematicView::contextMenu(QMouseEvent* e) {
     const QStringList comps = selectedComponents();
     if (comps.size() == 1) {
         const QString name = comps.first();
+        const SComponent& c = model_.components[model_.find(name)];
+        if (c.kind == 'x' && model_.subcircuits.contains(c.subcircuit)) {
+            const QString sub = c.subcircuit;
+            menu.addAction(tr("Teilschaltung „%1“ öffnen").arg(sub), this, [this, sub]() { emit openSubcircuit(sub); });
+        }
         menu.addAction(tr("Eigenschaften von %1").arg(name), this, [this, name]() { emit componentActivated(name); });
         menu.addAction(tr("Strom i(%1) zeigen").arg(name), this, [this, name]() { emit probe(QStringLiteral("i(%1)").arg(name)); });
     }
@@ -557,9 +593,11 @@ void SchematicView::contextMenu(QMouseEvent* e) {
     menu.addAction(tr("Leitung zeichnen\tW"), this, &SchematicView::startWire);
     menu.addAction(tr("Masse\tG"), this, &SchematicView::startGround);
     menu.addAction(tr("Netzlabel …\tN"), this, &SchematicView::startLabel);
+    if (!model_.scope.isEmpty()) menu.addAction(tr("Port …\tP"), this, &SchematicView::startPort);
     menu.addAction(tr("Bauteil …\tA"), this, &SchematicView::partChooserRequested);
     menu.addSeparator();
     menu.addAction(tr("Alles zeigen\tF"), this, &SchematicView::fitAll);
+    if (!model_.scope.isEmpty()) menu.addAction(tr("Zur Hauptschaltung\t⌘↑"), this, &SchematicView::leaveRequested);
     menu.exec(e->globalPosition().toPoint());
 }
 
@@ -700,7 +738,7 @@ void SchematicView::mousePressEvent(QMouseEvent* e) {
             after.grounds.push_back({mouseGrid_, ghostGround_.rot});
             commit(after, Selection());
         } else {
-            after.labels.push_back({ghostLabel_.name, mouseGrid_, ghostLabel_.rot});
+            after.labels.push_back({ghostLabel_.name, mouseGrid_, ghostLabel_.rot, ghostLabel_.port});
             commit(after, Selection());
         }
         return;
@@ -876,8 +914,13 @@ void SchematicView::mouseDoubleClickEvent(QMouseEvent* e) {
     }
     if (mode_ != Mode::Select || e->button() != Qt::LeftButton) return;
     const Hit h = hitAt(e->position());
-    if (h.type == ItemType::Component) emit componentActivated(display_.components[h.index].name);
-    else if (h.type == ItemType::Label) renameLabel(h.index);
+    if (h.type == ItemType::Component) {
+        const SComponent& c = display_.components[h.index];
+        if (c.kind == 'x' && model_.subcircuits.contains(c.subcircuit)) emit openSubcircuit(c.subcircuit);
+        else emit componentActivated(c.name);
+    } else if (h.type == ItemType::Label) {
+        renameLabel(h.index);
+    }
 }
 
 void SchematicView::wheelEvent(QWheelEvent* e) {
@@ -929,6 +972,10 @@ void SchematicView::keyPressEvent(QKeyEvent* e) {
         duplicateSelection();
         return;
     }
+    if ((e->modifiers() & Qt::ControlModifier) && e->key() == Qt::Key_Up) {
+        if (!model_.scope.isEmpty()) emit leaveRequested();
+        return;
+    }
     const int step = (e->modifiers() & Qt::ShiftModifier) ? 5 : 1;
     switch (e->key()) {
         case Qt::Key_Escape: cancel(); return;
@@ -962,6 +1009,7 @@ void SchematicView::keyPressEvent(QKeyEvent* e) {
         case Qt::Key_W: startWire(); return;
         case Qt::Key_G: startGround(); return;
         case Qt::Key_N: startLabel(); return;
+        case Qt::Key_P: startPort(); return;
         case Qt::Key_F: fitAll(); return;
         case Qt::Key_A: emit partChooserRequested(); return;
         case Qt::Key_Slash:
@@ -1071,7 +1119,10 @@ void SchematicView::paintComponent(QPainter& p, const SComponent& c, const QColo
     // the first pin points up or down (two-pole parts, transistors): text on the right
     const bool upright = sym.pins.isEmpty() || c.place.mapDir(sym.pins.first().dir).x() == 0;
     if (upright) {
-        const QPointF a(box.right() + 0.45, box.center().y());
+        // a pin on the right (bulk of a MOSFET): the text moves up, out of its way
+        bool rightPin = false;
+        for (const SymPin& pin : sym.pins) rightPin = rightPin || c.place.mapDir(pin.dir).x() > 0;
+        const QPointF a(box.right() + 0.45, box.center().y() - (rightPin ? 1.6 : 0.0));
         paintText(p, toScreen(a - QPointF(0, 0.05)), c.name, Qt::AlignLeft | Qt::AlignBottom, kTextFont, nameColor);
         paintText(p, toScreen(a + QPointF(0, 0.05)), c.summary, Qt::AlignLeft | Qt::AlignTop, kTextFont, ink);
     } else {
@@ -1103,14 +1154,30 @@ void SchematicView::paintLabel(QPainter& p, const SLabel& l, const QColor& ink, 
         }
         default: {
             const double dir = l.rot == 180 ? -1 : 1;
+            const double far = dir > 0 ? box.right() : box.left();
             path.moveTo(a);
             path.lineTo(a.x() + dir * 0.5, box.top());
-            path.lineTo(dir > 0 ? box.right() : box.left(), box.top());
-            path.lineTo(dir > 0 ? box.right() : box.left(), box.bottom());
+            path.lineTo(far - (l.port ? dir * 0.5 : 0), box.top());
+            if (l.port) path.lineTo(far, box.center().y());  // a port is pointed at both ends
+            path.lineTo(far - (l.port ? dir * 0.5 : 0), box.bottom());
             path.lineTo(a.x() + dir * 0.5, box.bottom());
             path.closeSubpath();
             break;
         }
+    }
+    if (l.port && (l.rot == 90 || l.rot == 270)) {
+        // upright: a stem and a box pointed left and right
+        const double edge = l.rot == 90 ? box.top() : box.bottom();
+        path = QPainterPath();
+        path.moveTo(a);
+        path.lineTo(a.x(), edge);
+        path.moveTo(box.left() + 0.4, box.top());
+        path.lineTo(box.right() - 0.4, box.top());
+        path.lineTo(box.right(), box.center().y());
+        path.lineTo(box.right() - 0.4, box.bottom());
+        path.lineTo(box.left() + 0.4, box.bottom());
+        path.lineTo(box.left(), box.center().y());
+        path.closeSubpath();
     }
     p.save();
     p.setTransform(viewTransform());
@@ -1118,6 +1185,10 @@ void SchematicView::paintLabel(QPainter& p, const SLabel& l, const QColor& ink, 
     pen.setJoinStyle(Qt::RoundJoin);
     p.setPen(pen);
     QColor fill = Theme::surface();
+    if (l.port) {
+        fill = accent();
+        fill.setAlpha(Theme::dark() ? 60 : 35);
+    }
     p.setBrush(fill);
     p.drawPath(path);
     p.restore();

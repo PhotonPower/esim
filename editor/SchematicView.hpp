@@ -16,7 +16,8 @@
 // or the current of a component. Scroll pans (trackpad) or zooms (mouse
 // wheel, ⌘ + scroll, pinch).
 // Keys: R rotate, X mirror, Del delete, ⌘D duplicate, arrows move,
-// W wire, G ground, N label, F fit, Esc cancel.
+// W wire, G ground, N label, P port (in a subcircuit), F fit, Esc cancel,
+// ⌘↑ back to the main circuit.
 class SchematicView : public QWidget {
     Q_OBJECT
 public:
@@ -38,6 +39,7 @@ public:
     void startPlacing(const SComponent& c);
     void startGround();
     void startLabel();
+    void startPort();  // only in a subcircuit
     void startWire();
     void fitAll();
     QPointF gridToWidget(QPointF grid) const { return toScreen(grid); }
@@ -51,6 +53,8 @@ signals:
     void componentActivated(const QString& name);
     void probe(const QString& quantity);
     void partChooserRequested();
+    void openSubcircuit(const QString& name);  // double click on an instance
+    void leaveRequested();                     // ⌘↑: back to the main circuit
 
 protected:
     void paintEvent(QPaintEvent* e) override;

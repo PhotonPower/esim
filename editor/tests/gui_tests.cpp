@@ -9,6 +9,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextCursor>
 #include <cstdio>
 #include <unistd.h>
 
@@ -197,6 +198,32 @@ int main(int argc, char** argv) {
     editor->insertPlainText("{ \"components\": [");
     QTest::qWait(300);
     check(comp("Vsupply") != nullptr, "invalid text: the drawing keeps its last state");
+
+    std::printf("[test] subcircuits\n");
+    check(w.openFile(QStringLiteral(ESIM_SOURCE_DIR "/examples/ring_oscillator_bsim3.json")), "ring oscillator opened");
+    QApplication::processEvents();
+    view->repaint();
+    const SComponent* u1 = comp("U1");
+    check(u1 != nullptr, "instance U1 shown");
+    if (u1) {
+        const QPoint p = at(u1->place.at.x(), u1->place.at.y());
+        QTest::mouseDClick(view, Qt::LeftButton, {}, p);
+        check(view->schematic().scope == "inv" && comp("MP") && comp("MN"), "double click opens the subcircuit");
+        key(Qt::Key_Up, Qt::ControlModifier);
+        check(view->schematic().scope.isEmpty() && comp("U1"), "⌘↑ goes back");
+    }
+    // the text cursor in a component of the subcircuit takes the drawing there
+    QTextCursor cursor = editor->textCursor();
+    cursor.setPosition(int(editor->toPlainText().indexOf("\"MN\"")));
+    editor->setTextCursor(cursor);
+    QApplication::processEvents();
+    check(view->schematic().scope == "inv" && view->selectedComponents() == QStringList{"MN"},
+          "cursor in MN shows inv with MN selected");
+    cursor.setPosition(int(editor->toPlainText().indexOf("\"U3\"")));
+    editor->setTextCursor(cursor);
+    QApplication::processEvents();
+    check(view->schematic().scope.isEmpty() && view->selectedComponents() == QStringList{"U3"},
+          "cursor in U3 goes back with U3 selected");
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     // no question about unsaved changes

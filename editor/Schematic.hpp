@@ -25,6 +25,10 @@
 // file written by hand) are placed in a free area, with a label at each
 // pin that names its node, so that the drawing always connects the same
 // nodes as the text.
+//
+// A subcircuit has its own drawing, in a "schematic" section inside its
+// definition. Its ports appear as port symbols (the "ports" list of that
+// section, same form as "labels"); a port joins the net of the same name.
 
 struct Placement {
     QPoint at;
@@ -62,7 +66,8 @@ struct SWire {
 struct SLabel {
     QString name;
     QPoint at;
-    int rot = 0;  // direction of the text from the anchor: 0 right, 90 down, 180 left, 270 up
+    int rot = 0;        // direction of the text from the anchor: 0 right, 90 down, 180 left, 270 up
+    bool port = false;  // a port of the subcircuit (drawn differently, joins like a label)
 };
 
 struct SGround {
@@ -80,6 +85,8 @@ struct Schematic {
     QMap<QString, QString> modelTypes;       // model name -> device type ("npn", "pmos", ...), lower case
     QSet<QString> textNodes;                 // all node names of the text
     bool hasSection = false;                 // the file has a "schematic" section
+    QString scope;                           // "": the main circuit, else the subcircuit shown
+    QStringList ports;                       // of that subcircuit, in the order of the text
 
     int find(const QString& name) const;
     bool nameTaken(const QString& name) const { return find(name) >= 0; }
@@ -87,9 +94,10 @@ struct Schematic {
     QRect bounds(bool placedOnly = false) const;  // of the drawing, grid units
 };
 
-// Reads components and drawing from the text. Fails (with the reason) if the
-// text is no valid JSON object; the schematic then keeps its last state.
-bool readSchematic(const QString& text, Schematic& s, QString* error = nullptr);
+// Reads components and drawing of the main circuit (scope "") or of a
+// subcircuit from the text. Fails (with the reason) if the text is no valid
+// JSON object or has no such subcircuit; the view then keeps its last state.
+bool readSchematic(const QString& text, Schematic& s, QString* error = nullptr, const QString& scope = QString());
 
 // --- connections ----------------------------------------------------------------
 
@@ -114,10 +122,10 @@ Connectivity connectSchematic(const Schematic& s);
 
 // --- writing ---------------------------------------------------------------------
 
-// The text with the drawing of `after`: nodes, names, removed and new
-// components and the "schematic" section are updated in place; all other
-// text, comments included, stays as it was. Components of `after` refer to
-// the text by their index.
+// The text with the drawing of `after` (in its scope): nodes, names, removed
+// and new components, new ports and the "schematic" section are updated in
+// place; all other text, comments included, stays as it was. Components of
+// `after` refer to the text by their index.
 QString writeSchematic(const QString& text, const Schematic& after);
 
 // The "schematic" section as JSON text; `indent` is the indentation of the
@@ -125,14 +133,23 @@ QString writeSchematic(const QString& text, const Schematic& after);
 QString sectionJson(const Schematic& s, const QString& indent);
 
 // Sets (json non-empty) or removes (json empty) member `key` of component
-// `index`; the name of the component is changed with writeSchematic.
-QString setComponentMember(const QString& text, int index, const QString& key, const QString& json);
+// `index` of a scope; the name of the component is changed with writeSchematic.
+QString setComponentMember(const QString& text, int index, const QString& key, const QString& json,
+                           const QString& scope = QString());
 
-// The text range [begin, end) of component `index`, or false.
-bool componentRange(const QString& text, int index, int& begin, int& end);
+// The scope ("" or a subcircuit) and index of the component whose text
+// contains position pos; false if none does.
+bool locateComponent(const QString& text, int pos, QString& scope, int& index);
 
-// Index of the component whose text contains position pos, or -1.
-int componentAt(const QString& text, int pos);
+// Adds an empty subcircuit with these ports; the text unchanged if the name exists.
+QString addSubcircuit(const QString& text, const QString& name, const QStringList& ports);
+
+// Instances of a subcircuit in the main circuit, with their nodes.
+struct Instance {
+    QString name;
+    QStringList nodes;
+};
+QVector<Instance> instancesOf(const QString& text, const QString& subcircuit);
 
 // Kinds for the palette ----------------------------------------------------------
 

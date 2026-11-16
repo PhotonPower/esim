@@ -161,7 +161,7 @@ void testJsonSpan() {
     t = removeItem(text, *a, 2);
     check(t.contains("[1, 2]") && parses(t), "last item removed: " + t);
     t = appendItems(text, *a, {"4"});
-    check(parses(t) && t.contains("3,\n    4]"), "item appended: " + t);
+    check(parses(t) && t.contains("[1, 2, 3, 4]"), "item appended on the line: " + t);
     t = appendItems(text, *e, {"{ \"k\": 1 }", "5"});
     check(parses(t) && t.contains("\"e\": [\n    { \"k\": 1 },\n    5\n  ]"), "items appended to an empty array: " + t);
 
@@ -292,6 +292,67 @@ void testSchematic(const QString& examples) {
     }
 }
 
+void testSubcircuits(const QString& examples) {
+    const QString ring = readFile(QDir(examples).filePath("ring_oscillator_bsim3.json"));
+    Schematic s;
+    QString error;
+    check(readSchematic(ring, s, &error, "inv"), "subcircuit inv read: " + error);
+    check(s.scope == "inv" && s.ports == QStringList({"in", "out", "vdd"}), "scope and ports: " + s.ports.join(","));
+    check(s.find("MP") >= 0 && s.find("MN") >= 0 && s.components.size() == 2, "its two transistors");
+    int ports = 0;
+    for (const SLabel& l : s.labels) ports += l.port ? 1 : 0;
+    check(ports == 6 && s.grounds.size() == 2, QString("pins on ports drawn as ports: %1").arg(ports));
+    check(connectSchematic(s).conflicts.isEmpty(), "subcircuit drawing agrees with the text");
+    check(!readSchematic(ring, s, &error, "nope"), "unknown subcircuit fails");
+
+    // the drawing goes into the definition, the main circuit stays without
+    readSchematic(ring, s, nullptr, "inv");
+    QString t = writeSchematic(ring, s);
+    check(errorFree(t), "written subcircuit drawing passes the check");
+    Schematic main, back;
+    check(readSchematic(t, main) && !main.hasSection, "main circuit still without drawing");
+    check(readSchematic(t, back, nullptr, "inv") && back.hasSection && back.labels.size() == s.labels.size(),
+          "subcircuit drawing read back");
+    check(writeSchematic(t, back) == t, "writing again changes nothing");
+    int b = int(t.indexOf("\"inv\": {")), e = int(t.indexOf("\"schematic\"", b));
+    check(b > 0 && e > b && e < t.indexOf("\"components\": [", b + 200), "section inside the definition");
+
+    // a port with a new name extends the ports
+    back.labels.push_back({"en", QPoint(30, 30), 0, true});
+    t = writeSchematic(t, back);
+    check(t.contains("\"ports\": [\"in\", \"out\", \"vdd\", \"en\"]"), "port added to the list");
+
+    // instances and the place of a component in the text
+    const QVector<Instance> inst = instancesOf(ring, "inv");
+    check(inst.size() >= 5 && inst.first().name == "U0" && inst.first().nodes == QStringList({"in", "out", "vdd0"}),
+          QString("instances: %1").arg(inst.size()));
+    QString scope;
+    int index = -1;
+    check(locateComponent(ring, int(ring.indexOf("\"MN\"")), scope, index) && scope == "inv" && index == 1,
+          "MN found in inv");
+    check(locateComponent(ring, int(ring.indexOf("\"U1\"")), scope, index) && scope.isEmpty(), "U1 in the main circuit");
+
+    // a new subcircuit in a file without any
+    const QString rc = readFile(QDir(examples).filePath("rc_lowpass.json"));
+    t = addSubcircuit(rc, "amp", {"in", "out"});
+    check(addSubcircuit(t, "amp", {"x"}) == t, "existing name: no change");
+    check(errorFree(t) && t.contains("// RC low-pass"), "new subcircuit passes the check:\n" + t);
+    Schematic amp;
+    check(readSchematic(t, amp, nullptr, "amp") && amp.labels.size() == 2 && amp.labels[0].port,
+          "its ports are drawn");
+    SComponent r;
+    for (const PartTemplate& p : partTemplates())
+        if (p.id == "r") r = makeComponent(p, amp);
+    r.place.at = QPoint(amp.labels[0].at.x() + 4, amp.labels[0].at.y() + 2);
+    amp.components << r;
+    amp.labels[0].at = r.place.at + QPoint(0, -2);
+    amp.labels[1].at = r.place.at + QPoint(0, 2);
+    t = writeSchematic(t, amp);
+    check(errorFree(t) && t.contains("\"nodes\": [\"in\", \"out\"]"), "resistor between the ports:\n" + t);
+    check(readSchematic(t, amp, nullptr, "amp") && amp.components.size() == 1 && connectSchematic(amp).conflicts.isEmpty(),
+          "read back");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -309,6 +370,8 @@ int main(int argc, char** argv) {
     testJsonSpan();
     std::printf("[test] schematic\n");
     testSchematic(examples);
+    std::printf("[test] subcircuits\n");
+    testSubcircuits(examples);
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
