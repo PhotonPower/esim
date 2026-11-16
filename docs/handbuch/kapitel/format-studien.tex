@@ -85,7 +85,7 @@ Parametern wiederholt. Ausgewertet werden ihre Messgrößen:
 \section{Studien kombinieren}
 
 Eine Analyse hat entweder \code{param_sweep} oder \code{monte_carlo}, nicht
-beides; steht beides da, rechnet esim zurzeit nur Monte Carlo. Wer die
+beides; steht beides da, bricht esim mit einer Fehlermeldung ab. Wer die
 Streuung für mehrere Werte eines Parameters braucht, schreibt je Wert eine
 eigene Analyse mit \code{"name"} (aus Python bequem in einer Schleife).
 Empfindlichkeiten (\code{sens}) und Anpassungen (\code{fit}) enthalten

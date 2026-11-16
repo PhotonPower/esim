@@ -65,6 +65,11 @@ check(len(sweep.measures["t50"]) == 2, "one measurement per run")
 check(near(sweep.measures["t50"][1] / sweep.measures["t50"][0], 2.0, 1e-2), "t50 scales with C")
 runs = list(sweep.runs())
 check([value for value, _ in runs] == [1e-6, 2e-6] and "time" in runs[0][1], "runs of the sweep")
+# values that the table rounds (470n is 4.7000000000000005e-07 in binary)
+res = esim.run(RC, analyses=[{"type": "tran", "tstop": "5m", "uic": True,
+                              "param_sweep": {"param": "C", "values": ["470n", "1u", "2.2u"]}}])
+runs = list(res.tran.runs())
+check(len(runs) == 3 and all(len(cols["time"]) > 10 for _, cols in runs), "runs of a sweep with rounded values")
 
 # --- a netlist file with comments, tables relative to it ---
 res = esim.run(os.path.join(ROOT, "examples", "solar_cell.json"))

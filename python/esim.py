@@ -20,6 +20,7 @@ variable ESIM_BIN, build/esim next to this package, the PATH.
 
 import csv
 import json
+import math
 import os
 import re
 import shutil
@@ -90,7 +91,8 @@ class Analysis:
             raise ValueError("not a sweep over a single parameter")
         key = self.data[self.sweep["param"]]
         for value in self.sweep["values"]:
-            rows = [i for i, k in enumerate(key) if k == value]
+            # the table holds the values with 10 digits, the summary with all of them
+            rows = [i for i, k in enumerate(key) if math.isclose(k, value, rel_tol=1e-9)]
             yield value, {c: _array([col[i] for i in rows])
                           for c, col in self.data.items() if c != self.sweep["param"]}
 

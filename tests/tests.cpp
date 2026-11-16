@@ -2471,6 +2471,19 @@ void testSpeedFeatures() {
         message = e.what();
     }
     checkTrue(message.find("param_sweep, R = 0") != std::string::npos, "parallel runs: the failing run is named");
+    // Monte Carlo and a sweep in one analysis: an error, not a silently dropped sweep.
+    message.clear();
+    try {
+        run(R"json({"parameters": {"R": 1, "C": 1},
+                    "components": [{"type": "V", "name": "V1", "nodes": ["a", "0"], "dc": 1},
+                                   {"type": "R", "name": "R1", "nodes": ["a", "0"], "value": "R*C"}],
+                    "analyses": [{"type": "op", "param_sweep": {"param": "R", "values": [1, 2]},
+                                  "monte_carlo": {"runs": 3, "vary": {"C": {"tol": 0.1}}}}]})json",
+            "mcsweep", 1);
+    } catch (const std::exception& e) {
+        message = e.what();
+    }
+    checkTrue(message.find("not both") != std::string::npos, "monte_carlo with param_sweep is an error");
 }
 
 void testIndexReduction() {

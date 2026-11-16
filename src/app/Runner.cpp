@@ -1513,6 +1513,9 @@ void runAnalyses(Netlist& nl, const RunConfig& cfg, std::ostream& log) {
         const std::string type = a["type"].get<std::string>();
         if (type == "fit") runFit(c, a);
         else if (type == "sens") runSensitivity(c, a);
+        else if (a.contains("monte_carlo") && a.contains("param_sweep"))
+            throw std::runtime_error("an analysis has either \"monte_carlo\" or \"param_sweep\", not both "
+                                     "(write one named analysis per parameter value instead)");
         else if (a.contains("monte_carlo")) runMonteCarlo(c, a, type);
         else if (a.contains("param_sweep")) runParamSweep(c, a, type);
         else runOne(c, a, type);
