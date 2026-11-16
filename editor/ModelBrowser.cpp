@@ -22,7 +22,7 @@ QString typeTitle(const QString& type) {
     static const QHash<QString, QString> titles = {
         {"d", QObject::tr("Diode")},       {"npn", QObject::tr("NPN")},       {"pnp", QObject::tr("PNP")},
         {"nmos", QObject::tr("N-MOSFET")}, {"pmos", QObject::tr("P-MOSFET")}, {"njf", QObject::tr("N-JFET")},
-        {"pjf", QObject::tr("P-JFET")}};
+        {"pjf", QObject::tr("P-JFET")}, {"subckt", QObject::tr("Teilschaltung")}};
     return titles.value(type, type);
 }
 
@@ -45,6 +45,7 @@ ModelBrowser::ModelBrowser(ModelLibrary* library, const QString& examplesDir, ch
     kind_->addItem(tr("Bipolartransistoren"), int('q'));
     kind_->addItem(tr("MOSFETs"), int('m'));
     kind_->addItem(tr("JFETs"), int('j'));
+    kind_->addItem(tr("Teilschaltungen (SPICE)"), int('x'));
     kind_->setCurrentIndex(std::max(0, kind_->findData(int(kind))));
     auto* libraries = new QPushButton(tr("Bibliotheken …"));
     auto* top = new QHBoxLayout;

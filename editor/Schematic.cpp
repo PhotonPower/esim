@@ -306,10 +306,33 @@ bool readSchematic(const QString& text, Schematic& out, QString* error, const QS
     }
     if (const JValue* subs = root.get("subcircuits"); subs && subs->isObject()) {
         for (size_t k = 0; k < subs->items.size(); ++k) {
+            const JValue& def = subs->items[k];
+            const QString name = subs->keys[int(k)];
             QStringList ports;
-            if (const JValue* p = subs->items[k].get("ports"); p && p->isArray())
+            if (const JValue* p = def.get("ports"); p && p->isArray()) {
                 for (const JValue& v : p->items) ports << v.text(text);
-            s.subcircuits.insert(subs->keys[int(k)], ports);
+            } else if (def.isString() || def.isArray()) {
+                // SPICE: the ports of ".subckt NAME port ..." (that name, else the first)
+                QStringList lines;
+                if (def.isString()) lines = def.string.split('\n');
+                for (const JValue& l : def.items) lines << l.string;
+                QStringList first;
+                for (const QString& l : lines) {
+                    const QStringList w = l.simplified().split(' ');
+                    if (w.value(0).compare(".subckt", Qt::CaseInsensitive) != 0 || w.size() < 2) continue;
+                    QStringList p;
+                    for (int i = 2; i < w.size() && !w[i].contains('=') && w[i].compare("params:", Qt::CaseInsensitive) != 0; ++i)
+                        p << w[i].toLower();
+                    if (first.isEmpty()) first = p;
+                    if (w[1].compare(name, Qt::CaseInsensitive) == 0) {
+                        first = p;
+                        break;
+                    }
+                }
+                ports = first;
+                s.spiceSubcircuits.insert(name);
+            }
+            s.subcircuits.insert(name, ports);
         }
     }
 

@@ -160,7 +160,8 @@ Parameterstudien Zeilen `progress <Analyse> <Anteil>` auf stderr.
   Teilschaltung, zeigt der Plan diese.
 - Modellbibliothek (⌘L, oder Suche in „Bauteile“, z. B. „NPN_GEN“): Modelle
   aus der Standardbibliothek, aus den Beispielen und aus eigenen
-  Bibliotheken (SPICE-Dateien der Hersteller mit `.model`-Karten oder
+  Bibliotheken (SPICE-Dateien der Hersteller mit `.model`-Karten und
+  `.subckt`-Teilschaltungen, oder
   esim-Dateien, einzeln oder ganze Ordner). Ein gewähltes Modell wird in
   `"models"` der Datei kopiert, die damit vollständig bleibt. Im Feld
   „model“ der Eigenschaften schlägt der Editor passende Modelle vor; „…“
@@ -784,6 +785,45 @@ Bauteil `X` eingesetzt:
   `outputs`) erscheint das Innere von Instanzen nicht.
 - Innerhalb eines Subcircuits beziehen sich `i(...)` und `control` auf Bauteile
   desselben Subcircuits.
+
+**Subcircuits in SPICE.** Modelle der Hersteller lassen sich unverändert
+einsetzen: Statt eines Objekts steht der SPICE-Text, als ein String oder eine
+Liste von Zeilen.
+
+```jsonc
+"subcircuits": {
+  "OPX": [
+    ".SUBCKT OPX inp inn out vp vn",
+    "Rin inp inn 1meg",
+    "Egain mid 0 POLY(1) inp inn 0 1e5",
+    "Rout mid out 10",
+    "Dhi out vp DCLAMP",
+    "Dlo vn out DCLAMP",
+    ".MODEL DCLAMP D(IS=1e-14)",
+    ".ENDS"
+  ]
+},
+"components": [
+  { "type": "X", "name": "U1", "subcircuit": "OPX", "nodes": ["in", "fb", "out", "vp", "vn"] }
+]
+```
+
+- Gelesen werden R, C, L, K, V und I (DC, AC, SIN, PULSE, PWL), E und G
+  (linear, `POLY(n)`, `VALUE = {…}`, `TABLE {…} = (x, y) …`), F und H (linear,
+  `POLY(n)`), B (`V=` oder `I=`), D, Q, M, J, S (mit `.model … SW`), T und X;
+  dazu `.param`, `PARAMS:` an `.subckt` und an Instanzen, `.model`.
+- Ausdrücke in `{…}` werden übersetzt: Zahlen mit SPICE-Endungen (`M` ist
+  milli, `meg` mega), `**`, `a ? b : c`, `limit`, `pwr`, `pwrs`, `uramp`,
+  `u`, `stp`, `sgn`.
+- Modelle und weitere `.subckt` im Text gehören zu diesem Subcircuit und
+  heißen intern `OPX/NAME`; sie stoßen nicht mit Modellen der Datei
+  zusammen. Was der Text nicht definiert, sucht esim in der Datei.
+- Nicht Unterstütztes (z. B. `LAPLACE`, `.include`, unbekannte Bauteile)
+  ist ein Fehler, der die Zeile im Text nennt. Ohne Wirkung bleiben, mit
+  Warnung, z. B. die Fläche von Dioden und der Substratknoten von
+  Transistoren.
+- `tests/spice_subckt_ngspice.py` vergleicht eine solche Teilschaltung mit
+  ngspice.
 
 ### Quellen
 

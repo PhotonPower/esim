@@ -716,10 +716,13 @@ void MainWindow::applyText(const QString& text) {
 }
 
 void MainWindow::applySchematic(const Schematic& after) {
-    // new components with a model of the library bring its card along
+    // new components with a model or subcircuit of the library bring it along
     QStringList models;
-    for (const SComponent& c : after.components)
-        if (c.index < 0 && !c.model.isEmpty()) models << c.model;
+    for (const SComponent& c : after.components) {
+        if (c.index >= 0) continue;
+        if (!c.model.isEmpty()) models << c.model;
+        if (c.kind == 'x' && !c.subcircuit.isEmpty()) models << c.subcircuit;
+    }
     applyText(writeSchematic(importModels(editor_->toPlainText(), models), after));
     refreshSchematic();
 }
@@ -870,6 +873,23 @@ void MainWindow::probe(const QString& probed) {
 // --- subcircuits ---------------------------------------------------------------
 
 void MainWindow::enterScope(const QString& scope) {
+    if (!scope.isEmpty() && schematic_->schematic().spiceSubcircuits.contains(scope)) {
+        // written in SPICE: no drawing, its text is the definition
+        JValue root;
+        const QString text = editor_->toPlainText();
+        const JValue* subs = parseJsonc(text, root) ? root.get("subcircuits") : nullptr;
+        const JValue* def = subs ? subs->get(scope) : nullptr;
+        if (def) {
+            showText_->setChecked(true);
+            QTextCursor cur(editor_->document());
+            cur.setPosition(def->begin);
+            editor_->setTextCursor(cur);
+            editor_->centerCursor();
+            editor_->setFocus();
+        }
+        status_->setText(tr("„%1“ ist eine SPICE-Teilschaltung: ihr Text ist die Definition").arg(scope));
+        return;
+    }
     if (scope == scope_ && (scope.isEmpty() || scopeBar_->isVisible())) return;
     scope_ = scope;
     schematic_->selectComponents({});
@@ -960,16 +980,29 @@ void MainWindow::updateOperatingPoint() {
 // --- models ----------------------------------------------------------------------
 
 QString MainWindow::importModels(QString text, const QStringList& names) const {
-    const QStringList defined = fileModels(text);
     for (const QString& name : names) {
-        if (defined.contains(name)) continue;
         const LibraryModel* m = library_.find(name);
-        if (m && m->name == name) text = addModel(text, *m);
+        if (!m || m->name != name) continue;
+        const QStringList defined = m->type == "subckt" ? fileSubcircuits(text) : fileModels(text);
+        if (!defined.contains(name)) text = addModel(text, *m);
     }
     return text;
 }
 
 void MainWindow::placeLibraryModel(const LibraryModel& m) {
+    showPlan_->setChecked(true);
+    if (m.type == "subckt") {
+        SComponent c;
+        c.type = QStringLiteral("X");
+        c.kind = 'x';
+        c.subcircuit = m.name;
+        c.ports = m.ports;
+        c.name = schematic_->schematic().freeName(QStringLiteral("X"));
+        c.summary = m.name;
+        c.nodes = QStringList(QVector<QString>(m.ports.size()));
+        schematic_->startPlacing(c);
+        return;
+    }
     const QString id = m.type;  // the templates "d", "npn", "pmos", ... carry these ids
     for (const PartTemplate& t : partTemplates()) {
         if (t.id != id) continue;
@@ -998,7 +1031,7 @@ void MainWindow::openLibrary() {
         const QString text = editor_->toPlainText();
         const QString changed = importModels(text, {m.name});
         status_->setText(changed == text ? tr("„%1“ ist schon in der Datei").arg(m.name)
-                                         : tr("„%1“ in \"models\" übernommen").arg(m.name));
+                                         : tr("„%1“ in die Datei übernommen").arg(m.name));
         applyText(changed);
         refreshSchematic();
     }

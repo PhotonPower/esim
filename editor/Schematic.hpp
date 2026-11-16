@@ -83,6 +83,7 @@ struct Schematic {
     QVector<SGround> grounds;
 
     QMap<QString, QStringList> subcircuits;  // name -> ports
+    QSet<QString> spiceSubcircuits;          // those written in SPICE (no drawing of their own)
     QMap<QString, QString> modelTypes;       // model name -> device type ("npn", "pmos", ...), lower case
     QSet<QString> textNodes;                 // all node names of the text
     bool hasSection = false;                 // the file has a "schematic" section

@@ -96,9 +96,6 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
   Test von esim gerechnet. Karten von Herstellern sind nicht dabei, weil
   ihre Lizenz für die Weitergabe offen ist; sie kommen aus den Dateien der
   Hersteller, die man als eigene Bibliothek einbindet.
-- Nicht enthalten: Herstellermodelle als `.subckt` (z. B. viele MOSFETs und
-  Operationsverstärker). Dafür müsste esim SPICE-Teilschaltungen lesen
-  (`tools/spice2json.py` kann Netzlisten übersetzen).
 
 **Schritt 3c (Auswertung über Läufe)** – erledigt:
 - Die Messgrößen einer Analyse mit `monte_carlo` oder `param_sweep`
@@ -111,6 +108,16 @@ Ereignisse, Vektoren und Analysen lassen sich nicht sinnvoll zeichnen.
 - Sweeps: Messgröße über einem Parameter (Linie mit Punkten, über Dekaden
   logarithmisch); weitere Parameter eines verschachtelten Sweeps ergeben
   eine Kurvenschar auf der Blauskala.
+
+**Schritt 3d (SPICE-Teilschaltungen)** – erledigt:
+- esim liest Teilschaltungen in SPICE direkt (`src/io/Spice.cpp`, siehe
+  README „Subcircuits in SPICE“); ein Vergleich mit ngspice läuft als Test.
+- Die Bibliothek liest `.subckt`-Blöcke aus Herstellerdateien; ein Block
+  nimmt die `.model`- und `.subckt`-Definitionen der Datei mit, die er
+  benutzt. Platzieren (Suche in „Bauteile“, Dialog) kopiert den Text unter
+  `"subcircuits"` in die Datei; der Plan zeigt einen Kasten mit den Ports der
+  `.subckt`-Zeile. Doppelklick zeigt den SPICE-Text (eine SPICE-Teilschaltung
+  hat keinen eigenen Plan).
 
 ### Wie Plan und Text zusammenhängen
 
@@ -147,7 +154,6 @@ schreibt die Knoten des Plans.
 ## Nächste Schritte
 
 **Schritt 3 (Rest)**
-- SPICE-Teilschaltungen (`.subckt`) aus Herstellerbibliotheken übernehmen.
 - Eine Auswahl im Plan in eine neue Teilschaltung umwandeln.
 
 **Schritt 4: Windows 11**

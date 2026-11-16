@@ -575,7 +575,9 @@ void SchematicView::contextMenu(QMouseEvent* e) {
         const SComponent& c = model_.components[model_.find(name)];
         if (c.kind == 'x' && model_.subcircuits.contains(c.subcircuit)) {
             const QString sub = c.subcircuit;
-            menu.addAction(tr("Teilschaltung „%1“ öffnen").arg(sub), this, [this, sub]() { emit openSubcircuit(sub); });
+            menu.addAction(model_.spiceSubcircuits.contains(sub) ? tr("SPICE-Text von „%1“ zeigen").arg(sub)
+                                                                 : tr("Teilschaltung „%1“ öffnen").arg(sub),
+                           this, [this, sub]() { emit openSubcircuit(sub); });
         }
         menu.addAction(tr("Eigenschaften von %1").arg(name), this, [this, name]() { emit componentActivated(name); });
         menu.addAction(tr("Strom i(%1) zeigen").arg(name), this, [this, name]() { emit probe(QStringLiteral("i(%1)").arg(name)); });

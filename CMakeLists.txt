@@ -77,6 +77,7 @@ add_library(esimcircuit
   src/circuit/devices/Switching.cpp
   src/io/Units.cpp
   src/io/Netlist.cpp
+  src/io/Spice.cpp
   src/io/Output.cpp
   src/app/Measure.cpp
   src/app/Runner.cpp)
@@ -121,6 +122,12 @@ if(ESIM_BUILD_TESTS)
         COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
                 BSIM3_CHARGES_BIN=$<TARGET_FILE:bsim3_charges> NGSPICE=${NGSPICE_EXECUTABLE}
                 ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/bsim3_ngspice.py)
+    endif()
+    # SPICE subcircuits against ngspice, if it is installed.
+    if(NGSPICE_EXECUTABLE)
+      add_test(NAME spice_subckt_ngspice
+        COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim> NGSPICE=${NGSPICE_EXECUTABLE}
+                ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/spice_subckt_ngspice.py)
     endif()
     add_test(NAME spice_import
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>

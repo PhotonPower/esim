@@ -19,6 +19,7 @@
 #include "ModelLibrary.hpp"
 #include "ResultData.hpp"
 #include "Schematic.hpp"
+#include "Symbols.hpp"
 
 namespace {
 
@@ -433,8 +434,9 @@ void testLibrary(const QString& examples) {
                         ".model SW1 SW(RON=1)\n"
                         ".subckt inner a b\n.model DIN D(IS=1n)\n.ends\n";
     const QVector<LibraryModel> ms = parseSpiceLibrary(lib, "test.lib");
-    check(ms.size() == 2, QString("two models (switch and model inside a subcircuit skipped): %1").arg(ms.size()));
-    if (ms.size() == 2) {
+    check(ms.size() == 3 && ms[2].type == "subckt" && ms[2].name == "inner",
+          QString("two models and the subcircuit (switch and model inside it skipped): %1").arg(ms.size()));
+    if (ms.size() == 3) {
         check(ms[0].name == "QX" && ms[0].type == "npn" && ms[0].kind() == 'q', "name and type of a card");
         check(ms[0].text == ".MODEL QX npn(IS=1f BF=100\n+ VAF=50\n+ CJE=1p)", "card with continuations: " + ms[0].text);
         check(ms[0].title() == "Fast switch" && ms[0].description.contains("second line"), "description: " + ms[0].title());
@@ -488,6 +490,90 @@ void testLibrary(const QString& examples) {
     check(long_.contains("\"n18\": [\n      \".model n18 NMOS") && errorFree(long_), "a long card added as lines");
 }
 
+void testSpiceLibrary() {
+    // a library as manufacturers write them: comment above the subcircuit,
+    // models and a helper subcircuit outside it, more than it needs
+    const QString lib = R"lib(* Test library
+* OPX simple operational amplifier
+* pins: non-inverting input, inverting input, output, supplies
+.SUBCKT OPX inp inn out vp vn
+Rin inp inn 1meg
+Egain mid 0 POLY(1) inp inn 0 1e5
+Xbuf mid out BUF
+Dhi out vp DCLAMP
+Dlo vn out DCLAMP
+.ENDS OPX
+
+.subckt BUF a b
+Rb a b 10
+.ends
+
+.model DCLAMP D(IS=1e-14)
+.model UNUSED NPN(BF=100)
+.subckt OTHER x
+R1 x 0 1
+.ends
+)lib";
+    const QVector<LibraryModel> ms = parseSpiceLibrary(lib, "test.lib");
+    const LibraryModel* opx = nullptr;
+    for (const LibraryModel& m : ms)
+        if (m.name == "OPX") opx = &m;
+    check(opx && opx->type == "subckt" && opx->kind() == 'x', "subcircuit found");
+    if (!opx) return;
+    check(opx->ports == QStringList({"inp", "inn", "out", "vp", "vn"}), "ports: " + opx->ports.join(","));
+    check(opx->title() == "simple operational amplifier", "description: " + opx->title());
+    check(opx->text.contains(".subckt BUF") && opx->text.contains(".model DCLAMP") && !opx->text.contains("UNUSED") &&
+              !opx->text.contains("OTHER"),
+          "takes along what it uses, nothing else:\n" + opx->text);
+
+    // into a file: a non-inverting amplifier with gain 10
+    const QString base = R"json({
+  "components": [
+    { "type": "V", "name": "VP", "nodes": ["vp", "0"], "dc": 15 },
+    { "type": "V", "name": "VN", "nodes": ["vn", "0"], "dc": -15 },
+    { "type": "V", "name": "VIN", "nodes": ["in", "0"], "dc": 0.1 },
+    { "type": "R", "name": "RF", "nodes": ["out", "fb"], "value": "9k" },
+    { "type": "R", "name": "RG", "nodes": ["fb", "0"], "value": "1k" }
+  ],
+  "analyses": [{ "type": "op" }],
+  "outputs": ["v(out)"]
+}
+)json";
+    QString t = addModel(base, *opx);
+    check(fileSubcircuits(t) == QStringList{"OPX"} && addModel(t, *opx) == t, "subcircuit added once");
+    Schematic s;
+    check(readSchematic(t, s) && s.spiceSubcircuits.contains("OPX") && s.subcircuits.value("OPX") == opx->ports,
+          "the drawing knows its ports");
+    SComponent x = makeSubcircuit("OPX", s);
+    check(symbolOf(x).pins.size() == 5, "five pins");
+    x.place.at = QPoint(0, 40);
+    s.components << x;
+    // connect the pins by labels at their positions
+    const QStringList nets = {"in", "fb", "out", "vp", "vn"};
+    for (int p = 0; p < 5; ++p) s.labels.push_back({nets[p], x.place.map(symbolOf(x).pins[p].pos), 0});
+    t = writeSchematic(t, s);
+    check(errorFree(t) && t.contains("\"subcircuit\": \"OPX\", \"nodes\": [\"in\", \"fb\", \"out\", \"vp\", \"vn\"]"),
+          "instance in the text:\n" + t);
+#ifdef ESIM_BINARY
+    QTemporaryDir dir;
+    QFile f(dir.filePath("amp.json"));
+    if (f.open(QIODevice::WriteOnly)) f.write(t.toUtf8());
+    f.close();
+    QProcess esim;
+    esim.start(ESIM_BINARY, {dir.filePath("amp.json"), "-o", dir.path(), "--summary", dir.filePath("s.json")});
+    esim.waitForFinished(30000);
+    QFile summary(dir.filePath("s.json"));
+    double vout = 0;
+    if (summary.open(QIODevice::ReadOnly)) {
+        const QString j = QString::fromUtf8(summary.readAll());
+        static const QRegularExpression re(R"re("v\(out\)":\s*([-0-9.eE+]+))re");
+        vout = re.match(j).captured(1).toDouble();
+    }
+    check(esim.exitCode() == 0 && std::abs(vout - 1.0) < 1e-3, QString("gain 10 with the SPICE amplifier: v(out) = %1 %2")
+                                                                   .arg(vout).arg(QString::fromUtf8(esim.readAllStandardError())));
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -511,6 +597,8 @@ int main(int argc, char** argv) {
     testSubcircuits(examples);
     std::printf("[test] model library\n");
     testLibrary(examples);
+    std::printf("[test] SPICE subcircuits in the library\n");
+    testSpiceLibrary();
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSet>
 
 #include "JsonSpan.hpp"
 
@@ -37,9 +38,13 @@ QString indentOf(const QString& text, const JValue& obj) {
 }  // namespace
 
 QString LibraryModel::title() const {
-    QString t = description.section('\n', 0, 0).trimmed();
-    if (t.startsWith(name + ' ', Qt::CaseInsensitive)) t = t.mid(name.size() + 1).trimmed();
-    return t;
+    // the comment line that starts with the name, else the first one
+    const QStringList lines = description.split('\n');
+    for (const QString& l : lines) {
+        const QString t = l.trimmed();
+        if (t.startsWith(name + ' ', Qt::CaseInsensitive)) return t.mid(name.size() + 1).trimmed();
+    }
+    return lines.value(0).trimmed();
 }
 
 char LibraryModel::kind() const {
@@ -47,18 +52,47 @@ char LibraryModel::kind() const {
     if (type == "npn" || type == "pnp") return 'q';
     if (type == "nmos" || type == "pmos") return 'm';
     if (type == "njf" || type == "pjf") return 'j';
+    if (type == "subckt") return 'x';
     return 0;
 }
 
 QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& source) {
     QVector<LibraryModel> out;
     const QStringList lines = text.split('\n');
-    QStringList comment;  // the comment block right above the current line
-    int subckt = 0;       // models inside a .subckt belong to it
+    // the top-level definitions of the file: models (their cards) and
+    // subcircuits (their lines from .subckt to .ends), for the dependencies
+    struct Block {
+        QString name;
+        QStringList lines;
+    };
+    QVector<Block> blocks;  // models and subcircuits at the top level, in order
+    QStringList comment;    // the comment block right above the current line
+    int depth = 0;          // inside a .subckt
+    Block current;
+    QString currentComment;
+    QStringList currentPorts;
     for (int i = 0; i < lines.size(); ++i) {
         QString line = lines[i];
         line.remove('\r');
         const QString t = line.trimmed();
+        const QString lower = t.toLower();
+        if (depth > 0) {
+            current.lines << line;
+            if (lower.startsWith(".subckt")) ++depth;
+            if (lower.startsWith(".ends") && --depth == 0) {
+                LibraryModel m;
+                m.name = current.name;
+                m.type = QStringLiteral("subckt");
+                m.ports = currentPorts;
+                m.description = currentComment;
+                m.source = source;
+                m.text = current.lines.join('\n');
+                out << m;
+                blocks << current;
+                current = Block();
+            }
+            continue;
+        }
         if (t.startsWith('*')) {
             comment << t.mid(1).trimmed();
             continue;
@@ -67,10 +101,24 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
             comment.clear();
             continue;
         }
-        const QString lower = t.toLower();
-        if (lower.startsWith(".subckt")) ++subckt;
-        if (lower.startsWith(".ends") && subckt > 0) --subckt;
-        if (!lower.startsWith(".model") || subckt > 0) {
+        if (lower.startsWith(".subckt")) {
+            // ".subckt NAME port ... [PARAMS: a=1 ...]"
+            QString head = t;
+            while (i + 1 < lines.size() && QString(lines[i + 1]).trimmed().startsWith('+'))
+                head += ' ' + QString(lines[++i]).trimmed().mid(1);
+            const QStringList words = head.simplified().split(' ');
+            current = Block{words.value(1), {head}};
+            currentPorts.clear();
+            for (int k = 2; k < words.size(); ++k) {
+                if (words[k].contains('=') || words[k].compare("params:", Qt::CaseInsensitive) == 0) break;
+                currentPorts << words[k].toLower();
+            }
+            currentComment = comment.join('\n');
+            comment.clear();
+            depth = 1;
+            continue;
+        }
+        if (!lower.startsWith(".model")) {
             comment.clear();
             continue;
         }
@@ -90,12 +138,43 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
         }
         LibraryModel m;
         m.text = card.join('\n');
-        if (cardHead(m.text, m.name, m.type) && !m.type.isEmpty()) {
-            m.description = comment.join('\n');
-            m.source = source;
-            out << m;
+        QString type;
+        if (cardHead(m.text, m.name, type)) {
+            blocks << Block{m.name, card};
+            if (!type.isEmpty()) {
+                m.type = type;
+                m.description = comment.join('\n');
+                m.source = source;
+                out << m;
+            }
         }
         comment.clear();
+    }
+    // a subcircuit takes along the top-level definitions it uses, and theirs
+    for (LibraryModel& m : out) {
+        if (m.type != "subckt") continue;
+        QSet<QString> used{m.name.toLower()};
+        QStringList extra;
+        QStringList todo{m.text};
+        while (!todo.isEmpty()) {
+            const QString body = todo.takeFirst();
+            QSet<QString> words;
+            for (const QString& l : body.split('\n')) {
+                const QString t = l.trimmed();
+                if (t.startsWith('*')) continue;
+                for (const QString& w : t.section(';', 0, 0).split(QRegularExpression(QStringLiteral("[\\s(),=]+")),
+                                                                Qt::SkipEmptyParts))
+                    words.insert(w.toLower());
+            }
+            for (const Block& b : blocks) {
+                const QString n = b.name.toLower();
+                if (used.contains(n) || !words.contains(n)) continue;
+                used.insert(n);
+                extra << b.lines.join('\n');
+                todo << b.lines.join('\n');
+            }
+        }
+        if (!extra.isEmpty()) m.text += '\n' + extra.join('\n');
     }
     return out;
 }
@@ -179,10 +258,18 @@ QStringList fileModels(const QString& text) {
     return models && models->isObject() ? models->keys : QStringList();
 }
 
+QStringList fileSubcircuits(const QString& text) {
+    JValue root;
+    if (!parseJsonc(text, root) || !root.isObject()) return {};
+    const JValue* subs = root.get("subcircuits");
+    return subs && subs->isObject() ? subs->keys : QStringList();
+}
+
 QString addModel(const QString& text, const LibraryModel& m) {
     JValue root;
     if (!parseJsonc(text, root) || !root.isObject()) return text;
-    const JValue* models = root.get("models");
+    const QString section = m.type == "subckt" ? QStringLiteral("subcircuits") : QStringLiteral("models");
+    const JValue* models = root.get(section);
     if (models && !models->isObject()) return text;  // left to the check
     if (models && models->get(m.name)) return text;
     const QString indent = models ? indentOf(text, *models) : indentOf(text, root) + QStringLiteral("  ");
@@ -201,7 +288,7 @@ QString addModel(const QString& text, const LibraryModel& m) {
     }
     if (models) return setMember(text, *models, m.name, json);
     const QString outer = indentOf(text, root);
-    return setMember(text, root, QStringLiteral("models"),
+    return setMember(text, root, section,
                      QStringLiteral("{\n") + indent + jsonQuote(m.name) + QStringLiteral(": ") + json +
                          QStringLiteral("\n") + outer + QStringLiteral("}"));
 }

@@ -25,6 +25,7 @@
 #include "dae/Robertson.hpp"
 #include "expr/Expression.hpp"
 #include "io/Netlist.hpp"
+#include "io/Spice.hpp"
 #include "io/Output.hpp"
 #include "io/Units.hpp"
 
@@ -2952,6 +2953,80 @@ void testInputErrors() {
 
 // What the editor relies on: the drawing in "schematic" is accepted without a
 // warning, warnings can be collected, and runs report their progress.
+void testSpiceSubcircuits() {
+    // expressions of SPICE in the syntax of the simulator
+    checkTrue(spiceExpression("2**3") == "(2 ^ 3)", "** is a power: " + spiceExpression("2**3"));
+    checkTrue(spiceExpression("a > 1 ? 2 : 3") == "if((a > 1), 2, 3)", "?: is if(): " + spiceExpression("a > 1 ? 2 : 3"));
+    checkTrue(spiceExpression("1meg*2M") == "(1000000 * 0.002)", "suffixes, M is milli: " + spiceExpression("1meg*2M"));
+    checkTrue(spiceExpression("V(1, Out) + I(Vsense)") == "(v(1,out) + i(vsense))", "probes of nodes and sources");
+
+    // values of the translated expressions: B sources at the operating point
+    Netlist ev = parseNetlistText(R"json({
+        "subcircuits": {"calc": [
+            ".subckt calc o1 o2 o3 o4 o5 o6",
+            "b1 o1 0 v=limit(7, 5, 1)",
+            "b2 o2 0 v={pwr(-2, 2) + pwrs(-2, 2)}",
+            "b3 o3 0 v=uramp(-1) + u(2) + stp(0) + sgn(-3)",
+            "* PSpice: VALUE and TABLE",
+            "e4 o4 0 VALUE = { V(o1)*2 + 1 }",
+            "e5 o5 0 TABLE {V(o1)} = (0, 0) (2, 10) (4, 0)",
+            "r6 o6 0 1k",
+            "i6 0 o6 {2m}",
+            ".ends"]},
+        "components": [{"type": "X", "name": "X1", "subcircuit": "calc", "nodes": ["a", "b", "c", "d", "e", "f"]}]
+    })json");
+    Vector x = solveOperatingPoint(*ev.circuit, ev.options);
+    checkNear(probe(*ev.circuit, x, "v(a)"), 5.0, 1e-12, "limit(7, 5, 1) = 5 (bounds in any order)");
+    checkNear(probe(*ev.circuit, x, "v(b)"), 0.0, 1e-12, "pwr(-2,2) + pwrs(-2,2) = 4 - 4");
+    checkNear(probe(*ev.circuit, x, "v(c)"), 0.0, 1e-12, "uramp(-1) + u(2) + stp(0) + sgn(-3) = 0 + 1 + 0 - 1");
+    checkNear(probe(*ev.circuit, x, "v(d)"), 11.0, 1e-12, "VALUE = {V(o1)*2 + 1}");
+    checkNear(probe(*ev.circuit, x, "v(e)"), 0.0, 1e-12, "TABLE beyond the last point keeps its value");
+    checkNear(probe(*ev.circuit, x, "v(f)"), 2.0, 1e-9, "current source with an expression");
+
+    // models of the text belong to the subcircuit, even if the file has one of the same name
+    Netlist md = parseNetlistText(R"json({
+        "models": {"dmod": {"type": "diode", "is": 1e-14}},
+        "subcircuits": {"clamp": [
+            ".SUBCKT clamp a k",
+            "D1 a mid DMOD",
+            "Xin mid k inner",
+            ".subckt inner p q",
+            "r1 p q 1",
+            ".ends inner",
+            ".MODEL DMOD D(IS=1e-10)",
+            ".ENDS"]},
+        "components": [
+            {"type": "I", "name": "I1", "nodes": ["0", "a"], "dc": "1m"},
+            {"type": "X", "name": "X1", "subcircuit": "clamp", "nodes": ["a", "0"]},
+            {"type": "I", "name": "I2", "nodes": ["0", "b"], "dc": "1m"},
+            {"type": "D", "name": "D2", "nodes": ["b", "0"], "model": "dmod"}
+        ]})json");
+    x = solveOperatingPoint(*md.circuit, md.options);
+    const double vt = 0.025852;  // kT/q at 27 °C
+    checkNear(probe(*md.circuit, x, "v(a)"), vt * std::log(1e-3 / 1e-10) + 1e-3, 2e-3, "the subcircuit's own DMOD");
+    checkNear(probe(*md.circuit, x, "v(b)"), vt * std::log(1e-3 / 1e-14), 2e-3, "the file's dmod unchanged");
+
+    // what cannot be read says where
+    const auto error = [](const std::string& text) {
+        try {
+            parseNetlistText(text);
+        } catch (const std::runtime_error& e) {
+            return std::string(e.what());
+        }
+        return std::string();
+    };
+    std::string e = error(R"json({"subcircuits": {"s": [".subckt s a", "r1 a 0 1k", "z1 a 0 1", ".ends"]},
+                                  "components": [{"type": "X", "subcircuit": "s", "nodes": ["n"]}]})json");
+    checkTrue(e.find("line 3") != std::string::npos && e.find("Z") != std::string::npos, "unknown element with its line: " + e);
+    e = error(R"json({"subcircuits": {"s": [".subckt s a", "e1 a 0 laplace {v(a)} = {1/(1+s)}", ".ends"]},
+                     "components": []})json");
+    checkTrue(e.find("laplace") != std::string::npos, "LAPLACE is rejected: " + e);
+    e = error(R"json({"subcircuits": {"s": [".subckt s a", "r1 a 0 1k"]}, "components": []})json");
+    checkTrue(e.find(".ends") != std::string::npos, "missing .ends: " + e);
+    e = error(R"json({"subcircuits": {"s": [".subckt other a", ".ends", ".subckt third b", ".ends"]}, "components": []})json");
+    checkTrue(e.find("other, third") != std::string::npos, "the text has no subcircuit of that name: " + e);
+}
+
 void testEditorSupport() {
     std::ostringstream warnings;
     std::ostream* previous = setWarningStream(&warnings);
@@ -3070,6 +3145,7 @@ int main() {
         {"measurements", testMeasurements},
         {"input errors", testInputErrors},
         {"editor support", testEditorSupport},
+        {"SPICE subcircuits", testSpiceSubcircuits},
     };
     for (const auto& [name, fn] : tests) {
         std::cout << "[test] " << name << '\n';

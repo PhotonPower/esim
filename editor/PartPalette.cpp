@@ -204,11 +204,20 @@ void PartPalette::rebuild() {
         if (!t.variant.isEmpty() || t.id == "d") byType.insert(t.id, makeComponent(t, none));
     for (int k = 0; k < library_->size(); ++k) {
         const LibraryModel& m = (*library_)[k];
-        const QString id = m.type == "d" ? QStringLiteral("d") : m.type;
-        if (!byType.contains(id)) continue;
-        const QString title = m.title().isEmpty() ? m.type.toUpper() : m.title();
+        SComponent symbol;
+        if (m.type == "subckt") {
+            Schematic s;
+            s.subcircuits.insert(m.name, m.ports);
+            symbol = makeSubcircuit(m.name, s);
+        } else if (byType.contains(m.type)) {
+            symbol = byType.value(m.type);
+        } else {
+            continue;
+        }
+        const QString title = !m.title().isEmpty() ? m.title()
+                              : m.type == "subckt" ? tr("Teilschaltung (SPICE)") : m.type.toUpper();
         add(QStringLiteral("lib:%1").arg(k), QString::fromUtf8("%1 · %2").arg(m.name, title),
-            m.type + " " + m.source + " " + m.description, componentIcon(byType.value(id)));
+            m.type + " " + m.source + " " + m.description, componentIcon(symbol));
         QListWidgetItem* item = list_->item(list_->count() - 1);
         item->setData(LibraryRole, true);
         item->setToolTip(m.description.isEmpty() ? m.source : m.description + "\n\n" + m.source);

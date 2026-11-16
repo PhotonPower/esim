@@ -31,6 +31,7 @@
 #include "expr/Expression.hpp"
 #include "io/Units.hpp"
 #include "core/ParseNumber.hpp"
+#include "io/Spice.hpp"
 
 namespace esim {
 
@@ -1365,6 +1366,21 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
                     card += line.get<std::string>() + "\n";
                 }
                 b.models[name] = parseSpiceModel(name, card);
+                continue;
+            }
+            if (!isModels && (m.is_string() || m.is_array())) {
+                // a subcircuit in SPICE, with the models and subcircuits it brings along
+                std::string text;
+                if (m.is_string()) text = m.get<std::string>();
+                for (const json& line : m.is_array() ? m : json::array()) {
+                    if (!line.is_string())
+                        throw std::runtime_error("subcircuits, \"" + name + "\": expected the lines of a .subckt");
+                    text += line.get<std::string>() + "\n";
+                }
+                SpiceDefinitions spice = parseSpiceSubcircuit(name, text);
+                for (const std::string& w : spice.warnings) warn() << w << '\n';
+                for (const auto& [model, card] : spice.models) b.models[model] = parseSpiceModel(model, card);
+                for (auto& [sub, def] : spice.subcircuits) b.subcircuits[sub] = std::move(def);
                 continue;
             }
             if (!m.is_object())
