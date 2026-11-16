@@ -5,6 +5,8 @@
 
 namespace esim {
 
+struct CircuitOptions;
+
 struct MosfetParams {
     double vto = 0.0;     // threshold voltage [V] (negative for enhancement pmos)
     double kp = 2e-5;     // transconductance parameter [A/V^2]
@@ -29,6 +31,20 @@ struct MosfetParams {
     bool ekv = false;     // charge-based model valid from weak to strong inversion
     double theta = 0.0;   // ekv: mobility reduction by the gate field [1/V]
     double ucrit = 0.0;   // ekv: critical field of velocity saturation [V/m]; 0: none
+    // level 3 (SPICE MOS3, semi-empirical short-channel model); theta acts as well
+    int level = 1;        // 1 or 3
+    double eta = 0.0;     // static feedback: drain-induced lowering of the threshold
+    double vmax = 0.0;    // maximum drift velocity of the carriers [m/s]; 0: none
+    double nfs = 0.0;     // fast surface state density [1/cm^2]; > 0: weak inversion current
+    double kappa = 0.2;   // saturation field factor (channel length modulation, with nsub)
+    double xj = 0.0;      // junction depth [m] (short channel effect, with nsub)
+    double ld = 0.0;      // lateral diffusion [m]: effective length l - 2 ld
+    double delta = 0.0;   // width effect on the threshold
+    double u0 = 600.0;    // surface mobility [cm^2/Vs]
+    double nsub = 0.0;    // substrate doping [1/cm^3]; 0: not given
+    double nss = 0.0;     // surface state density [1/cm^2] (threshold from nsub)
+    double tpg = 1.0;     // gate material (threshold from nsub)
+    bool kpGiven = true, vtoGiven = true, gammaGiven = true, phiGiven = true;
 };
 
 // MOSFET, SPICE level 1 (Shichman-Hodges) with body effect, channel length
@@ -60,6 +76,16 @@ struct MosfetParams {
 //     lambda  id (1 + lambda |vds|)                                  channel length modulation
 // The charges are those of the same model (they add up to zero), so the
 // capacitances are continuous through all regions as well.
+//
+// With "level": 3 the drain current follows SPICE MOS3 as in ngspice
+// (mos3load.c): threshold with body, short-channel (xj), narrow-width (delta)
+// and static feedback (eta) effects, mobility reduction (theta), velocity
+// saturation (vmax), channel length modulation (kappa, with nsub) and weak
+// inversion (nfs). Parameters given as in SPICE: u0 in cm^2/Vs, nsub in
+// 1/cm^3, nfs in 1/cm^2; kp follows from u0 and tox if missing, and tox is
+// 1e-7 m if missing. Temperature as ngspice (kp, u0, phi, built-in voltage).
+// The gate charge is the charge-conserving one of level 1 with the threshold
+// of level 3 (ngspice uses Meyer's capacitances instead).
 class Mosfet final : public Device {
 public:
     // polarity: +1 nmos, -1 pmos
@@ -82,6 +108,8 @@ private:
     void addChannelCharge(Local& m, int D, int S, double a, double vds, double daDvbs) const;
     void stampLevel1(StampContext& ctx, Local& m);
     void stampEkv(StampContext& ctx, Local& m);
+    void stampLevel3(StampContext& ctx, Local& m);
+    void setupLevel3(const CircuitOptions& o);
 
     int d_, g_, s_, b_;
     double pol_;
@@ -90,6 +118,11 @@ private:
     double cox_ = 0.0;   // gate oxide capacitance cox * W * L [F]
     double vt_ = 0.0;    // thermal voltage
     bool hasCharge_ = false;  // any capacitance at all
+    // level 3, after setup: effective size, oxide capacitance per area,
+    // and the parameters at the temperature of the circuit
+    double leff_ = 0.0, weff_ = 0.0, coxArea_ = 0.0;
+    double gamma3_ = 0.0, phi3_ = 0.0, vbi3_ = 0.0, u0t_ = 0.0;
+    double eta3_ = 0.0, alpha3_ = 0.0, depletion3_ = 0.0, narrow3_ = 0.0, csonco3_ = 0.0;
     PnJunction jbd_, jbs_;
 };
 

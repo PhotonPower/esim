@@ -123,8 +123,11 @@ if(ESIM_BUILD_TESTS)
                 BSIM3_CHARGES_BIN=$<TARGET_FILE:bsim3_charges> NGSPICE=${NGSPICE_EXECUTABLE}
                 ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/bsim3_ngspice.py)
     endif()
-    # SPICE subcircuits against ngspice, if it is installed.
+    # SPICE subcircuits and MOSFET level 3 against ngspice, if it is installed.
     if(NGSPICE_EXECUTABLE)
+      add_test(NAME mos3_ngspice
+        COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim> NGSPICE=${NGSPICE_EXECUTABLE}
+                ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/mos3_ngspice.py)
       add_test(NAME spice_subckt_ngspice
         COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim> NGSPICE=${NGSPICE_EXECUTABLE}
                 ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/spice_subckt_ngspice.py)

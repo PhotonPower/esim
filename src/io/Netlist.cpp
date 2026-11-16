@@ -645,17 +645,18 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
         }
         case 'm': {
             needNodes(3, 4, "[drain, gate, source] or [drain, gate, source, bulk]");
-            // "level": 1 (Shichman-Hodges, the default), "ekv", or "bsim3"
-            // (also the SPICE level numbers 8, 49 and 53 of BSIM3v3).
-            bool ekvLevel = false, bsim3Level = false;
+            // "level": 1 (Shichman-Hodges, the default), 3 (SPICE MOS3), "ekv",
+            // or "bsim3" (also the SPICE level numbers 8, 49 and 53 of BSIM3v3).
+            bool ekvLevel = false, bsim3Level = false, level3 = false;
             if (p.has("level")) {
                 const json& level = p.raw("level");
                 const std::string text = level.is_string() ? lower(level.get<std::string>()) : "";
                 const double number = level.is_number() ? level.get<double>() : 0.0;
                 if (text == "ekv") ekvLevel = true;
                 else if (text == "bsim3" || number == 8.0 || number == 49.0 || number == 53.0) bsim3Level = true;
+                else if (number == 3.0) level3 = true;
                 else if (number != 1.0)
-                    throw std::runtime_error(p.where() + ": \"level\" must be 1, \"ekv\" or \"bsim3\"");
+                    throw std::runtime_error(p.where() + ": \"level\" must be 1, 3, \"ekv\" or \"bsim3\"");
             }
             if (bsim3Level) {
                 // All numeric entries are parameters of the model or the instance.
@@ -693,8 +694,29 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
             m.theta = p.num("theta", m.theta);
             m.ucrit = p.num("ucrit", m.ucrit);
             m.ekv = ekvLevel;
-            if (!m.ekv && (m.theta != 0.0 || m.ucrit != 0.0))
-                warn() << p.where() << ": theta and ucrit only act with \"level\": \"ekv\"\n";
+            if (level3) {
+                m.level = 3;
+                m.kpGiven = p.has("kp");
+                m.vtoGiven = p.has("vto");
+                m.gammaGiven = p.has("gamma");
+                m.phiGiven = p.has("phi");
+                if (!p.has("tox")) m.tox = 1e-7;
+                m.eta = p.num("eta", m.eta);
+                m.vmax = p.num("vmax", m.vmax);
+                m.nfs = p.num("nfs", m.nfs);
+                m.kappa = p.num("kappa", m.kappa);
+                m.xj = p.num("xj", m.xj);
+                m.ld = p.num("ld", m.ld);
+                m.delta = p.num("delta", m.delta);
+                m.u0 = p.num("u0", m.u0);
+                m.nsub = p.num("nsub", m.nsub);
+                m.nss = p.num("nss", m.nss);
+                m.tpg = p.num("tpg", m.tpg);
+                if (m.lambda != 0.0) warn() << p.where() << ": lambda has no effect at level 3 (kappa does)\n";
+            }
+            if (!m.ekv && m.ucrit != 0.0) warn() << p.where() << ": ucrit only acts with \"level\": \"ekv\"\n";
+            if (!m.ekv && !level3 && m.theta != 0.0)
+                warn() << p.where() << ": theta only acts with \"level\": \"ekv\" or 3\n";
             const int pol = polarity(type, modelType, "nmos", "pmos", p.where());
             const int bulk = n.size() == 4 ? n[3] : n[2];
             ckt.add(std::make_unique<Mosfet>(name, n[0], n[1], n[2], bulk, pol, m));
@@ -1243,6 +1265,10 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
     static const std::set<std::string> mosKeys = {
         "vto", "kp", "gamma", "phi", "lambda", "cgso", "cgdo", "cgbo", "cbd", "cbs", "pb",
         "mj", "fc", "is", "tox", "tcv", "w", "l", "kf", "af", "theta", "ucrit"};
+    // only at level 3
+    static const std::set<std::string> mos3Keys = {"eta", "vmax", "nfs", "kappa", "xj", "ld", "delta",
+                                                   "u0", "nsub", "nss", "tpg"};
+    bool mos3 = false;
     const std::string type = lower(tok[2]);
     auto it = types.find(type);
     if (it == types.end())
@@ -1272,7 +1298,7 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
         if (tok[k + 2].rfind("{#", 0) == 0) {
             // an expression: evaluated where the model is used
             const size_t e = std::stoul(tok[k + 2].substr(2));
-            if (!bsim3 && !keys.count(key)) {
+            if (!bsim3 && !keys.count(key) && !((type == "nmos" || type == "pmos") && mos3Keys.count(key))) {
                 ignored += (ignored.empty() ? "" : ", ") + key;
                 continue;
             }
@@ -1285,12 +1311,17 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
             continue;
         }
         if (key == "level") {
-            if (value != 1.0)
+            if (value == 3.0 && (type == "nmos" || type == "pmos")) {
+                out["level"] = 3;
+                mos3 = true;
+            } else if (value != 1.0) {
                 warn() << where << ": level " << value
                        << " requested, the level 1 equations are used\n";
+            }
             continue;
         }
-        if (!keys.count(key)) {
+        if (key == "uo") key = "u0";
+        if (!keys.count(key) && !((type == "nmos" || type == "pmos") && mos3Keys.count(key))) {
             ignored += (ignored.empty() ? "" : ", ") + key;
             continue;
         }
@@ -1299,6 +1330,12 @@ json parseSpiceModel(const std::string& name, const std::string& text) {
             continue;
         out[key] = value;
     }
+    if (!mos3)  // parameters of level 3 in a card of another level
+        for (const std::string& k : mos3Keys)
+            if (out.contains(k)) {
+                out.erase(k);
+                ignored += (ignored.empty() ? "" : ", ") + k;
+            }
     if (!ignored.empty())
         warn() << where << ": SPICE parameters without effect here: " << ignored << '\n';
     return out;

@@ -69,6 +69,7 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
     };
     QVector<Block> blocks;  // models and subcircuits at the top level, in order
     QStringList comment;    // the comment block right above the current line
+    QStringList header;     // the first comment block of the file
     int depth = 0;          // inside a .subckt
     Block current;
     QString currentComment;
@@ -101,9 +102,11 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
             continue;
         }
         if (t.isEmpty()) {
+            if (header.isEmpty()) header = comment;
             comment.clear();
             continue;
         }
+        if (header.isEmpty()) header = comment;
         if (lower.startsWith(".subckt")) {
             // ".subckt NAME port ... [PARAMS: a=1 ...]"
             QString head = t;
@@ -185,6 +188,12 @@ QVector<LibraryModel> parseSpiceLibrary(const QString& text, const QString& sour
     out.erase(std::remove_if(out.begin(), out.end(),
                              [&](const LibraryModel& m) { return m.type == "subckt" && helpers.contains(m.name.toLower()); }),
               out.end());
+    // a file with a single subcircuit: the head of the file describes it
+    int subckts = 0;
+    for (const LibraryModel& m : out) subckts += m.type == "subckt";
+    if (subckts == 1)
+        for (LibraryModel& m : out)
+            if (m.type == "subckt" && m.description.isEmpty()) m.description = header.join('\n');
     return out;
 }
 

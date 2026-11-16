@@ -595,7 +595,7 @@ Schlüssel von Bauteilen und Modellen sind unabhängig von Groß-/Kleinschreibun
 | `ideal_diode` | ideale Diode | Anode, Kathode | `vf`, `ron`, `roff` |
 | `D`, `diode` | Diode | Anode, Kathode | `is` `n` `rs` `cj0` `vj` `m` `fc` `tt` `bv` `ibv` `eg` `xti` `kf` `af` |
 | `Q`, `npn`, `pnp` | Bipolartransistor | C, B, E | `is` `bf` `br` `nf` `nr` `vaf` `var` `ikf` `ikr` `ise` `ne` `isc` `nc` `rb` `rc` `re` `cje` `vje` `mje` `cjc` `vjc` `mjc` `tf` `tr` `fc` `eg` `xti` `xtb` `kf` `af` |
-| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` `kf` `af`; mit `"level": "ekv"` zusätzlich `theta` `ucrit`; mit `"level": "bsim3"` die Parameter von BSIM3v3 und `w` `l` `ad` `as` `pd` `ps` `m` |
+| `M`, `nmos`, `pmos` | MOSFET | D, G, S [, Bulk] | `vto` `kp` `gamma` `phi` `lambda` `w` `l` `tox` `cgso` `cgdo` `cgbo` `cbd` `cbs` `pb` `mj` `fc` `is` `tcv` `kf` `af`; mit `"level": "ekv"` zusätzlich `theta` `ucrit`; mit `"level": 3` zusätzlich `theta` `eta` `vmax` `nfs` `kappa` `xj` `ld` `delta` `u0` `nsub` `nss` `tpg`; mit `"level": "bsim3"` die Parameter von BSIM3v3 und `w` `l` `ad` `as` `pd` `ps` `m` |
 
 Verhaltensquelle `B`:
 
@@ -683,6 +683,20 @@ Modellumfang:
   es nicht. Wo Level 1 unterhalb der Schwelle exakt 0 liefert (Leckströme,
   Schaltungen im Unterschwellbetrieb, Analogschalter nahe 0 V), ist es die
   bessere Wahl; `examples/mosfet_subthreshold.json` vergleicht beide.
+- **MOSFET mit `"level": 3`** (SPICE MOS3): das halbempirische
+  Kurzkanalmodell, das viele Herstellermodelle von MOSFETs benutzen (z. B.
+  die von Transim erzeugten Leistungs-MOSFETs). Schwellspannung mit
+  Substrat-, Kurzkanal- (`xj`, `ld`, mit `nsub`) und Schmalkanaleffekt
+  (`delta`) und statischer Rückwirkung (`eta`), Beweglichkeit mit
+  Gate-Feld (`theta`), Geschwindigkeitssättigung (`vmax`),
+  Kanallängenmodulation (`kappa`, mit `nsub`) und Strom unterhalb der
+  Schwelle (`nfs`). Einheiten wie in SPICE (`u0` in cm²/Vs, `nsub` in 1/cm³,
+  `nfs` in 1/cm²); ohne `kp` folgt es aus `u0` und `tox`, ohne `tox` gilt
+  1e-7 m; aus `nsub` folgen fehlende `gamma`, `phi` und `vto`.
+  Temperaturgang wie ngspice. Der Drainstrom stimmt mit ngspice (MOS3) auf
+  besser als 1e-9 überein (`tests/mos3_ngspice.py`); die Gate-Ladung ist
+  die ladungserhaltende von Level 1 mit der Schwellspannung von Level 3
+  (ngspice: Kapazitäten nach Meyer), was Schaltflanken leicht verändert.
 - **MOSFET mit `"level": "bsim3"`** (SPICE-Level 8, 49 und 53): der
   Drainstrom nach BSIM3v3.3, dem Kurzkanalmodell, für das Halbleiterhersteller
   Parametersätze veröffentlichen. Umgesetzt sind Schwellspannung mit Kurz- und
@@ -822,6 +836,8 @@ Liste von Zeilen.
   `"noise": false`); Schalter mit `VSWITCH(RON ROFF VON VOFF)` mit dem
   stetigen Übergang von PSpice zwischen VOFF und VON (als Verhaltensquelle);
   Schalter mit `SW(VT VH)` werden esims Schalter mit Hysterese.
+- Erprobt mit dem MOSFET PMZB950UPEL von Nexperia (Level 3): Kennlinien
+  wie ngspice auf 6 Stellen, Schaltflanke auf 17 mV bei 5 V Hub.
 - Erprobt mit dem Makromodell des LM358/LM2904 von TI (PSpice, 18
   Teilschaltungen, 227 Bauteile): DC-Kennlinie und Sprungantwort stimmen
   mit ngspice im PSpice-Modus überein (DC auf 7 Stellen, Zeitverlauf auf

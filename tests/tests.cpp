@@ -3052,6 +3052,22 @@ void testSpiceSubcircuits() {
     checkTrue(quiet.subcircuits.at("s")["components"][0].value("noise", true) == false,
               "T_ABS at absolute zero: a resistor without noise");
 
+    // MOSFET level 3 from a SPICE card; its parameters in a level 1 card have no effect
+    const auto drain = [](const std::string& card) {
+        Netlist n = parseNetlistText(R"json({"models": {"m": ")json" + card + R"json("},
+            "components": [{"type": "V", "name": "VD", "nodes": ["d", "0"], "dc": 3},
+                           {"type": "V", "name": "VG", "nodes": ["g", "0"], "dc": 3},
+                           {"type": "M", "name": "M1", "nodes": ["d", "g", "0"], "model": "m", "w": "10u", "l": "1u"}]})json");
+        const Vector y = solveOperatingPoint(*n.circuit, n.options);
+        return -probe(*n.circuit, y, "i(VD)");
+    };
+    const double l1 = drain(".model m nmos(vto=0.7 kp=1e-4)");
+    const double l3 = drain(".model m nmos(level=3 vto=0.7 kp=1e-4 vmax=1e5 tox=2e-8)");
+    const double ignored = drain(".model m nmos(vto=0.7 kp=1e-4 vmax=1e5)");
+    checkNear(l1, 0.5 * 1e-4 * 10 * 2.3 * 2.3, 1e-10, "level 1 saturation current (plus gmin)");
+    checkTrue(l3 < 0.8 * l1, "level 3: velocity saturation lowers the current");
+    checkNear(ignored, l1, 1e-15, "vmax in a level 1 card has no effect");
+
     // what cannot be read says where
     const auto error = [](const std::string& text) {
         try {
