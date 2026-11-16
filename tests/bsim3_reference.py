@@ -522,7 +522,9 @@ def _cap123(p, vds, b):
     field = (vgt + (extra if extra >= 0.0 else 1e-20)) / (2e8 * p.tox)
     cinv = with_centroid(1.9e-9 / (1.0 + field ** 0.7))
 
-    vg = vgt - dphi
+    # vgt - dphi, kept positive (smooth maximum with 0)
+    t = vgt - dphi - 0.001
+    vg = 0.5 * (t + math.sqrt(t * t + 0.004 * vgt))
     vdse = _smooth_min(vg / a, vds, 0.02)
     ad = a * vdse
     d12 = 12.0 * (vg - 0.5 * ad + 1e-20)

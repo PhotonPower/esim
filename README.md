@@ -648,8 +648,11 @@ Modellumfang:
   p-Kanal, −40 bis 125 °C, alle Zweige des Modells) mit je 720 Arbeitspunkten,
   Übereinstimmung auf 5·10⁻⁹; bei den Klemmenladungen 25 Parametersätze (alle
   `capmod` und `xpart`, Überlapp, Vertauschung von Drain und Source) mit je 630
-  Arbeitspunkten, Übereinstimmung auf 10⁻⁸. Ein Vergleich mit einem anderen
-  Simulator (ngspice) steht aus.
+  Arbeitspunkten, Übereinstimmung auf 10⁻⁸. Mit denselben Fällen vergleicht
+  `tests/bsim3_ngspice.py` gegen BSIM3v3.3 in ngspice (Level 8, Version
+  3.3.0): Drainstrom und Klemmenladungen stimmen auf 10⁻⁹ überein. Der Test
+  läuft mit `ctest`, wenn ngspice installiert ist; die Sperrschichtladungen
+  vergleicht er nicht.
 
   Sperrschichtkapazitäten (`cj`, `cjsw`, `cjswg` mit `ad`, `as`, `pd`, `ps`)
   sind enthalten. Es fehlen die BSIM3-Rauschmodelle (es gelten die Formeln von

@@ -742,7 +742,9 @@ Bsim3::Charges Bsim3::intrinsicCharges(const Dual& Vds, const Dual& Vbs, const B
     const Dual TcenInv = 1.9e-9 / (1.0 + exp(0.7 * log(field)));
     const Dual CoxWLcen = oxideWithCentroid(TcenInv);
 
-    const Dual Vg = Vgsteff - DeltaPhi;
+    // Gate drive less DeltaPhi, kept positive (smooth maximum with 0).
+    const Dual VgDP0 = Vgsteff - DeltaPhi - 0.001;
+    const Dual Vg = 0.5 * (VgDP0 + sqrt(VgDP0 * VgDP0 + 0.004 * Vgsteff));
     const Dual VdseffCV = smoothDrain(Vg / AbulkCV);
     const Dual A0 = AbulkCV * VdseffCV;
     const Dual T2 = 12.0 * (Vg - 0.5 * A0 + 1.0e-20);

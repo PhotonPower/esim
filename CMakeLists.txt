@@ -113,6 +113,14 @@ if(ESIM_BUILD_TESTS)
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
               BSIM3_CHARGES_BIN=$<TARGET_FILE:bsim3_charges>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test_bsim3.py)
+    # BSIM3 against ngspice, if it is installed.
+    find_program(NGSPICE_EXECUTABLE ngspice)
+    if(NGSPICE_EXECUTABLE)
+      add_test(NAME bsim3_ngspice
+        COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
+                BSIM3_CHARGES_BIN=$<TARGET_FILE:bsim3_charges> NGSPICE=${NGSPICE_EXECUTABLE}
+                ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/bsim3_ngspice.py)
+    endif()
     add_test(NAME spice_import
       COMMAND ${CMAKE_COMMAND} -E env ESIM_BIN=$<TARGET_FILE:esim>
               ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/test_spice2json.py)
