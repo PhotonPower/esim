@@ -32,8 +32,12 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName("ESIM Editor");
     QApplication::setApplicationVersion("0.1.0");
     // The interface is German; Qt's own texts (Cancel, Save, ...) as well.
+    // qt_de is Qt's catalog of all modules (windeployqt ships only this one,
+    // merged); qtbase_de remains the fallback.
     QTranslator qtTexts;
-    if (qtTexts.load(QStringLiteral("qtbase_de"), QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
+    const QString translations = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
+    if (qtTexts.load(QStringLiteral("qt_de"), translations)
+        || qtTexts.load(QStringLiteral("qtbase_de"), translations))
         QApplication::installTranslator(&qtTexts);
 
     MainWindow window;

@@ -64,6 +64,18 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/examples/ DESTINATION ${EXAMPLES_DIR}
         FILES_MATCHING PATTERN "*.json" PATTERN "*.csv" PATTERN "*.cir")
 install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION .)
 qt_generate_deploy_app_script(TARGET esim-editor OUTPUT_SCRIPT deploy_editor NO_UNSUPPORTED_PLATFORM_ERROR)
+# Qt's deploy script needs an absolute prefix (--prefix dist is relative).
+# On Windows the Qt libraries and plugins go next to the editor, not into
+# bin\ and plugins\.
+install(CODE [[
+  get_filename_component(QT_DEPLOY_PREFIX "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
+]])
+if(WIN32)
+  install(CODE [[
+    set(QT_DEPLOY_BIN_DIR ".")
+    set(QT_DEPLOY_PLUGINS_DIR ".")
+  ]])
+endif()
 install(SCRIPT ${deploy_editor})
 
 # Tests of the parts without a window (check of the input, curves).
