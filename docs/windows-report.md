@@ -1,6 +1,6 @@
 # Bericht: esim unter Windows 11
 
-Stand 2026-11-16, Zweig `windows`. Auftrag: `docs/windows-agent.md`.
+Stand 2026-11-16, Zweig `windows-build`. Auftrag: `docs/windows-agent.md`.
 
 ## Zusammenfassung
 
@@ -30,8 +30,8 @@ der Auslieferung.
 
 | Commit | Fehler | Korrektur |
 | --- | --- | --- |
-| `b4869d3` | `cmake --install … --prefix dist` brach ab: Qts Deploy-Skript verlangt ein absolutes Präfix. Außerdem hätte es die Qt-DLLs nach `bin\` und die Plugins nach `plugins\` gelegt. | `editor/CMakeLists.txt`: Präfix wird absolut gemacht; unter Windows landen DLLs und `platforms\` neben `esim-editor.exe`. |
-| `b4869d3` | Qt-Dialoge im ausgelieferten Ordner wären englisch gewesen: windeployqt liefert nur `qt_de.qm`, nicht `qtbase_de.qm`. | `editor/main.cpp` lädt zuerst `qt_de`, sonst wie bisher `qtbase_de`. Auf macOS nicht geprüft. |
+| `432edaf` | `cmake --install … --prefix dist` brach ab: Qts Deploy-Skript verlangt ein absolutes Präfix. Außerdem hätte es die Qt-DLLs nach `bin\` und die Plugins nach `plugins\` gelegt. | `editor/CMakeLists.txt`: Präfix wird absolut gemacht; unter Windows landen DLLs und `platforms\` neben `esim-editor.exe`. |
+| `432edaf` | Qt-Dialoge im ausgelieferten Ordner wären englisch gewesen: windeployqt liefert nur `qt_de.qm`, nicht `qtbase_de.qm`. | `editor/main.cpp` lädt zuerst `qt_de`, sonst wie bisher `qtbase_de`. Auf macOS nicht geprüft. |
 | – | Mit CMake 3.25 fand der Build Visual Studio 2026 nicht. | `docs/windows-agent.md`: VS 2026 braucht CMake ≥ 4.2, sonst das mit Visual Studio gelieferte. |
 
 Das UTF-8-Manifest ist korrekt eingebettet (`activeCodePage` = UTF-8), ohne
@@ -69,6 +69,14 @@ Punkte 1 und 2 sind mit `dist\esim-editor.exe` ohne Qt im PATH geprüft, über
 ## Offen
 
 - Prüfliste Punkte 3–7 von Hand durchgehen; bei Fehlern Bildschirmfotos.
-- Auf dem Mac prüfen, ob die Qt-Dialoge mit `qt_de` weiter deutsch sind.
+- ~~Auf dem Mac prüfen, ob die Qt-Dialoge mit `qt_de` weiter deutsch sind.~~
+  Geprüft: `qt_de` lädt auch mit Homebrews Qt die deutschen Texte; ein Test
+  in `editor_tests` hält das fest.
 - ngspice installieren, damit die drei Vergleichstests laufen.
-- `dist/` in `.gitignore` aufnehmen.
+- ~~`dist/` in `.gitignore` aufnehmen.~~ Erledigt.
+
+## Auf dem Mac nachgeprüft
+
+Die Korrekturen laufen auch auf macOS: alle 9 Testgruppen bestehen,
+`cmake --install` geht mit relativem `--prefix`. Auf GitHub Actions bauen
+und testen Windows (Visual Studio des Abbilds, Qt 6.8.3) und macOS ebenso.

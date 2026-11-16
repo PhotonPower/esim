@@ -1,6 +1,7 @@
 # build output and editor caches
 /build/
 /build-*/
+/dist/
 /.cache/
 /compile_commands.json
 .DS_Store

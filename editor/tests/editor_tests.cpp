@@ -3,6 +3,8 @@
 // the right line) and the preparation of curves from CSV files.
 
 #include <QCoreApplication>
+#include <QLibraryInfo>
+#include <QTranslator>
 #include <QRegularExpression>
 #include <QDir>
 #include <QFile>
@@ -658,6 +660,19 @@ void testExtraction() {
     check(extractSubcircuit(e.text, top, sel, "teil1").text.isEmpty(), "the name is taken now");
 }
 
+// Qt's own texts in German, from the catalog the editor loads (qt_de, as
+// windeployqt ships it; qtbase_de as the fallback)
+void testTranslations() {
+    QTranslator t;
+    const QString dir = QLibraryInfo::path(QLibraryInfo::TranslationsPath);
+    if (!t.load(QStringLiteral("qt_de"), dir) && !t.load(QStringLiteral("qtbase_de"), dir)) {
+        std::printf("  (no German Qt translations installed: skipped)\n");
+        return;
+    }
+    check(t.translate("QPlatformTheme", "Cancel") == QString::fromUtf8("Abbrechen"),
+          "Qt's button texts in German: " + t.translate("QPlatformTheme", "Cancel"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -685,6 +700,8 @@ int main(int argc, char** argv) {
     testSpiceLibrary();
     std::printf("[test] selection into a subcircuit\n");
     testExtraction();
+    std::printf("[test] Qt's texts in German\n");
+    testTranslations();
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

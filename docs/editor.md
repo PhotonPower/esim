@@ -165,7 +165,9 @@ schreibt die Knoten des Plans.
 
 ## Nächste Schritte
 
-**Schritt 4: Windows 11** – vorbereitet, auf Windows noch nicht gebaut:
+**Schritt 4: Windows 11** – gebaut und getestet (Bericht:
+[`docs/windows-report.md`](windows-report.md)); offen ist die Bedienung von
+Hand (Prüfliste Punkte 3–7) und ein Installer:
 - MSVC: `/utf-8` (Quelltexte mit „Ω“, „„“ …), `/bigobj`, `/permissive-`,
   `NOMINMAX`; kein `M_PI`, keine POSIX-Funktionen; Warte-Befehl des
   Thread-Pools auch für MSVC (`_mm_pause`, `__yield`).
@@ -176,9 +178,9 @@ schreibt die Knoten des Plans.
   echten Kürzeln, Touchpads, die nur Winkel melden.
 - Auslieferung: `cmake --install` mit `windeployqt`/`macdeployqt`; Tests
   finden die Qt-DLLs über den PATH; ngspice als `ngspice_con`.
-- Geprüft: Build mit GCC/libstdc++ (dritte Standardbibliothek) ohne
-  Warnungen, alle Tests; Bundle auf macOS. Offen: echter MSVC-Build, Bedienung
-  unter Windows, später ein Installer.
+- Geprüft: MSVC 19.50 (Visual Studio 2026) ohne Warnungen, alle Tests,
+  eigenständiger Programmordner, Umlaute in Pfaden; außerdem GCC/libstdc++.
+  `windeployqt` liefert die deutschen Qt-Texte als `qt_de`.
 
 ## Offene Punkte
 
