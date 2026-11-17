@@ -31,16 +31,24 @@ Ordner mit `ngspice_con.exe` in den PATH nehmen.
 
 ## 2. Code holen
 
-Das Repository ist privat auf GitHub: https://github.com/PhotonPower/esim.
-Einmal bei GitHub anmelden (der Git Credential Manager kommt mit Git für
-Windows; alternativ `winget install --id GitHub.cli -e` und `gh auth login`),
-dann:
+Das Repository ist öffentlich auf GitHub: https://github.com/PhotonPower/esim.
+Klonen geht ohne Anmeldung:
 
     git clone https://github.com/PhotonPower/esim.git
     cd esim
+    git config user.name PhotonPower
+    git config user.email 123090967+PhotonPower@users.noreply.github.com
     git checkout -b windows
 
-Gearbeitet wird auf dem Zweig `windows`, nicht auf `main`.
+Die beiden `git config`-Zeilen gelten nur für diesen Klon und sind Pflicht:
+Commits tragen keine persönlichen Namen oder Adressen, nur die
+noreply-Adresse des GitHub-Kontos. Vor dem Hochladen mit
+`git log --format='%an <%ae>' main..windows` prüfen.
+
+Gearbeitet wird auf dem Zweig `windows`, nicht auf `main`. Nur zum
+Hochladen (Abschnitt 6) braucht es eine Anmeldung bei GitHub mit
+Schreibrecht: Der Git Credential Manager kommt mit Git für Windows;
+alternativ `winget install --id GitHub.cli -e` und `gh auth login`.
 
 Ohne Zugang zu GitHub geht es auch mit einem Git-Bundle vom Mac:
 `git clone esim.bundle esim`.
