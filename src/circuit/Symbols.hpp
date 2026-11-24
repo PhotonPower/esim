@@ -39,11 +39,25 @@ public:
         return it == ckt_.tables.end() ? nullptr : it->second;
     }
 
+    std::shared_ptr<const expr::Table2> table2(const std::string& name) const override {
+        auto it = ckt_.tables2.find(name);
+        return it == ckt_.tables2.end() ? nullptr : it->second;
+    }
+
     int nodeVoltage(const std::string& node) const override { return ckt_.findNode(node); }
 
     int branchCurrent(const std::string& component) const override {
         const Device* d = ckt_.findDevice(component);
-        if (!d) throw std::runtime_error("unknown component '" + component + "'");
+        if (!d) {
+            // i(device.sub): one of several branch currents of a device
+            const size_t dot = component.rfind('.');
+            if (dot != std::string::npos)
+                if (const Device* owner = ckt_.findDevice(component.substr(0, dot))) {
+                    const int idx = owner->branchOf(component.substr(dot + 1));
+                    if (idx >= 0) return idx;
+                }
+            throw std::runtime_error("unknown component '" + component + "'");
+        }
         if (d->branch() < 0)
             throw std::runtime_error("component '" + component +
                                      "' has no branch current (only voltage sources, "

@@ -1,6 +1,7 @@
 #include "io/Netlist.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -26,6 +27,7 @@
 #include "circuit/devices/TransmissionLine.hpp"
 #include "circuit/devices/Mosfet.hpp"
 #include "circuit/devices/Passive.hpp"
+#include "circuit/devices/Plugin.hpp"
 #include "circuit/devices/Sources.hpp"
 #include "circuit/devices/Switching.hpp"
 #include "expr/Expression.hpp"
@@ -211,6 +213,7 @@ char componentKind(const std::string& type) {
         {"k", 'k'}, {"coupling", 'k'},
         {"t", 't'}, {"tline", 't'},
         {"x", 'x'}, {"subcircuit", 'x'},
+        {"plugin", 'p'},
     };
     auto it = kinds.find(type);
     return it == kinds.end() ? 0 : it->second;
@@ -257,7 +260,26 @@ struct Builder {
     std::vector<EquationSpec> equations;
     std::vector<WhenSpec> whens;
     std::vector<std::string> instancePrefixes;
+    std::map<std::string, json> plugins;  // "plugins": name -> {"library", "config"}
+    std::string baseDir;
 };
+
+// Strings in a plugin's configuration that are numbers or constant
+// expressions of the netlist parameters ("4.7k", "2*R0") become numbers; all
+// other strings (file names, ...) stay as they are.
+json resolveConfig(const json& j, const ParamMap& parameters) {
+    if (j.is_string()) {
+        try {
+            return jsonNumber(j, "", &parameters);
+        } catch (const std::exception&) {
+            return j;
+        }
+    }
+    json out = j;
+    if (j.is_object() || j.is_array())
+        for (auto& v : out) v = resolveConfig(v, parameters);
+    return out;
+}
 
 std::string scopedNode(const Scope& scope, const std::string& name) {
     if (Circuit::isGroundName(name)) return name;  // ground is global
@@ -291,6 +313,7 @@ expr::AstPtr scopedExpression(const Scope& scope, const std::string& text) {
 }
 
 ParamMap resolveParameters(const json& j, ParamMap known, const std::string& what);
+bool isIdentifier(const std::string& s);
 void declareVariables(Scope& scope, const json& def);
 void addEquations(Builder& b, Scope& scope, const json& def, const std::string& what);
 void instantiate(Builder& b, const Scope& scope, const std::string& name, Params& p,
@@ -580,6 +603,82 @@ void addComponent(Builder& b, const Scope& scope, const json& spec, int index) {
                     shunt(b2, gpart, tag);
                 }
                 left = b2;
+            }
+            break;
+        }
+        case 'p': {
+            // A device whose equations come from a plugin library, see plugin/esim_plugin.h.
+            std::string library;
+            json config = json::object();
+            if (p.has("plugin")) {
+                const std::string key = p.str("plugin");
+                auto it = b.plugins.find(key);
+                if (it == b.plugins.end())
+                    throw std::runtime_error(p.where() + ": plugin \"" + key +
+                                             "\" is not defined in \"plugins\"");
+                library = it->second.at("library").get<std::string>();
+                if (it->second.contains("config")) config = it->second["config"];
+            } else {
+                library = p.str("library");
+            }
+            if (p.has("config")) {
+                const json& own = p.raw("config");
+                if (!own.is_object()) throw std::runtime_error(p.where() + ": \"config\" must be an object");
+                for (const auto& [k, v] : own.items()) config[k] = v;
+            }
+            config = resolveConfig(config, scope.params);
+
+            std::map<std::string, expr::AstPtr> inputs;
+            if (p.has("inputs")) {
+                const json& in = p.raw("inputs");
+                if (!in.is_object()) throw std::runtime_error(p.where() + ": \"inputs\" must be an object");
+                for (const auto& [key, e] : in.items()) {
+                    if (!e.is_string() && !e.is_number())
+                        throw std::runtime_error(p.where() + ", input \"" + key + "\": expected an expression");
+                    try {
+                        inputs[key] = scopedExpression(scope, e.is_string() ? e.get<std::string>() : e.dump());
+                    } catch (const std::runtime_error& err) {
+                        throw std::runtime_error(p.where() + ", input \"" + key + "\": " + err.what());
+                    }
+                }
+            }
+            std::map<std::string, std::string> outputs;
+            if (p.has("outputs")) {
+                const json& out = p.raw("outputs");
+                if (!out.is_object()) throw std::runtime_error(p.where() + ": \"outputs\" must be an object");
+                for (const auto& [key, v] : out.items()) {
+                    if (!v.is_string() || !isIdentifier(v.get<std::string>()))
+                        throw std::runtime_error(p.where() + ", output \"" + key +
+                                                 "\": expected the name of a variable");
+                    outputs[key] = scope.prefix + v.get<std::string>();
+                }
+            }
+            // "snapshots": true  - the plugin writes its state at the end of an operating
+            // point and of a transient; {"times": [...]} - and at these times of a transient
+            bool snapshots = false;
+            std::vector<double> snapshotTimes;
+            if (p.has("snapshots")) {
+                const json& sn = p.raw("snapshots");
+                if (sn.is_boolean()) {
+                    snapshots = sn.get<bool>();
+                } else if (sn.is_object()) {
+                    snapshots = true;
+                    for (const auto& [key, v] : sn.items()) {
+                        if (key != "times" || !v.is_array())
+                            throw std::runtime_error(p.where() + ", \"snapshots\": expected true or {\"times\": [...]}");
+                        for (const json& t : v) snapshotTimes.push_back(jsonNumber(t, p.where() + ", snapshot time", &scope.params));
+                    }
+                } else {
+                    throw std::runtime_error(p.where() + ": \"snapshots\" must be true or {\"times\": [...]}");
+                }
+            }
+            std::shared_ptr<PluginLibrary> lib;
+            try {
+                lib = PluginLibrary::load(library, b.baseDir);
+                ckt.add(std::make_unique<PluginDevice>(name, lib, config.dump(), b.baseDir, n, inputs,
+                                                       outputs, snapshots, snapshotTimes));
+            } catch (const std::runtime_error& err) {
+                throw std::runtime_error(p.where() + ": " + err.what());
             }
             break;
         }
@@ -1018,6 +1117,103 @@ std::shared_ptr<const expr::Table> parseTable(const std::string& name, const jso
     }
 }
 
+// A table over a grid, used as name(x, y):
+//   "psi": {"x": [...], "y": [...], "z": [[...], ...]}      z[i][j] at (x[i], y[j])
+//   "psi": {"file": "map.csv", "xcol": 0, "ycol": 1, "zcol": 2}   one point per line
+// The lines of a file may come in any order but have to cover the whole grid.
+std::shared_ptr<const expr::Table2> parseTable2(const std::string& name, const json& j,
+                                                const ParamMap& parameters,
+                                                const std::string& baseDir) {
+    const std::string where = "table \"" + name + "\"";
+    if (!isIdentifier(name))
+        throw std::runtime_error(where + ": names consist of letters, digits and _");
+    Params p(j, where, &parameters);
+    std::vector<double> x, y, z;
+    if (p.has("file") == p.has("x"))
+        throw std::runtime_error(where + ": give the data as \"x\", \"y\" and \"z\", or as \"file\"");
+    if (p.has("x")) {
+        const json& xs = p.raw("x");
+        const json& ys = p.raw("y");
+        const json& zs = p.raw("z");
+        if (!xs.is_array() || !ys.is_array() || !zs.is_array())
+            throw std::runtime_error(where + ": \"x\", \"y\" and \"z\" must be arrays");
+        for (const json& v : xs) x.push_back(jsonNumber(v, where + ", \"x\"", &parameters));
+        for (const json& v : ys) y.push_back(jsonNumber(v, where + ", \"y\"", &parameters));
+        if (zs.size() != xs.size())
+            throw std::runtime_error(where + ": \"z\" needs one row per x value (" +
+                                     std::to_string(xs.size()) + ")");
+        for (const json& row : zs) {
+            if (!row.is_array() || row.size() != ys.size())
+                throw std::runtime_error(where + ": each row of \"z\" needs one value per y value (" +
+                                         std::to_string(ys.size()) + ")");
+            for (const json& v : row) z.push_back(jsonNumber(v, where + ", \"z\"", &parameters));
+        }
+    } else {
+        const std::string file = p.str("file");
+        const int xcol = static_cast<int>(p.num("xcol", 0)), ycol = static_cast<int>(p.num("ycol", 1)),
+                  zcol = static_cast<int>(p.num("zcol", 2));
+        std::filesystem::path path(file);
+        if (path.is_relative() && !baseDir.empty()) path = std::filesystem::path(baseDir) / path;
+        std::ifstream in(path);
+        if (!in) throw std::runtime_error(where + ": cannot open '" + path.string() + "'");
+        std::vector<std::array<double, 3>> points;
+        for (std::string line; std::getline(in, line);) {
+            for (char& ch : line)
+                if (ch == ',' || ch == ';' || ch == '\t') ch = ' ';
+            std::istringstream fields(line);
+            std::vector<double> row;
+            for (std::string field; fields >> field;) {
+                char* end = nullptr;
+                const double v = parseDouble(field.c_str(), &end);
+                if (end == field.c_str() || *end != '\0') break;
+                row.push_back(v);
+            }
+            if (static_cast<int>(row.size()) <= std::max({xcol, ycol, zcol})) continue;
+            points.push_back({row[xcol], row[ycol], row[zcol]});
+        }
+        for (const auto& pt : points) {
+            x.push_back(pt[0]);
+            y.push_back(pt[1]);
+        }
+        for (std::vector<double>* axis : {&x, &y}) {
+            std::sort(axis->begin(), axis->end());
+            axis->erase(std::unique(axis->begin(), axis->end()), axis->end());
+        }
+        z.assign(x.size() * y.size(), std::numeric_limits<double>::quiet_NaN());
+        for (const auto& pt : points) {
+            const size_t i = static_cast<size_t>(std::lower_bound(x.begin(), x.end(), pt[0]) - x.begin());
+            const size_t k = static_cast<size_t>(std::lower_bound(y.begin(), y.end(), pt[1]) - y.begin());
+            double& cell = z[i * y.size() + k];
+            if (!std::isnan(cell))
+                throw std::runtime_error(where + ": the point (" + std::to_string(pt[0]) + ", " +
+                                         std::to_string(pt[1]) + ") appears twice");
+            cell = pt[2];
+        }
+        for (size_t i = 0; i < x.size(); ++i)
+            for (size_t k = 0; k < y.size(); ++k)
+                if (std::isnan(z[i * y.size() + k]))
+                    throw std::runtime_error(where + ": the grid has no point at (" +
+                                             std::to_string(x[i]) + ", " + std::to_string(y[k]) +
+                                             "); " + std::to_string(x.size()) + " x " +
+                                             std::to_string(y.size()) + " values are required");
+    }
+    const std::string interp = lower(p.str("interp", "linear"));
+    const std::string extrap = lower(p.str("extrap", "hold"));
+    if (interp != "linear" && interp != "cubic")
+        throw std::runtime_error(where + ": \"interp\" must be \"linear\" or \"cubic\"");
+    if (extrap != "hold" && extrap != "linear")
+        throw std::runtime_error(where + ": \"extrap\" must be \"hold\" or \"linear\"");
+    p.warnUnused();
+    try {
+        return std::make_shared<expr::Table2>(
+            std::move(x), std::move(y), std::move(z),
+            interp == "cubic" ? expr::Table::Interp::Cubic : expr::Table::Interp::Linear,
+            extrap == "linear" ? expr::Table::Extrap::Linear : expr::Table::Extrap::Hold);
+    } catch (const std::runtime_error& e) {
+        throw std::runtime_error(where + ": " + e.what());
+    }
+}
+
 // Register the names of the variables of a scope. This has to happen before
 // any expression of that scope is translated.
 void declareVariables(Scope& scope, const json& def) {
@@ -1357,7 +1553,8 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
     static const std::set<std::string> known = {"title",      "options",   "models",    "components",
                                                 "analyses",   "outputs",   "nodeset",   "ic",
                                                 "parameters", "variables", "equations", "events",
-                                                "subcircuits", "tables", "functions", "schematic"};
+                                                "subcircuits", "tables", "functions", "schematic",
+                                                "plugins"};
     for (const auto& [k, v] : root.items())
         if (!known.count(k))
             warn() << "netlist: unknown top-level key \"" << k << "\" ignored\n";
@@ -1373,8 +1570,14 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
     if (root.contains("options")) parseOptions(root["options"], nl);
     if (root.contains("tables")) {
         if (!root["tables"].is_object()) throw std::runtime_error("tables: expected an object");
-        for (const auto& [name, t] : root["tables"].items())
-            ckt.tables[name] = parseTable(name, t, ckt.parameters, baseDir);
+        for (const auto& [name, t] : root["tables"].items()) {
+            // z (or zcol) makes it a table over a grid
+            bool grid = false;
+            if (t.is_object())
+                for (const auto& [key, v] : t.items()) grid = grid || lower(key) == "z" || lower(key) == "zcol";
+            if (grid) ckt.tables2[name] = parseTable2(name, t, ckt.parameters, baseDir);
+            else ckt.tables[name] = parseTable(name, t, ckt.parameters, baseDir);
+        }
     }
 
     // "functions": {"sat(x, lim)": "max(-lim, min(lim, x))"}
@@ -1410,7 +1613,17 @@ Netlist parseOnce(const json& root, bool warnings, const std::string& baseDir,
         }
     }
 
-    Builder b{ckt, {}, {}, {}, {}, {}, {}};
+    Builder b{ckt, {}, {}, {}, {}, {}, {}, {}, baseDir};
+    if (root.contains("plugins")) {
+        if (!root["plugins"].is_object()) throw std::runtime_error("plugins: expected an object");
+        for (const auto& [name, entry] : root["plugins"].items()) {
+            if (!entry.is_object() || !entry.contains("library") || !entry["library"].is_string())
+                throw std::runtime_error("plugins, \"" + name + "\": expected {\"library\": \"file\", \"config\": {...}}");
+            if (entry.contains("config") && !entry["config"].is_object())
+                throw std::runtime_error("plugins, \"" + name + "\": \"config\" must be an object");
+            b.plugins[name] = entry;
+        }
+    }
     for (const char* section : {"models", "subcircuits"}) {
         if (!root.contains(section)) continue;
         if (!root[section].is_object())
@@ -1539,7 +1752,7 @@ Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir
             const IndexAnalysis check = structuralIndex(ckt, Vector::Zero(ckt.size()));
             ckt.setTransientMode(false);
             if (check.analyzed && !check.singular && check.index <= 2) {
-                ckt.notes = notes;
+                ckt.notes.insert(ckt.notes.end(), notes.begin(), notes.end());
                 return second;
             }
             notes.assign(1, "automatic index reduction not possible: the differentiated system is "
@@ -1548,7 +1761,7 @@ Netlist parseNetlist(const json& root, bool warnings, const std::string& baseDir
             notes.assign(1, std::string("automatic index reduction not possible: ") + e.what());
         }
     }
-    nl.circuit->notes = notes;
+    nl.circuit->notes.insert(nl.circuit->notes.end(), notes.begin(), notes.end());
     return nl;
 }
 

@@ -52,6 +52,7 @@ public:
     std::map<std::string, double> ic;       // node voltages at t = 0 (transient with uic)
     std::map<std::string, double> parameters;  // named constants for expressions
     std::map<std::string, std::shared_ptr<const expr::Table>> tables;  // callable in expressions
+    std::map<std::string, std::shared_ptr<const expr::Table2>> tables2;  // name(x, y)
     std::map<std::string, expr::FunctionDef> functions;                // user-defined functions
     std::map<std::string, int> vectors;                                // vector variables: size
 
@@ -59,9 +60,13 @@ public:
     static bool isGroundName(const std::string& name);
     int node(const std::string& name);            // get or create
     int findNode(const std::string& name) const;  // throws if unknown
-    int addUnknown(const std::string& label, UnknownKind kind, bool internal);
+    // abstol <= 0: the default of the kind.
+    int addUnknown(const std::string& label, UnknownKind kind, bool internal, double abstol = -1.0);
     // Variable of a user-defined equation; abstol < 0 selects options.vartol.
-    int addVariable(const std::string& name, double abstol = -1.0);
+    // kind: Voltage and Current only change tolerance and the treatment in the
+    // search for an operating point; the unknown is addressed by its name.
+    int addVariable(const std::string& name, double abstol = -1.0,
+                    UnknownKind kind = UnknownKind::Variable);
     int findVariable(const std::string& name) const;  // -1 if there is none
     Device& add(std::unique_ptr<Device> dev);
     Device* findDevice(const std::string& name) const;
@@ -112,6 +117,8 @@ public:
     void setEquationText(int row, const std::string& text) { equationText_[row] = text; }
     std::string equationText(int row) const;
     bool hasUserEquations() const { return !equationText_.empty(); }
+    // Where devices write snapshots (set by the runner): files "<dir>/<stem>.<...>".
+    std::string snapshotDir, snapshotStem;
     std::vector<std::string> notes;  // remarks for the user about how the system was set up  // delays or transmission lines: the future depends on more than the state
     bool setSourceScale(double scale) override {
         srcScale_ = scale;

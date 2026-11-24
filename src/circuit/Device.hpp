@@ -147,6 +147,8 @@ public:
 
     // Index of the branch-current unknown, -1 if the device has none.
     virtual int branch() const { return -1; }
+    // Branch current of a device with several of them, addressed as i(device.sub).
+    virtual int branchOf(const std::string& /*sub*/) const { return -1; }
 
     virtual double nextBreakpoint(double /*t*/) const {
         return std::numeric_limits<double>::infinity();
@@ -181,6 +183,13 @@ public:
 
     // Forget what earlier analyses left behind (switch positions).
     virtual void reset() {}
+
+    // Devices with a state worth looking at beyond their terminals (fields over
+    // a grid) write it on request: at the end of an operating point and of a
+    // transient analysis. tag identifies analysis and component, see
+    // Circuit::snapshotDir.
+    virtual bool wantsSnapshot() const { return false; }
+    virtual void snapshot(double /*t*/, const Vector& /*x*/, const std::string& /*tag*/) {}
 
 private:
     std::string name_;

@@ -193,6 +193,32 @@ Argument aufgerufen:
     Standard) oder mit der Randsteigung fortgesetzt (\code{"linear"}).
 \end{description}
 
+\subsection*{Kennfelder über zwei Größen}
+
+Ein Kennfeld, etwa die Flussverkettung über Strom und Position aus einer
+Feldrechnung, wird mit \code{z} oder \code{zcol} angelegt und mit zwei
+Argumenten aufgerufen, \code{name(x, y)}:
+
+\begin{json}
+"tables": {
+  "psi": { "x": [0, 1, 2], "y": [0, 5e-3, 1e-2],
+           "z": [[0, 0, 0], [0.01, 0.006, 0.004], [0.018, 0.011, 0.007]],
+           "interp": "cubic" },
+  "map": { "file": "kennfeld.csv", "xcol": 0, "ycol": 1, "zcol": 2 }
+},
+"components": [
+  { "type": "B", "name": "L1", "nodes": ["a", "0"], "phi": "psi(i(L1), z)" }
+]
+\end{json}
+
+\code{z[i][j]} gehört zu \code{(x[i], y[j])}. Eine Datei enthält einen Punkt
+je Zeile in beliebiger Reihenfolge und muss das ganze Gitter abdecken.
+\code{x} und \code{y} müssen streng steigen. \code{"linear"} ist bilinear;
+\code{"cubic"} ist ein Tensorprodukt kubischer Hermite-Interpolanten mit
+stetiger Steigung und exakten Ableitungen für das Newton-Verfahren, aber
+(anders als bei der Kennlinie) nicht monoton. \code{extrap} gilt für beide
+Achsen.
+
 \section{Knoten}
 
 Knotennamen sind beliebige Zeichenketten oder ganze Zahlen. Masse heißt

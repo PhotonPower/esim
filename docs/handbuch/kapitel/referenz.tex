@@ -399,7 +399,9 @@ Genau einer der Auslöser \code{when}, \code{every}, \code{at}.
   \code{points} & – & Stützstellen als Liste von \code{[x, y]} \\
   \code{file} & – & Textdatei mit Spalten, relativ zur Eingabedatei \\
   \code{xcol}, \code{ycol} & 0, 1 & Spalten der Datei (ab 0) \\
-  \code{interp} & \code{"linear"} & oder \code{"cubic"} (monoton, PCHIP) \\
+  \code{z} & – & Kennfeld: \code{z[i][j]} bei \code{(x[i], y[j])}, Aufruf \code{name(x, y)} \\
+  \code{zcol} & – & Kennfeld aus Datei (ein Punkt je Zeile, ganzes Gitter), Spalte von $z$ \\
+  \code{interp} & \code{"linear"} & oder \code{"cubic"} (Kennlinie: monoton, PCHIP; Kennfeld: Hermite, nicht monoton) \\
   \code{extrap} & \code{"hold"} & oder \code{"linear"} \\
 \end{longtable}
 

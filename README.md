@@ -297,7 +297,7 @@ eine Zahl erwartet wird (dort nur mit Parametern).
 | Operatoren | `+ - * /`, Potenz `^` oder `**`, Vergleiche `< <= > >= == !=`, Logik `&& \|\| !` |
 | Funktionen | `sin cos tan asin acos atan atan2(y,x) sinh cosh tanh exp log ln log10 sqrt abs sign min max pow(a,b)` |
 | Fallunterscheidung | `if(bedingung, dann, sonst)` |
-| Tabellen | `name(x)` für eine unter `tables` definierte Kennlinie |
+| Tabellen | `name(x)` für eine unter `tables` definierte Kennlinie, `name(x, y)` für ein Kennfeld |
 | eigene Funktionen | `name(a, b)` für eine unter `functions` definierte Funktion |
 | Totzeit | `delay(x, td)`: der Wert, den `x` vor der Zeit `td` hatte |
 | Vektoren | `T[i]`: Element eines Vektors; `sum(i, von, bis, ausdruck)`: Summe |
@@ -374,6 +374,31 @@ und in Ausdrücken wie eine Funktion aufgerufen:
   bessere Wahl, weil das Newton-Verfahren dann eine stetige Ableitung sieht.
 - `extrap`: außerhalb der Daten wird der Randwert gehalten (`hold`, Standard)
   oder mit der Randsteigung fortgesetzt (`linear`).
+
+**Kennfelder über zwei Größen** (z. B. Flussverkettung über Strom und Position,
+aus einer Feldrechnung) werden mit `z` bzw. `zcol` angelegt und als `name(x, y)`
+aufgerufen:
+
+```jsonc
+"tables": {
+  "psi": { "x": [0, 1, 2], "y": [0, 5e-3, 1e-2],            // z[i][j] bei (x[i], y[j])
+           "z": [[0, 0, 0], [0.01, 0.006, 0.004], [0.018, 0.011, 0.007]], "interp": "cubic" },
+  "map": { "file": "kennfeld.csv", "xcol": 0, "ycol": 1, "zcol": 2, "interp": "cubic" }
+},
+"components": [
+  { "type": "B", "name": "L1", "nodes": ["a", "0"], "phi": "psi(i(L1), z)" }
+]
+```
+
+- Die Datei hat einen Punkt je Zeile (`x, y, z`) in beliebiger Reihenfolge, muss aber
+  das ganze Gitter abdecken; fehlende oder doppelte Punkte sind ein Fehler. Ohne `zcol`
+  (und ohne `z`) ist es eine Kennlinie mit einem Argument.
+- `x` und `y` müssen streng steigen. `linear` ist bilinear. `cubic` ist ein
+  Tensorprodukt kubischer Hermite-Interpolanten (Steigung aus drei Nachbarpunkten):
+  stetige Steigung, Ableitungen nach beiden Argumenten exakt (Newton), aber nicht
+  monoton wie bei der Kennlinie, es kann leicht überschwingen. `extrap` gilt für
+  beide Achsen.
+- Eine Tabelle kann nicht symbolisch abgeleitet werden (wie bei Kennlinien).
 
 ### Gleichungen
 

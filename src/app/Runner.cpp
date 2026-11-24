@@ -340,11 +340,20 @@ std::vector<std::string> labels(const std::vector<Probe>& probes) {
     return out;
 }
 
+// Devices with a state of their own (fields over a grid) write it on request.
+// Not inside a series of runs, which would write one set of files per run.
+void writeSnapshots(Context& c, double t, const Vector& x, const std::string& tag) {
+    if (c.sweep) return;
+    for (const auto& d : c.ckt().devices())
+        if (d->wantsSnapshot()) d->snapshot(t, x, tag);
+}
+
 void runOp(Context& c, const json& a) {
     checkKeys(a, "op", {"type", "name", "outputs"}, c.log);
     c.ckt().setTransientMode(false);
     DcResult info;
     const Vector x = solveOperatingPoint(c.ckt(), c.nl.options, nullptr, &info);
+    writeSnapshots(c, 0.0, x, "op");
     const auto probes = probesFor(c, a);
 
     if (c.sweep) {  // one row per parameter value instead of the console table
@@ -524,11 +533,19 @@ void runTran(Context& c, const json& a) {
     ckt.setTransientMode(true);
     checkIndex(c);
     TransientStats stats;
+    Vector lastX;
+    double lastT = 0.0;
+    bool snapshotsWanted = false;
+    for (const auto& d : ckt.devices()) snapshotsWanted = snapshotsWanted || d->wantsSnapshot();
     try {
         Vector q0;
         const Vector x0 = initialPoint(c, uic, q0);
         std::vector<double> row;
         stats = runTransient(ckt, x0, uic ? &q0 : nullptr, to, [&](double t, const Vector& x) {
+            if (snapshotsWanted) {
+                lastX = x;
+                lastT = t;
+            }
             row.clear();
             for (const Probe& p : probes) row.push_back(p.value(x, t));
             table.row(t, row);
@@ -541,6 +558,7 @@ void runTran(Context& c, const json& a) {
         throw;
     }
     ckt.setTransientMode(false);
+    if (snapshotsWanted && lastX.size() > 0) writeSnapshots(c, lastT, lastX, "tran.end");
     c.log << "[tran] 0 .. " << to.tstop << " s, " << methodName(to.method);
     if (to.method == IntegrationMethod::Bdf) c.log << " (order up to " << stats.maxOrder << ")";
     c.log << (uic ? ", uic" : "") << ": " << stats.accepted << " steps (" << stats.rejected
@@ -1504,6 +1522,8 @@ void runSensitivity(Context& c, const json& a) {
 
 void runAnalyses(Netlist& nl, const RunConfig& cfg, std::ostream& log) {
     Context c{nl, cfg, log, {}, nullptr};
+    nl.circuit->snapshotDir = cfg.outDir;
+    nl.circuit->snapshotStem = cfg.stem;
     for (const std::string& note : nl.circuit->notes) log << "note: " << note << '\n';
     if (nl.analyses.empty()) log << "no analyses requested (add an \"analyses\" array)\n";
 

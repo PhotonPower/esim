@@ -92,6 +92,7 @@ add_library(esimcircuit
   src/circuit/devices/Equations.cpp
   src/circuit/devices/Behavioral.cpp
   src/circuit/devices/Switching.cpp
+  src/circuit/devices/Plugin.cpp
   src/io/Units.cpp
   src/io/Netlist.cpp
   src/io/Spice.cpp
@@ -99,7 +100,10 @@ add_library(esimcircuit
   src/app/Measure.cpp
   src/app/Runner.cpp)
 find_package(Threads REQUIRED)
-target_link_libraries(esimcircuit PUBLIC esimcore nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(esimcircuit PUBLIC esimcore nlohmann_json::nlohmann_json Threads::Threads
+                      ${CMAKE_DL_LIBS})
+# plugin/esim_plugin.h: the interface of the plugin libraries (plain C)
+target_include_directories(esimcircuit PUBLIC ${PROJECT_SOURCE_DIR})
 target_compile_options(esimcircuit PRIVATE ${ESIM_WARNINGS})
 
 add_executable(esim src/main.cpp)
@@ -119,6 +123,19 @@ if(ESIM_BUILD_TESTS)
   esim_windows_program(esim_tests)
   target_link_libraries(esim_tests PRIVATE esimcircuit)
   target_include_directories(esim_tests PRIVATE examples)
+
+  # Plugin library for the tests, and a template for real plugins.
+  add_library(esim_mock_plugin MODULE plugins/mock/mock_plugin.cpp)
+  target_include_directories(esim_mock_plugin PRIVATE ${PROJECT_SOURCE_DIR})
+  set_target_properties(esim_mock_plugin PROPERTIES PREFIX "")
+  target_compile_options(esim_mock_plugin PRIVATE ${ESIM_WARNINGS})
+  # ... and one with the function table of the first version, to check compatibility
+  add_library(esim_legacy_plugin MODULE plugins/mock/legacy_plugin.cpp)
+  target_include_directories(esim_legacy_plugin PRIVATE ${PROJECT_SOURCE_DIR})
+  set_target_properties(esim_legacy_plugin PROPERTIES PREFIX "")
+  add_dependencies(esim_tests esim_mock_plugin esim_legacy_plugin)
+  target_compile_definitions(esim_tests PRIVATE ESIM_MOCK_PLUGIN="$<TARGET_FILE:esim_mock_plugin>"
+                             ESIM_LEGACY_PLUGIN="$<TARGET_FILE:esim_legacy_plugin>")
   add_test(NAME esim_tests COMMAND esim_tests)
   # Charges of a single BSIM3 transistor, for tests/test_bsim3.py.
   add_executable(bsim3_charges tests/bsim3_charges.cpp)

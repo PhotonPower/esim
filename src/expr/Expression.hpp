@@ -18,7 +18,8 @@
 //   operators    + - * / ^ (or **)   < <= > >= == !=   && || !
 //   functions    sin cos tan asin acos atan atan2 sinh cosh tanh exp log ln log10
 //                sqrt abs sign min max pow if(condition, a, b)
-//   tables       name(x) for a table registered under that name
+//   tables       name(x) for a table registered under that name,
+//                name(x, y) for a table over a grid
 //   own          name(a, b, ...) for a function defined by the user
 //   vectors      x[i]: element i of a vector; the index is a constant expression
 //   sum          sum(i, from, to, e): e summed over i = from .. to
@@ -68,6 +69,29 @@ private:
     Extrap extrap_;
 };
 
+// A function z(x, y) given on a grid, e.g. a map of flux linkage over current
+// and position. Linear: bilinear. Cubic: tensor product of cubic Hermite
+// interpolants with slopes from three neighbouring points; continuous slope,
+// and linear in the data, so that the derivatives are exact derivatives of the
+// interpolant. Used in expressions as name(x, y).
+class Table2 {
+public:
+    using Interp = Table::Interp;
+    using Extrap = Table::Extrap;
+
+    // x and y strictly increasing, at least two points each; z[i * y.size() + j]
+    // is the value at (x[i], y[j]). The extrapolation applies to both axes.
+    Table2(std::vector<double> x, std::vector<double> y, std::vector<double> z, Interp interp,
+           Extrap extrap);
+    double eval(double x, double y, double& dzdx, double& dzdy) const;
+
+private:
+    std::vector<double> x_, y_, z_;
+    std::vector<double> dy_;  // slopes along y of every row of z (Cubic)
+    Interp interp_;
+    Extrap extrap_;
+};
+
 // A function defined by the user, e.g. sat(x, lim) = max(-lim, min(lim, x)).
 // A call is replaced by the body with the arguments put in place of the
 // parameters; other names in the body are resolved where the call stands.
@@ -91,6 +115,10 @@ public:
     virtual bool addDelay(const std::shared_ptr<DelayLine>& /*line*/) const { return false; }
     // A table that can be called like a function, or nullptr.
     virtual std::shared_ptr<const Table> table(const std::string& /*name*/) const {
+        return nullptr;
+    }
+    // A table of two arguments, called like name(x, y), or nullptr.
+    virtual std::shared_ptr<const Table2> table2(const std::string& /*name*/) const {
         return nullptr;
     }
     virtual bool constant(const std::string& name, double& value) const = 0;
@@ -159,6 +187,7 @@ private:
     std::vector<int> events_;  // slots holding the event functions
     std::vector<unsigned char> modes_;  // per event function: was it positive?
     std::vector<std::shared_ptr<const Table>> tables_;
+    std::vector<std::shared_ptr<const Table2>> tables2_;
     std::vector<std::shared_ptr<DelayLine>> delays_;
     bool usesTime_ = false;
     mutable std::vector<double> val_, adj_;  // scratch (not thread safe)

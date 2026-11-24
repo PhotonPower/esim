@@ -35,15 +35,15 @@ int Circuit::findNode(const std::string& name) const {
     return it->second;
 }
 
-int Circuit::addUnknown(const std::string& label, UnknownKind kind, bool internal) {
-    unknowns_.push_back({label, kind, internal});
+int Circuit::addUnknown(const std::string& label, UnknownKind kind, bool internal, double abstol) {
+    unknowns_.push_back({label, kind, internal, abstol});
     return static_cast<int>(unknowns_.size()) - 1;
 }
 
-int Circuit::addVariable(const std::string& name, double abstol) {
+int Circuit::addVariable(const std::string& name, double abstol, UnknownKind kind) {
     if (variables_.count(name))
         throw std::runtime_error("variable '" + name + "' is defined twice");
-    const int idx = addUnknown(name, UnknownKind::Variable, false);
+    const int idx = addUnknown(name, kind, false);
     unknowns_[idx].abstol = abstol;
     variables_.emplace(name, idx);
     return idx;

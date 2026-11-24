@@ -2,6 +2,7 @@
 // Returns a non-zero exit code if any check fails.
 
 #include <Eigen/Dense>
+#include <array>
 #include <clocale>
 #include <cmath>
 #include <cstdio>
@@ -3184,6 +3185,381 @@ void testEditorSupport() {
     std::setlocale(LC_NUMERIC, saved.c_str());
 }
 
+// Value of a probe at a time between two accepted steps.
+double valueAt(const Netlist& nl, const Trace& tr, const std::string& what, double time) {
+    for (size_t k = 1; k < tr.t.size(); ++k)
+        if (tr.t[k] >= time) {
+            const double a = probe(*nl.circuit, tr.x[k - 1], what), b = probe(*nl.circuit, tr.x[k], what);
+            return a + (b - a) * (time - tr.t[k - 1]) / (tr.t[k] - tr.t[k - 1]);
+        }
+    return probe(*nl.circuit, tr.x.back(), what);
+}
+
+void testTables2d() {
+    using expr::Table2;
+    const std::vector<double> xs = {0.0, 0.5, 1.5, 2.0, 4.0}, ys = {-1.0, 0.0, 0.3, 2.0};
+    const auto grid = [&](const std::function<double(double, double)>& f) {
+        std::vector<double> z;
+        for (double x : xs)
+            for (double y : ys) z.push_back(f(x, y));
+        return z;
+    };
+    double dx, dy;
+
+    // bilinear: exact for 1 + 2x + 3y + 4xy, also the gradient
+    const auto bil = [](double x, double y) { return 1 + 2 * x + 3 * y + 4 * x * y; };
+    const Table2 lin(xs, ys, grid(bil), Table2::Interp::Linear, Table2::Extrap::Hold);
+    checkNear(lin.eval(1.0, 0.1, dx, dy), bil(1.0, 0.1), 1e-12, "table2 linear: value");
+    checkNear(dx, 2 + 4 * 0.1, 1e-12, "table2 linear: d/dx");
+    checkNear(dy, 3 + 4 * 1.0, 1e-12, "table2 linear: d/dy");
+    checkNear(lin.eval(2.0, 0.3, dx, dy), bil(2.0, 0.3), 1e-12, "table2 linear: value on a grid point");
+
+    // cubic: exact for functions that are quadratic along both axes, on a grid that is not uniform
+    const auto quad = [](double x, double y) { return 1 + x * x - 2 * x * y + 0.5 * y * y + 3 * x * x * y; };
+    const Table2 cub(xs, ys, grid(quad), Table2::Interp::Cubic, Table2::Extrap::Hold);
+    for (const auto& [x, y] : std::vector<std::pair<double, double>>{{0.2, -0.7}, {1.0, 0.1}, {3.1, 1.2}, {1.7, 0.3}}) {
+        checkNear(cub.eval(x, y, dx, dy), quad(x, y), 1e-12, "table2 cubic: value");
+        checkNear(dx, -2 * y + 2 * x + 6 * x * y, 1e-10, "table2 cubic: d/dx");
+        checkNear(dy, -2 * x + y + 3 * x * x, 1e-10, "table2 cubic: d/dy");
+    }
+
+    // the derivatives are those of the interpolant, also for data that is not a polynomial
+    const auto wavy = [](double x, double y) { return std::sin(1.7 * x) * std::cos(2.3 * y) + 0.1 * x * y; };
+    for (const auto interp : {Table2::Interp::Linear, Table2::Interp::Cubic}) {
+        const Table2 t(xs, ys, grid(wavy), interp, Table2::Extrap::Linear);
+        double worst = 0.0;
+        for (const auto& [x, y] : std::vector<std::pair<double, double>>{{0.2, -0.7}, {1.1, 0.1}, {3.3, 1.2}, {5.0, 3.0}, {-1.0, -2.0}}) {
+            const double h = 1e-6;
+            double ex, ey, a, b;
+            t.eval(x, y, dx, dy);
+            const double fx = (t.eval(x + h, y, a, b) - t.eval(x - h, y, ex, ey)) / (2 * h);
+            const double fy = (t.eval(x, y + h, a, b) - t.eval(x, y - h, ex, ey)) / (2 * h);
+            worst = std::max({worst, std::abs(dx - fx), std::abs(dy - fy)});
+        }
+        checkNear(worst, 0.0, 1e-6, "table2: gradient agrees with finite differences");
+    }
+
+    // outside the grid: hold the edge, or continue with the edge slope
+    const Table2 hold(xs, ys, grid(bil), Table2::Interp::Linear, Table2::Extrap::Hold);
+    checkNear(hold.eval(9.0, 0.0, dx, dy), bil(4.0, 0.0), 1e-12, "table2 hold: beyond x");
+    checkNear(dx, 0.0, 0.0, "table2 hold: no slope beyond x");
+    checkNear(hold.eval(4.0, 7.0, dx, dy), bil(4.0, 2.0), 1e-12, "table2 hold: beyond y");
+    const Table2 ext(xs, ys, grid(bil), Table2::Interp::Linear, Table2::Extrap::Linear);
+    checkNear(ext.eval(6.0, 0.0, dx, dy), bil(6.0, 0.0), 1e-12, "table2 linear extrapolation");
+
+    // input errors of the class
+    checkTrue(throws([&] { Table2({0.0, 1.0}, {0.0, 1.0}, {1.0, 2.0, 3.0}, Table2::Interp::Linear, Table2::Extrap::Hold); }),
+              "table2: wrong number of values");
+    checkTrue(throws([&] { Table2({1.0, 0.0}, {0.0, 1.0}, {1.0, 2.0, 3.0, 4.0}, Table2::Interp::Linear, Table2::Extrap::Hold); }),
+              "table2: x must increase");
+
+    // in a netlist: inline data, solved with Newton (needs the gradient)
+    Netlist nl = parseNetlistText(R"json({
+        "tables": {"g": {"x": [0, 1, 2, 3], "y": [0, 1, 2],
+                         "z": [[0, 1, 4], [1, 3, 7], [4, 7, 13], [9, 13, 19]], "interp": "cubic"}},
+        "variables": {"x": {"guess": 1}},
+        "equations": ["g(x, 1) = 7"]})json");
+    // g(x, y) = x^2 + x y + y^2
+    const Vector sol = solveOperatingPoint(*nl.circuit, nl.options);
+    checkNear(probe(*nl.circuit, sol, "x"), 2.0, 1e-8, "table2 in an equation: Newton with the table's gradient");
+
+    // as flux linkage of a B element: a map psi(i, z) = 10 mH * i, independent of z,
+    // behaves like the inductor
+    const auto rl = [](const std::string& coil) {
+        return parseNetlistText(R"json({
+            "tables": {"psi": {"x": [-5, 0, 1, 5], "y": [0, 1], "z": [[-0.05, -0.05], [0, 0], [0.01, 0.01], [0.05, 0.05]],
+                               "interp": "cubic", "extrap": "linear"}},
+            "components": [
+                {"type": "V", "name": "V1", "nodes": ["a", "0"],
+                 "wave": {"type": "pulse", "v1": 0, "v2": 5, "delay": "10u", "rise": "1u"}},
+                {"type": "R", "name": "R1", "nodes": ["a", "m"], "value": 2},
+                )json" + coil + "]}");
+    };
+    Netlist coilRef = rl(R"json({"type": "L", "name": "L1", "nodes": ["m", "0"], "value": "10m"})json");
+    Netlist coilMap = rl(R"json({"type": "B", "name": "L1", "nodes": ["m", "0"], "phi": "psi(i(L1), 0.5)"})json");
+    const Trace cr = transient(coilRef, 10e-3, IntegrationMethod::Bdf, false);
+    const Trace cm = transient(coilMap, 10e-3, IntegrationMethod::Bdf, false);
+    double worstCoil = 0.0;
+    for (double time : {1e-3, 3e-3, 6e-3, 10e-3})
+        worstCoil = std::max(worstCoil, std::abs(valueAt(coilRef, cr, "i(L1)", time) - valueAt(coilMap, cm, "i(L1)", time)));
+    checkNear(worstCoil, 0.0, 2e-4, "table2 as the flux of a B element: same current as the inductor");
+
+    // from a file in long format, in any order; used in a source
+    const std::filesystem::path file = std::filesystem::temp_directory_path() / "esim_table2_test.csv";
+    {
+        std::ofstream out(file);
+        out << "x,y,z\n";
+        for (double y : {2.0, 0.0, 1.0})
+            for (double x : {3.0, 0.0, 2.0, 1.0}) out << x << ',' << y << ',' << x * x + x * y + y * y << '\n';
+    }
+    const std::string fileText = file.generic_string();
+    Netlist fromFile = parseNetlistText(R"json({
+        "tables": {"g": {"file": ")json" + fileText + R"json(", "zcol": 2, "interp": "cubic"}},
+        "components": [{"type": "B", "name": "B1", "nodes": ["o", "0"], "v": "g(2.5, 0.5)"},
+                       {"type": "R", "name": "R1", "nodes": ["o", "0"], "value": 1}]})json");
+    const Vector sf = solveOperatingPoint(*fromFile.circuit, fromFile.options);
+    checkNear(probe(*fromFile.circuit, sf, "v(o)"), 2.5 * 2.5 + 2.5 * 0.5 + 0.25, 1e-9, "table2 from a file");
+    {
+        std::ofstream out(file);
+        out << "0,0,1\n0,1,2\n1,0,3\n";  // the corner (1, 1) is missing
+    }
+    checkTrue(throws([&] {
+                  parseNetlistText(R"json({"tables": {"g": {"file": ")json" + fileText +
+                                   R"json(", "zcol": 2}}, "components": [{"type": "R", "name": "R1", "nodes": ["a", "0"], "value": 1}]})json");
+              }),
+              "table2: an incomplete grid is rejected");
+    std::filesystem::remove(file);
+    checkTrue(throws([] {
+                  parseNetlistText(R"json({"tables": {"g": {"x": [0, 1], "y": [0, 1], "z": [[0, 1], [1, 2]]}},
+                      "components": [{"type": "B", "name": "B1", "nodes": ["o", "0"], "v": "g(1)"},
+                                     {"type": "R", "name": "R1", "nodes": ["o", "0"], "value": 1}]})json");
+              }),
+              "table2: the call needs two arguments");
+}
+
+#ifdef ESIM_MOCK_PLUGIN
+void testPlugins() {
+    const std::string lib = ESIM_MOCK_PLUGIN;
+
+    // --- solenoid: field, circuit and mechanics, against the same model built
+    // from esim's own elements (flux element, equations) ---------------------
+    const std::string common = R"json("parameters": {"R": 2, "L0": "10m", "z0": "5m", "mass": 0.05,
+            "k": 200, "c": 1.5, "zrest": "10m"},
+        "variables": {"z": {"init": 0.01}, "vz": {"init": 0}},)json";
+    const std::string source =
+        R"json({"type": "V", "name": "V1", "nodes": ["a", "0"],
+                "wave": {"type": "pulse", "v1": 0, "v2": 5, "delay": "1m", "rise": "10u"}},)json";
+    // The reference declares the force as a variable of its own.
+    Netlist ref = parseNetlistText("{" + std::string(R"json("parameters": {"R": 2, "L0": "10m", "z0": "5m",
+            "mass": 0.05, "k": 200, "c": 1.5, "zrest": "10m"},
+        "variables": {"z": {"init": 0.01}, "vz": {"init": 0}, "F": {"guess": 0}},
+        "functions": {"L(z)": "L0/(1+z/z0)", "dL(z)": "-L0/(z0*(1+z/z0)^2)"},
+        "components": [)json") + source + R"json(
+            {"type": "R", "name": "R1", "nodes": ["a", "mid"], "value": "R"},
+            {"type": "B", "name": "B1", "nodes": ["mid", "0"], "phi": "L(z)*i(B1)"}],
+        "equations": ["der(z) = vz", "mass*der(vz) = F - k*(z - zrest) - c*vz",
+                      "F = 0.5*i(B1)^2*dL(z)"]})json");
+    Netlist plug = parseNetlistText("{" + common + R"json(
+        "plugins": {"mock": {"library": ")json" + lib + R"json(",
+                             "config": {"kind": "solenoid", "R": "R", "L0": "L0", "z0": "z0"}}},
+        "components": [)json" + source + R"json(
+            {"type": "plugin", "name": "X1", "plugin": "mock", "nodes": ["a", "0"],
+             "inputs": {"z": "z"}, "outputs": {"F": "F"}}],
+        "equations": ["der(z) = vz", "mass*der(vz) = F - k*(z - zrest) - c*vz"]})json");
+    checkTrue(!plug.circuit->notes.empty(), "plugin: the loaded library is reported");
+
+    const Trace tr = transient(ref, 0.06, IntegrationMethod::Bdf, false);
+    const Trace tp = transient(plug, 0.06, IntegrationMethod::Bdf, false);
+    double worstZ = 0.0, worstI = 0.0;
+    for (const double time : {0.5e-3, 2e-3, 5e-3, 10e-3, 20e-3, 30e-3, 45e-3, 60e-3}) {
+        worstZ = std::max(worstZ, std::abs(valueAt(ref, tr, "z", time) - valueAt(plug, tp, "z", time)));
+        worstI = std::max(worstI, std::abs(valueAt(ref, tr, "i(B1)", time) - valueAt(plug, tp, "i(X1)", time)));
+    }
+    checkNear(worstZ, 0.0, 5e-6, "plugin solenoid: position follows the model of esim's own elements");
+    checkNear(worstI, 0.0, 5e-4, "plugin solenoid: winding current follows it too");
+    // The motion is real: the armature moves some millimetres.
+    checkTrue(std::abs(valueAt(plug, tp, "z", 60e-3) - 0.01) > 1e-3, "plugin solenoid: the armature moves");
+    checkNear(probe(*plug.circuit, tp.x.back(), "i(X1.coil)"), probe(*plug.circuit, tp.x.back(), "i(X1)"), 0.0,
+              "plugin solenoid: i(device.branch) addresses the branch");
+    checkNear(probe(*plug.circuit, tp.x.back(), "F"), probe(*ref.circuit, tr.x.back(), "F"), 5e-3,
+              "plugin solenoid: the force output");
+
+    // --- diode with an internal unknown, like a semiconductor device -------
+    const auto diodeCircuit = [&](const std::string& drive, bool plugin) {
+        std::string s = R"json({"components": [
+            {"type": "V", "name": "V1", "nodes": ["src", "0"], )json" + drive + R"json(},
+            {"type": "R", "name": "R1", "nodes": ["src", "a"], "value": "1k"},)json";
+        if (plugin)
+            s += R"json({"type": "plugin", "name": "X1", "library": ")json" + lib + R"json(",
+                 "config": {"kind": "diode", "Rs": 50, "Is": 1e-14, "Cj": "1n"}, "nodes": ["a", "0"]}]})json";
+        else
+            s += R"json({"type": "R", "name": "RS", "nodes": ["a", "d"], "value": 50},
+                 {"type": "D", "name": "D1", "nodes": ["d", "0"], "is": 1e-14},
+                 {"type": "C", "name": "C1", "nodes": ["d", "0"], "value": "1n"}]})json";
+        return parseNetlistText(s);
+    };
+    // operating point
+    Netlist dcRef = diodeCircuit(R"json("dc": 3)json", false), dcPlug = diodeCircuit(R"json("dc": 3)json", true);
+    const Vector xr = solveOperatingPoint(*dcRef.circuit, dcRef.options);
+    const Vector xp = solveOperatingPoint(*dcPlug.circuit, dcPlug.options);
+    checkNear(probe(*dcPlug.circuit, xp, "v(a)"), probe(*dcRef.circuit, xr, "v(a)"), 1e-6, "plugin diode: operating point");
+    checkNear(probe(*dcPlug.circuit, xp, "X1.y"), probe(*dcRef.circuit, xr, "v(d)"), 1e-6,
+              "plugin diode: the internal unknown is the junction voltage");
+    // small signal
+    Netlist acRef = diodeCircuit(R"json("dc": 3, "ac": 1)json", false), acPlug = diodeCircuit(R"json("dc": 3, "ac": 1)json", true);
+    const Vector ar = solveOperatingPoint(*acRef.circuit, acRef.options);
+    const Vector ap = solveOperatingPoint(*acPlug.circuit, acPlug.options);
+    const Probe pr = parseProbe(*acRef.circuit, "v(a)"), pp = parseProbe(*acPlug.circuit, "v(a)");
+    std::vector<std::complex<double>> refValues;
+    runAc(*acRef.circuit, ar, {1e3, 1e6, 1e8}, [&](double, const Eigen::VectorXcd& x) { refValues.push_back(pr.phasor(x)); });
+    size_t at = 0;
+    double worstAc = 0.0;
+    runAc(*acPlug.circuit, ap, {1e3, 1e6, 1e8}, [&](double, const Eigen::VectorXcd& x) {
+        worstAc = std::max(worstAc, std::abs(pp.phasor(x) - refValues[at++]));
+    });
+    checkNear(worstAc, 0.0, 1e-6, "plugin diode: small-signal response from the plugin's G and C");
+    // time domain, switching the diode on and off
+    const std::string pulse = R"json("wave": {"type": "pulse", "v1": 0, "v2": 3, "delay": "2u", "rise": "0.1u",
+                                              "fall": "0.1u", "width": "20u", "period": "40u"})json";
+    Netlist tdRef = diodeCircuit(pulse, false), tdPlug = diodeCircuit(pulse, true);
+    const Trace dr = transient(tdRef, 80e-6, IntegrationMethod::Bdf, false);
+    const Trace dp = transient(tdPlug, 80e-6, IntegrationMethod::Bdf, false);
+    double worst = 0.0;
+    for (double time = 1e-6; time < 80e-6; time += 1.7e-6)
+        worst = std::max(worst, std::abs(valueAt(tdRef, dr, "v(a)", time) - valueAt(tdPlug, dp, "v(a)", time)));
+    checkNear(worst, 0.0, 2e-3, "plugin diode: switching transient");
+
+    // --- extensions: kind of an unknown, limiting, noise, snapshots ----------
+    const auto pd = [&](const std::string& config, const std::string& extra, const std::string& drive,
+                        const std::string& analyses = "") {
+        return parseNetlistText(R"json({"components": [
+            {"type": "V", "name": "V1", "nodes": ["src", "0"], )json" + drive + R"json(},
+            {"type": "R", "name": "R1", "nodes": ["src", "a"], "value": "1k"},
+            {"type": "plugin", "name": "X1", "library": ")json" + lib + R"json(",
+             "config": {"kind": "diode", "Rs": 50, "Is": 1e-14, "Cj": "1n")json" + config +
+                                R"json(}, "nodes": ["a", "0"])json" + extra + "}]" + analyses + "}");
+    };
+
+    // The plugin declares its internal unknown as a voltage.
+    Netlist kindPlug = pd(R"json(, "voltage": 1)json", "", R"json("dc": 3)json");
+    Netlist kindDefault = pd("", "", R"json("dc": 3)json");
+    const int iyKind = kindPlug.circuit->findVariable("X1.y"), iyDefault = kindDefault.circuit->findVariable("X1.y");
+    checkTrue(iyKind >= 0 && kindPlug.circuit->kind(iyKind) == UnknownKind::Voltage &&
+                  kindPlug.circuit->isInternal(iyKind),
+              "plugin: an internal unknown can be declared a voltage");
+    checkTrue(iyDefault >= 0 && kindDefault.circuit->kind(iyDefault) == UnknownKind::Variable,
+              "plugin: by default an internal unknown is a variable");
+    checkNear(kindPlug.circuit->absTol(iyKind), kindPlug.circuit->options.vntol, 0.0, "plugin: a voltage has the tolerance of voltages");
+    const Vector xk = solveOperatingPoint(*kindPlug.circuit, kindPlug.options);
+    checkNear(probe(*kindPlug.circuit, xk, "v(a)"), probe(*dcRef.circuit, xr, "v(a)"), 1e-6,
+              "plugin: the operating point with a voltage-kind unknown");
+
+    // Limiting: far from the reference point the plugin damps the junction voltage.
+    Netlist lim = pd(R"json(, "limit": 1)json", "", R"json("dc": 3)json");
+    Netlist nolim = pd("", "", R"json("dc": 3)json");
+    const auto limitedAt = [](Netlist& nl, double yFar) {
+        Circuit& ck = *nl.circuit;
+        const int iy = ck.findVariable("X1.y");
+        Vector x = Vector::Zero(ck.size());
+        Evaluation ev;
+        x[iy] = 0.1;
+        ck.evaluate(0.0, x, LimitMode::Init, ev);
+        const bool atReference = ev.limited;
+        x[iy] = yFar;
+        ck.evaluate(0.0, x, LimitMode::On, ev);
+        const bool far = ev.limited;
+        ck.evaluate(0.0, x, LimitMode::Off, ev);
+        return std::array<bool, 3>{atReference, far, ev.limited};
+    };
+    const auto ls = limitedAt(lim, 2.0);
+    checkTrue(!ls[0] && ls[1] && !ls[2], "plugin: limiting is reported in a Newton iteration only");
+    const auto ns = limitedAt(nolim, 2.0);
+    checkTrue(!ns[0] && !ns[1] && !ns[2], "plugin: without a limiter nothing is reported");
+    const Vector xl = solveOperatingPoint(*lim.circuit, lim.options);
+    checkNear(probe(*lim.circuit, xl, "v(a)"), probe(*dcRef.circuit, xr, "v(a)"), 1e-6,
+              "plugin: the operating point with limiting");
+
+    // Noise: thermal noise of the series resistance and shot noise of the junction,
+    // against the same circuit made of a resistor and a diode.
+    Netlist noisePlug = pd("", "", R"json("dc": 3)json"), noiseRef = diodeCircuit(R"json("dc": 3)json", false);
+    const auto noiseAt = [](Netlist& nl, size_t& count) {
+        Circuit& ck = *nl.circuit;
+        const Vector xop = solveOperatingPoint(ck, nl.options);
+        const Probe out = parseProbe(ck, "v(a)");
+        std::vector<NoiseSource> sources;
+        std::vector<double> result;
+        runNoise(ck, xop, {1e3, 1e6, 1e8}, out.pos, out.neg, nullptr, sources,
+                 [&](double, double onoise2, double, const std::vector<double>&) { result.push_back(onoise2); });
+        count = sources.size();
+        return result;
+    };
+    size_t nPlug = 0, nRef = 0;
+    const std::vector<double> noisePlugValues = noiseAt(noisePlug, nPlug), noiseRefValues = noiseAt(noiseRef, nRef);
+    checkTrue(nPlug == nRef && nPlug == 3, "plugin: the noise sources are listed with those of the circuit");
+    double worstNoise = 0.0;
+    for (size_t k = 0; k < noiseRefValues.size() && k < noisePlugValues.size(); ++k)
+        worstNoise = std::max(worstNoise, std::abs(noisePlugValues[k] / noiseRefValues[k] - 1.0));
+    checkNear(worstNoise, 0.0, 1e-5, "plugin: output noise equals that of resistor and diode");
+    checkTrue(noiseRefValues.size() == 3 && noiseRefValues[0] > 0.0, "plugin: the noise reference is not empty");
+
+    // Snapshots: at the operating point, at given times and at the end of a transient.
+    const std::filesystem::path snapDir = std::filesystem::temp_directory_path() / "esim_plugin_snapshots";
+    std::filesystem::remove_all(snapDir);
+    Netlist snap = pd("", R"json(, "snapshots": {"times": [5e-6]})json",
+                      R"json("wave": {"type": "pulse", "v1": 0, "v2": 3, "delay": "2u", "rise": "0.1u", "width": "20u", "period": "40u"})json",
+                      R"json(, "analyses": [{"type": "op"}, {"type": "tran", "tstop": "10u"}])json");
+    {
+        RunConfig cfg;
+        cfg.outDir = snapDir.string();
+        cfg.stem = "snap";
+        std::ostringstream log;
+        runAnalyses(snap, cfg, log);
+    }
+    std::ostringstream timeTag;
+    timeTag << std::setprecision(6) << 5e-6;
+    for (const std::string& what : {std::string("op"), "tran.t" + timeTag.str(), std::string("tran.end")}) {
+        std::ifstream in(snapDir / ("snap." + what + ".X1.snap.txt"));
+        std::string key;
+        int n = -1;
+        double t = -1.0;
+        in >> key >> t >> key >> n;
+        checkTrue(in && n == 3, "plugin: snapshot " + what + " is written");
+        if (what == "tran.t" + timeTag.str()) checkNear(t, 5e-6, 1e-12, "plugin: the snapshot is taken at the requested time");
+        if (what == "tran.end") checkNear(t, 10e-6, 1e-12, "plugin: the final snapshot is at the end");
+    }
+    // without "snapshots" nothing is written
+    std::filesystem::remove_all(snapDir);
+    Netlist quiet = pd("", "", R"json("dc": 3)json", R"json(, "analyses": [{"type": "op"}])json");
+    {
+        RunConfig cfg;
+        cfg.outDir = snapDir.string();
+        cfg.stem = "quiet";
+        std::ostringstream log;
+        runAnalyses(quiet, cfg, log);
+    }
+    checkTrue(!std::filesystem::exists(snapDir / "quiet.op.X1.snap.txt"), "plugin: no snapshots unless asked for");
+    std::filesystem::remove_all(snapDir);
+
+    // --- a plugin with the function table of the first version ----------------
+    const std::string legacyLib = ESIM_LEGACY_PLUGIN;
+    const auto legacy = [&](const std::string& extra) {
+        return R"json({"components": [
+            {"type": "V", "name": "V1", "nodes": ["src", "0"], "dc": 2},
+            {"type": "R", "name": "R1", "nodes": ["src", "a"], "value": "1k"},
+            {"type": "plugin", "name": "X1", "library": ")json" + legacyLib +
+               R"json(", "config": {"g": 1e-3}, "nodes": ["a", "0"])json" + extra + "}]}";
+    };
+    Netlist old = parseNetlistText(legacy(""));
+    const Vector xo = solveOperatingPoint(*old.circuit, old.options);
+    checkNear(probe(*old.circuit, xo, "v(a)"), 1.0, 1e-9, "plugin: a plugin with the old function table still works");
+    checkTrue(throws([&] { parseNetlistText(legacy(R"json(, "snapshots": true)json")); }),
+              "plugin: snapshots of a plugin that cannot write them are refused");
+
+    // --- input errors ---------------------------------------------------------
+    const auto bad = [&](const std::string& component, const std::string& extra = "") {
+        return throws([&] {
+            parseNetlistText(R"json({)json" + extra + R"json("components": [)json" + component + "]}");
+        });
+    };
+    checkTrue(bad(R"json({"type": "plugin", "name": "X", "library": "no_such_file", "nodes": ["a", "0"]})json"),
+              "plugin: a missing library is an error");
+    checkTrue(bad(R"json({"type": "plugin", "name": "X", "plugin": "nope", "nodes": ["a", "0"]})json"),
+              "plugin: an undefined plugin name is an error");
+    checkTrue(bad(R"json({"type": "plugin", "name": "X", "library": ")json" + lib +
+                  R"json(", "config": {"kind": "diode"}, "nodes": ["a"]})json"),
+              "plugin: the number of nodes has to fit");
+    checkTrue(bad(R"json({"type": "plugin", "name": "X", "library": ")json" + lib +
+                  R"json(", "config": {"kind": "solenoid"}, "nodes": ["a", "0"]})json"),
+              "plugin: every input has to be given");
+    checkTrue(bad(R"json({"type": "plugin", "name": "X", "library": ")json" + lib +
+                  R"json(", "config": {"kind": "diode"}, "nodes": ["a", "0"], "inputs": {"q": "1"}})json"),
+              "plugin: an unknown input is an error");
+    checkTrue(bad(R"json({"type": "plugin", "name": "X", "library": ")json" + lib +
+                  R"json(", "config": {"kind": "nonsense"}, "nodes": ["a", "0"]})json"),
+              "plugin: the plugin may refuse its configuration");
+}
+#endif
+
 }  // namespace
 
 int main() {
@@ -3209,6 +3585,7 @@ int main() {
         {"subcircuits", testSubcircuits},
         {"coupled inductors", testCoupledInductors},
         {"tables", testTables},
+        {"tables over a grid", testTables2d},
         {"timed events", testTimedEvents},
         {"constrained mechanics", testConstrainedMechanics},
         {"device models", testDeviceModels},
@@ -3230,6 +3607,9 @@ int main() {
         {"input errors", testInputErrors},
         {"editor support", testEditorSupport},
         {"SPICE subcircuits", testSpiceSubcircuits},
+#ifdef ESIM_MOCK_PLUGIN
+        {"plugins", testPlugins},
+#endif
     };
     for (const auto& [name, fn] : tests) {
         std::cout << "[test] " << name << '\n';

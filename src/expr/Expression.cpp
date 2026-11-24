@@ -23,6 +23,7 @@ enum class Program::Op : unsigned char {
     Exp, Log, Log10, Sqrt, Abs, Sign,
     Min, Max, Atan2,
     Lookup,
+    Lookup2,
     Delay,
 };
 
@@ -329,6 +330,7 @@ double applyOp(Op op, double a, double b, double c) {
         case Op::Var:
         case Op::Time:
         case Op::Lookup:
+        case Op::Lookup2:
         case Op::Delay: break;
     }
     return 0.0;
@@ -368,9 +370,10 @@ class Compiler {
 public:
     Compiler(const Symbols& symbols, std::vector<Instr>& code, std::vector<int>& vars,
              std::vector<int>& events, std::vector<std::shared_ptr<const Table>>& tables,
+             std::vector<std::shared_ptr<const Table2>>& tables2,
              std::vector<std::shared_ptr<DelayLine>>& delays, bool& usesTime)
         : symbols_(symbols), code_(code), vars_(vars), events_(events), tables_(tables),
-          delays_(delays), usesTime_(usesTime) {}
+          tables2_(tables2), delays_(delays), usesTime_(usesTime) {}
 
     int emit(const AstPtr& n) {
         switch (n->kind) {
@@ -400,7 +403,25 @@ public:
                 if (!fn) {
                     if (const FunctionDef* def = symbols_.function(n->name)) return call(*def, *n);
                     const std::shared_ptr<const Table> tb = symbols_.table(n->name);
-                    if (!tb) throw std::runtime_error("unknown function '" + n->name + "'");
+                    if (!tb) {
+                        const std::shared_ptr<const Table2> tb2 = symbols_.table2(n->name);
+                        if (!tb2) throw std::runtime_error("unknown function '" + n->name + "'");
+                        if (n->args.size() != 2)
+                            throw std::runtime_error("table '" + n->name + "' takes two arguments");
+                        const int ax = emit(n->args[0]);
+                        const int ay = emit(n->args[1]);
+                        if (code_[ax].op == Op::Const && code_[ay].op == Op::Const) {
+                            double sx, sy;
+                            return constant(tb2->eval(code_[ax].k, code_[ay].k, sx, sy));
+                        }
+                        Instr in{Op::Lookup2};
+                        in.a = ax;
+                        in.b = ay;
+                        in.table = static_cast<int>(tables2_.size());
+                        tables2_.push_back(tb2);
+                        code_.push_back(in);
+                        return static_cast<int>(code_.size()) - 1;
+                    }
                     if (n->args.size() != 1)
                         throw std::runtime_error("table '" + n->name + "' takes one argument");
                     const int arg = emit(n->args[0]);
@@ -579,6 +600,7 @@ private:
     std::vector<int>& vars_;
     std::vector<int>& events_;
     std::vector<std::shared_ptr<const Table>>& tables_;
+    std::vector<std::shared_ptr<const Table2>>& tables2_;
     std::vector<std::shared_ptr<DelayLine>>& delays_;
     bool& usesTime_;
     int depth_ = 0;  // nesting of user-defined function calls
@@ -740,6 +762,97 @@ double Table::eval(double x, double& slope) const {
     return h00 * y_[k] + h10 * h * d_[k] + h01 * y_[k + 1] + h11 * h * d_[k + 1];
 }
 
+// --- Table2 --------------------------------------------------------------------
+
+namespace {
+
+// Slopes of the interpolant of one line of data v over the grid g. Cubic: three
+// neighbouring points (a linear function of the data); Linear: only the end
+// slopes, which extrapolation uses.
+void lineSlopes(const std::vector<double>& g, const double* v, double* d, bool cubic) {
+    const size_t n = g.size();
+    const auto secant = [&](size_t k) { return (v[k + 1] - v[k]) / (g[k + 1] - g[k]); };
+    d[0] = secant(0);
+    d[n - 1] = secant(n - 2);
+    if (!cubic || n < 3) return;
+    for (size_t k = 1; k + 1 < n; ++k) {
+        const double h0 = g[k] - g[k - 1], h1 = g[k + 1] - g[k];
+        d[k] = (h1 * secant(k - 1) + h0 * secant(k)) / (h0 + h1);
+    }
+    const auto end = [](double h0, double h1, double s0, double s1) {
+        return ((2.0 * h0 + h1) * s0 - h0 * s1) / (h0 + h1);
+    };
+    d[0] = end(g[1] - g[0], g[2] - g[1], secant(0), secant(1));
+    d[n - 1] = end(g[n - 1] - g[n - 2], g[n - 2] - g[n - 3], secant(n - 2), secant(n - 3));
+}
+
+// Value and slope at x of the interpolant of a line of data with slopes d.
+double lineEval(const std::vector<double>& g, const double* v, const double* d, bool cubic,
+                bool linearExtrap, double x, double& slope) {
+    const size_t n = g.size();
+    if (x <= g.front() || x >= g.back()) {
+        const bool low = x <= g.front();
+        slope = linearExtrap ? (low ? d[0] : d[n - 1]) : 0.0;
+        return (low ? v[0] : v[n - 1]) + slope * (x - (low ? g.front() : g.back()));
+    }
+    const size_t k = static_cast<size_t>(std::upper_bound(g.begin(), g.end(), x) - g.begin()) - 1;
+    const double h = g[k + 1] - g[k], s = (x - g[k]) / h;
+    if (!cubic) {
+        slope = (v[k + 1] - v[k]) / h;
+        return v[k] + slope * (x - g[k]);
+    }
+    const double s2 = s * s, s3 = s2 * s;
+    slope = ((6.0 * s2 - 6.0 * s) * v[k] + (3.0 * s2 - 4.0 * s + 1.0) * h * d[k] +
+             (-6.0 * s2 + 6.0 * s) * v[k + 1] + (3.0 * s2 - 2.0 * s) * h * d[k + 1]) / h;
+    return (2.0 * s3 - 3.0 * s2 + 1.0) * v[k] + (s3 - 2.0 * s2 + s) * h * d[k] +
+           (-2.0 * s3 + 3.0 * s2) * v[k + 1] + (s3 - s2) * h * d[k + 1];
+}
+
+void checkGrid(const std::vector<double>& g, const char* name) {
+    if (g.size() < 2) throw std::runtime_error(std::string("at least two points are required in ") + name);
+    for (size_t k = 0; k < g.size(); ++k)
+        if (!std::isfinite(g[k]) || (k > 0 && !(g[k] > g[k - 1])))
+            throw std::runtime_error(std::string(name) + " must be finite and strictly increasing");
+}
+
+}  // namespace
+
+Table2::Table2(std::vector<double> x, std::vector<double> y, std::vector<double> z, Interp interp,
+               Extrap extrap)
+    : x_(std::move(x)), y_(std::move(y)), z_(std::move(z)), interp_(interp), extrap_(extrap) {
+    checkGrid(x_, "x");
+    checkGrid(y_, "y");
+    if (z_.size() != x_.size() * y_.size())
+        throw std::runtime_error("z has " + std::to_string(z_.size()) + " values, the grid " +
+                                 std::to_string(x_.size()) + " x " + std::to_string(y_.size()) +
+                                 " needs " + std::to_string(x_.size() * y_.size()));
+    for (double v : z_)
+        if (!std::isfinite(v)) throw std::runtime_error("z must be finite");
+    dy_.assign(z_.size(), 0.0);
+    for (size_t i = 0; i < x_.size(); ++i)
+        lineSlopes(y_, &z_[i * y_.size()], &dy_[i * y_.size()], interp_ == Interp::Cubic);
+}
+
+double Table2::eval(double x, double y, double& dzdx, double& dzdy) const {
+    const size_t nx = x_.size(), ny = y_.size();
+    const bool cubic = interp_ == Interp::Cubic, linear = extrap_ == Extrap::Linear;
+    thread_local std::vector<double> vy, dvy, d;
+    vy.resize(nx);
+    dvy.resize(nx);
+    d.resize(nx);
+    // Along y in every row, then along x through the results. The same
+    // procedure applied to the y-slopes gives dz/dy: everything is linear in
+    // the data, so this is exactly the derivative of the interpolant.
+    for (size_t i = 0; i < nx; ++i)
+        vy[i] = lineEval(y_, &z_[i * ny], &dy_[i * ny], cubic, linear, y, dvy[i]);
+    lineSlopes(x_, vy.data(), d.data(), cubic);
+    double unused;
+    const double value = lineEval(x_, vy.data(), d.data(), cubic, linear, x, dzdx);
+    lineSlopes(x_, dvy.data(), d.data(), cubic);
+    dzdy = lineEval(x_, dvy.data(), d.data(), cubic, linear, x, unused);
+    return value;
+}
+
 AstPtr makeNumber(double v) {
     auto n = std::make_shared<Ast>();
     n->kind = Ast::Kind::Number;
@@ -789,7 +902,8 @@ int ConstantSymbols::branchCurrent(const std::string& component) const {
 
 Program Program::compile(const AstPtr& ast, const Symbols& symbols) {
     Program p;
-    Compiler compiler(symbols, p.code_, p.vars_, p.events_, p.tables_, p.delays_, p.usesTime_);
+    Compiler compiler(symbols, p.code_, p.vars_, p.events_, p.tables_, p.tables2_, p.delays_,
+                      p.usesTime_);
     const int result = compiler.emit(ast);
     // The result has to be the last slot (a folded constant may sit earlier).
     if (result != static_cast<int>(p.code_.size()) - 1) p.code_.push_back(p.code_[result]);
@@ -820,6 +934,11 @@ void Program::run(const Vector& x, double t, bool frozen) const {
             continue;
         }
         const double b = in.b >= 0 ? val_[in.b] : 0.0;
+        if (in.op == Op::Lookup2) {
+            double sx, sy;
+            val_[i] = tables2_[in.table]->eval(a, b, sx, sy);
+            continue;
+        }
         if (frozen && in.e >= 0) {
             // The stored mode says whether the event function (a - b, or the
             // argument of abs and sign) was positive.
@@ -895,6 +1014,13 @@ double Program::evalGrad(const Vector& x, double t, std::vector<double>& grad,
                 double slope;
                 tables_[in.table]->eval(a, slope);
                 adj_[in.a] += w * slope;
+                break;
+            }
+            case Op::Lookup2: {
+                double sx, sy;
+                tables2_[in.table]->eval(a, b, sx, sy);
+                adj_[in.a] += w * sx;
+                adj_[in.b] += w * sy;
                 break;
             }
             case Op::Delay:  // a value from the past does not depend on the present
@@ -1101,6 +1227,8 @@ private:
             const AstPtr &y = arg(0), &x = arg(1);
             return div(sub(mul(x, d(y)), mul(y, d(x))), makeBinary("+", makeBinary("*", x, x), makeBinary("*", y, y)));
         }
+        if (symbols_.table2(f))
+            throw std::runtime_error(f + "() cannot be differentiated symbolically");
         const AstPtr& a = arg(0);
         const AstPtr da = d(a);
         if (isNumber(da, 0.0)) {

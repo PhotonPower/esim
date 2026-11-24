@@ -59,13 +59,7 @@ Probe parseProbe(const Circuit& ckt, const std::string& expr) {
                 p.neg = ckt.findNode(arg.substr(comma + 1));
             }
         } else {
-            const Device* d = ckt.findDevice(arg);
-            if (!d) throw std::runtime_error("unknown component '" + arg + "'");
-            if (d->branch() < 0)
-                throw std::runtime_error("component '" + arg +
-                                         "' has no branch current (only voltage sources, "
-                                         "inductors, E and H sources have one)");
-            p.pos = d->branch();
+            p.pos = CircuitSymbols(ckt).branchCurrent(arg);  // also i(device.branch)
         }
     } catch (const std::runtime_error& e) {
         throw std::runtime_error("output \"" + expr + "\": " + e.what());
