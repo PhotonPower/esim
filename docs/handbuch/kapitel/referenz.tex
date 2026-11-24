@@ -134,6 +134,7 @@ python3 tools/plot.py <datei.csv> [<datei.csv> ...] [-o <bild>] [--cols <regex>]
   \code{functions} & \code{{"f(a, b)": "Ausdruck", ...}} & eigene Funktionen \\
   \code{tables} & \code{{"name": {...}, ...}} & Kennlinien (Abschnitt~\ref{sec:ref-tabellen}) \\
   \code{models} & \code{{"name": Objekt | SPICE-Zeile | Liste von Zeilen}} & Modelle (Abschnitt~\ref{sec:ref-modelle}) \\
+  \code{plugins} & \code{{"name": {"library": "datei", "config": {...}}}} & Plugin-Bibliotheken (Kapitel~\ref{kap:format-plugins}) \\
   \code{subcircuits} & \code{{"name": Objekt | SPICE-Text | Liste von Zeilen}} & Teilschaltungen (Abschnitt~\ref{sec:ref-teil}) \\
   \code{components} & Liste von Bauteilen & Abschnitt~\ref{sec:ref-bauteile} \\
   \code{variables} & \code{{"name": ...}} & Unbekannte (Abschnitt~\ref{sec:ref-gleichungen}) \\
@@ -221,6 +222,11 @@ Gemeinsame Schlüssel aller Bauteile:
    & & \code{ron}, \code{roff} & $10^{-3}$\,\ohm, $10^{9}$\,\ohm \\
   \code{X} | \code{subcircuit} & wie \code{ports} & \code{subcircuit} & Pflicht: Name \\
    & & \code{parameters} & \code{{"name": Zahl}}, überschreibt Standardwerte \\
+  \code{plugin} & Klemmen des Plugins & \code{plugin} | \code{library} & Name aus \code{plugins} oder Bibliothek; eines ist Pflicht \\
+   & & \code{config} & \code{{...}}, ergänzt die Konfiguration des Plugins \\
+   & & \code{inputs} & \code{{"eingang": "ausdruck"}}; jeder Eingang des Plugins ist Pflicht \\
+   & & \code{outputs} & \code{{"ausgang": "variable"}}; Standard \code{<bauteil>.<ausgang>} \\
+   & & \code{snapshots} & \code{true} oder \code{{"times": [...]}}; Standard: aus \\
 \end{longtable}
 
 \subsection*{Halbleiter}

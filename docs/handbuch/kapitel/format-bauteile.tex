@@ -47,6 +47,7 @@ Jedes Bauteil ist ein Objekt in der Liste \code{components}:
   \code{J}, \code{njf}, \code{pjf} & Sperrschicht-FET & D, G, S & \code{model} oder Parameter \\
   \code{M}, \code{nmos}, \code{pmos} & MOSFET & D, G, S [, Bulk] & \code{model}, \code{w}, \code{l}, Parameter \\
   \code{X}, \code{subcircuit} & Instanz einer Teilschaltung & in der Reihenfolge der \code{ports} & \code{subcircuit}, \code{parameters} \\
+  \code{plugin} & Bauteil aus einer Plugin-Bibliothek & Klemmen des Plugins & \code{plugin} oder \code{library}, \code{config}, \code{inputs}, \code{outputs} (Kapitel~\ref{kap:format-plugins}) \\
 \end{longtable}
 
 \section{Widerstand, Kondensator, Spule}

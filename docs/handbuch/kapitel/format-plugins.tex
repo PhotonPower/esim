@@ -1,0 +1,265 @@
+\chapter{Plugins}
+\label{kap:format-plugins}
+
+Ein Plugin ist eine Bibliothek (DLL, Shared Object oder Dylib) mit dem
+Verhalten eines Bauteils, das \esim nicht selbst rechnet: ein Feldlöser für
+Magnete und Motoren, ein Halbleitersimulator auf einem Gitter, ein
+thermisches 3D-Modell, ein neuronales Netz. \esim modelliert, was um das
+Bauteil herum geschieht (Ansteuerung, Verstärker, Regler, Mechanik); das
+Plugin liefert die Gleichungen des Bauteils. Beide werden gemeinsam gelöst,
+nicht nacheinander: Newton-Verfahren, Schrittweitenregelung,
+Wechselstromanalyse und Rauschanalyse arbeiten über Schaltung und Plugin
+hinweg.
+
+\section{Aufbau eines Plugin-Bauteils}
+\label{sec:plugin-aufbau}
+
+Aus Sicht von \esim ist ein Plugin-Bauteil ein Bauteil mit fünf Arten von
+Größen:
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[Klemmen (\code{nodes})] Knoten der Schaltung. Das Plugin sieht ihre
+    Spannungen und liefert den Strom (und die Ladung), der in das Bauteil
+    fließt, wie ein SPICE-Bauteil. Ein Halbleiter hat hier seine Kontakte.
+  \item[Eingänge (\code{inputs})] Ausdrücke der Eingabedatei, die das Plugin
+    nur liest: eine Position, ein Winkel, eine Temperatur, eine
+    Lichtleistung. Jeder Eingang des Plugins muss belegt werden.
+  \item[Zweige] Ströme zwischen zwei Klemmen, etwa einer Wicklung. \esim
+    legt dafür eine Unbekannte an und bucht den Strom in die Klemmenzeilen;
+    die Zweiggleichung steht im Plugin.
+  \item[Ausgänge (\code{outputs})] Größen, die das Plugin berechnet, zum
+    Beispiel Kraft, Drehmoment oder Verlustleistung. Jeder Ausgang wird eine
+    Variable der Eingabedatei und darf in Gleichungen, Verhaltensquellen,
+    Ausgaben und Messgrößen stehen.
+  \item[innere Unbekannte] Zustände des Plugins (Feldgrößen, Potentiale und
+    Ladungsträgerdichten je Gitterpunkt). Sie sind Unbekannte des
+    Gesamtsystems und werden mit der Schaltung gelöst.
+\end{description}
+
+Die Gleichungen des Plugins haben dieselbe Form wie die der Schaltung,
+$\mathrm{d}q(x)/\mathrm{d}t + f(x,t) = 0$. Das Plugin liefert zu jeder
+Auswertung $f$, $q$ und die Jacobi-Matrizen $\partial f/\partial x$ und
+$\partial q/\partial x$.
+
+\section{Einbinden}
+\label{sec:plugin-einbinden}
+
+Das Beispiel ist ein Hubmagnet. Das Plugin enthält Wicklung und Feld, die
+Mechanik steht in der Eingabedatei. Die Position \code{z} geht als Eingang
+ins Plugin, die Kraft kommt als Ausgang zurück:
+
+\begin{json}
+{
+  "parameters": { "Rcoil": 2.0, "mass": 0.05, "k": 200, "c": 1.5, "zrest": "10m" },
+  "plugins": {
+    "magnet": { "library": "esim_mock_plugin",
+                "config": { "kind": "solenoid", "L0": "10m", "z0": "5m" } }
+  },
+  "components": [
+    { "type": "V", "name": "VS", "nodes": ["a", "0"],
+      "wave": { "type": "pulse", "v1": 0, "v2": 5, "delay": "1m", "rise": "10u" } },
+    { "type": "plugin", "name": "X1", "plugin": "magnet", "nodes": ["a", "0"],
+      "config": { "R": "Rcoil" },
+      "inputs":  { "z": "z" },
+      "outputs": { "F": "Fm" } }
+  ],
+  "variables": { "z": { "init": "10m" }, "vz": { "init": 0 } },
+  "equations": [
+    "der(z) = vz",
+    "mass*der(vz) = Fm - k*(z - zrest) - c*vz"
+  ],
+  "analyses": [ { "type": "tran", "tstop": "60m" } ],
+  "outputs": ["z", "i(X1)", "Fm"]
+}
+\end{json}
+
+\begin{itemize}
+  \item \code{plugins} vereinbart Plugins mit Namen. \code{library} ist der
+    Dateiname mit oder ohne Endung (\datei{.dll}, \datei{.so},
+    \datei{.dylib}); relative Namen gelten zur Eingabedatei. \code{config}
+    ist die Konfiguration, die das Plugin beim Anlegen bekommt (Modelldatei,
+    Parameter, Gitter). Das Plugin legt fest, welche Schlüssel es kennt.
+  \item Das bauteilweise \code{config} ergänzt die Konfiguration des Plugins
+    und überschreibt gleichnamige Einträge. Zeichenketten, die eine Zahl
+    oder ein konstanter Ausdruck der Parameter sind (\code{"4.7k"},
+    \code{"Rcoil"}), werden zu Zahlen; alle anderen, etwa Dateinamen, bleiben
+    Text. Damit laufen Parameterstudien und Monte-Carlo-Läufe auch durch
+    Plugin-Parameter.
+  \item Statt \code{"plugin": "magnet"} darf \code{"library"} direkt am Bauteil
+    stehen; dann entfällt der Eintrag in \code{plugins}.
+\end{itemize}
+
+\section{Schlüssel des Bauteils}
+\label{sec:plugin-schluessel}
+
+\begin{longtable}{@{}P{2.8cm}P{3.6cm}P{7.4cm}@{}}
+  \toprule
+  Schlüssel & Wert & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{type} & \code{"plugin"} & Bauteiltyp \\
+  \code{nodes} & Liste von Knotennamen & die Klemmen in der Reihenfolge des Plugins; die Anzahl muss stimmen \\
+  \code{plugin} & Name aus \code{plugins} & oder \code{library} \\
+  \code{library} & Dateiname & Bibliothek direkt am Bauteil \\
+  \code{config} & Objekt & Konfiguration; ergänzt die des Plugins \\
+  \code{inputs} & \code{{"eingang": "ausdruck"}} & Ausdruck je Eingang: Spannungen, Ströme, Variablen, Zeit, Parameter \\
+  \code{outputs} & \code{{"ausgang": "variable"}} & Name der Variable je Ausgang; ohne Eintrag \code{<bauteil>.<ausgang>} \\
+  \code{snapshots} & \code{true} | \code{{"times": [...]}} & Feldausgabe, Abschnitt~\ref{sec:plugin-schnappschuesse} \\
+\end{longtable}
+
+\esim bildet die Ableitungen der Eingangsausdrücke selbst
+(Kettenregel). Das Plugin muss also nur die Ableitung nach seinen Eingängen
+liefern, nicht nach den Größen der Schaltung.
+
+\subsection*{Namen von außen}
+
+\begin{longtable}{@{}P{4.2cm}P{9.6cm}@{}}
+  \toprule
+  Ausdruck & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{i(X1)} & Strom des ersten Zweigs von \code{X1} \\
+  \code{i(X1.coil)} & Strom des Zweigs \code{coil}; der Name kommt vom Plugin \\
+  \code{Fm} & Ausgang, wie unter \code{outputs} benannt \\
+  \code{X1.F} & Ausgang ohne eigenen Namen in \code{outputs} \\
+  \code{X1.y} & innere Unbekannte \code{y}; sie steht nicht in der Standardausgabe, wohl aber in \code{outputs} der Datei \\
+\end{longtable}
+
+\section{Verhalten in den Analysen}
+\label{sec:plugin-analysen}
+
+\begin{description}[style=nextline,leftmargin=2em]
+  \item[\code{op}, \code{dc}] Das Plugin rechnet im Gleichgewicht. Startwerte
+    der inneren Unbekannten kommen vom Plugin (zum Beispiel eine
+    Gleichgewichtslösung). Die Hilfsverfahren zur Arbeitspunktsuche
+    (gmin-Stepping, Quellenhomotopie, Pseudo-Transiente) wirken auf
+    Unbekannte, die das Plugin als Spannung meldet.
+  \item[\code{tran}] Die Zeitableitung bildet \esim aus der Ladung $q$ des
+    Plugins. Das Plugin darf Zeitpunkte vorgeben, auf denen \esim landet,
+    und die Schrittweite begrenzen, etwa auf einen Bruchteil einer
+    Wirbelstrom-Zeitkonstante. Der Fehlerschätzer des Verfahrens arbeitet mit
+    den Toleranzen der Unbekannten; Unbekannte in Volt (Potentiale) skalieren
+    besser als Dichten.
+  \item[\code{ac}] Die Kleinsignalantwort folgt aus $G+\mathrm{j}\omega C$ des
+    Plugins am Arbeitspunkt. Ein Eingang, der von einer Spannung der Schaltung
+    abhängt, wirkt über die Kettenregel mit. Licht als Eingang ist so mit einer
+    Quelle mit \code{"ac": 1} an einem Knoten messbar. Ein
+    frequenzabhängiges Verhalten im Plugin selbst ist (noch) nicht möglich.
+  \item[\code{noise}] Meldet das Plugin Rauschquellen (Stromquellen zwischen
+    zwei seiner Zeilen mit weißem und Funkelrauschen), rechnet \esim sie
+    zusammen mit denen der Schaltung. Der Aufwand je Frequenz ist ein
+    Gleichungssystem plus ein Skalarprodukt je Quelle.
+  \item[\code{sens}, \code{param\_sweep}, \code{monte\_carlo}] Die Eingabedatei
+    wird je Lauf neu gelesen, das Plugin also neu angelegt. Ein Plugin mit
+    großem Gitter hält dieses in der Bibliothek, damit das nicht jedes Mal
+    Zeit kostet. Ableitungen (\code{sens}) sind Differenzenquotienten.
+  \item[Newton-Verfahren] Das Plugin darf wie SPICE bei Übergängen mit
+    Exponentialkennlinie den Spannungssprung begrenzen und meldet das; \esim
+    erklärt dann keine Konvergenz. Plugins, die das nicht tun, lösen
+    unbegrenzt.
+\end{description}
+
+Ereignisse (\code{events}) und Sprünge bleiben Sache der Eingabedatei; das
+Plugin sollte glatte Kennlinien liefern. Nichtglatte Größen, etwa die Kraft
+beim Wechsel einer Netzkante, stören das Newton-Verfahren und die
+Schrittweitenregelung; Kennfelder sollten geglättet sein.
+
+\section{Schnappschüsse}
+\label{sec:plugin-schnappschuesse}
+
+Ein Plugin mit Orts- oder Gitterdaten (Feldverteilung, Bänder,
+Ladungsträgerdichten) kann sie auf Anforderung in Dateien schreiben.
+
+\begin{json}
+{ "type": "plugin", "name": "X1", "plugin": "pn", "nodes": ["a", "0"],
+  "snapshots": { "times": [1e-6, 5e-6] } }
+\end{json}
+
+\begin{itemize}
+  \item \code{"snapshots": true}: am Ende jedes Arbeitspunkts und jedes
+    Transienten.
+  \item \code{{"times": [...]}}: zusätzlich zu diesen Zeiten; \esim legt dort
+    einen Zeitpunkt, sodass der Schnappschuss genau dort entsteht.
+  \item Die Dateien liegen im Ausgabeordner. Name und Format wählt das Plugin.
+    Der Anhang des Namens (\code{<name>.<op | tran.end | tran.t<Zeit>>.<bauteil>})
+    kommt von \esim.
+  \item In Parameterstudien entstehen keine Schnappschüsse.
+\end{itemize}
+
+\section{Sicherheit}
+\label{sec:plugin-sicherheit}
+
+Eine Plugin-Bibliothek ist ausführbarer Code mit allen Rechten des Benutzers.
+Beim Öffnen einer Eingabedatei mit \code{plugins} oder \code{library} wird die
+Bibliothek geladen und ihr Code läuft. Eingabedateien aus unbekannter Quelle
+öffnet man deshalb nicht, wenn sie Plugins nennen. \esim schreibt beim Laden in
+den Lauf eine Zeile der Form
+\code{note: plugin component X1: <Pfad>}; der Editor zeigt sie als Warnung.
+
+\begin{achtung}
+  Plugin-Pfade sind Teil der Eingabedatei. Wer eine Datei weitergibt, gibt
+  auch den Pfad der Bibliothek weiter; relative Namen vereinfachen das
+  Weitergeben. Schalter, die das Laden verhindern (Suchpfad, Betrieb ohne
+  Plugins), gibt es noch nicht.
+\end{achtung}
+
+\section{Fehlermeldungen}
+\label{sec:plugin-fehler}
+
+\begin{longtable}{@{}P{6.2cm}P{7.6cm}@{}}
+  \toprule
+  Meldung (Auszug) & Ursache \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{plugin library not found (tried ...)} & Datei fehlt; die Meldung nennt alle versuchten Namen \\
+  \code{cannot load plugin '...'} & Das Betriebssystem lädt die Datei nicht: falsche Architektur, fehlende Abhängigkeit \\
+  \code{is not an esim plugin} & Die Bibliothek exportiert \code{esim_plugin_entry} nicht \\
+  \code{has interface version} & Das Plugin wurde für eine andere Version der Schnittstelle gebaut \\
+  \code{plugin "..." is not defined in "plugins"} & Name im Bauteil fehlt in \code{plugins} \\
+  \code{input "..."} & Eingang fehlt, ist unbekannt oder sein Ausdruck ist falsch \\
+  \code{plugin component 'X1': ...} & Meldung des Plugins, etwa weil die Konfiguration unzulässig ist \\
+\end{longtable}
+
+\section{Ein Plugin schreiben}
+\label{sec:plugin-schreiben}
+
+Die Schnittstelle ist reines C und steht in einer einzigen Datei,
+\datei{plugin/esim_plugin.h}. Weil sie C ist, dürfen Plugin und \esim mit
+verschiedenen Compilern gebaut sein, und das Plugin darf in einer anderen
+Sprache geschrieben sein. Die Strukturen beginnen mit ihrer Größe, neue
+Felder werden nur angehängt; ältere Plugins laufen mit neuerem \esim und
+umgekehrt, solange die Versionsnummer \code{api\_version} übereinstimmt.
+
+Ein Plugin exportiert die Funktion \code{esim_plugin_entry()} und liefert
+damit eine Tabelle mit
+
+\begin{itemize}
+  \item \code{create}, \code{destroy}: Instanz mit der Konfiguration (als
+    JSON-Text) anlegen und freigeben,
+  \item \code{describe}: Anzahl und Namen der Klemmen, Eingänge, Zweige,
+    Ausgänge und inneren Unbekannten, Startwerte, Toleranzen und das feste
+    Besetzungsmuster von $\partial f/\partial x$ und $\partial q/\partial x$,
+  \item \code{evaluate}: $f$, $q$ und beide Matrizen aus Zeit, Vektor und Modus
+    (Gleichstrom, Startwert, Zeitschritt); eine reine Funktion der Eingabe,
+  \item optional \code{accept\_step}, \code{next\_breakpoint}, \code{max\_step},
+    \code{reset}, \code{last\_error}, \code{noise} und \code{snapshot}.
+\end{itemize}
+
+Ein lauffähiges Beispiel mit zwei Modellen (Hubmagnet, Diode mit innerem
+Knoten, Begrenzung, Rauschen, Schnappschuss) ist
+\datei{plugins/mock/mock_plugin.cpp}; es dient auch als Vorlage. Die
+ausführliche Beschreibung der Schnittstelle, ihrer Anforderungen an Feldlöser
+und Halbleitersimulatoren und der noch offenen Punkte steht in
+\datei{docs/fem-plugin-plan.md} und \datei{docs/halbleiter-plugin.md}.
+
+\begin{hinweis}
+  Das Beispielplugin gehört zu den Tests; \esim wird ohne Plugin ausgeliefert.
+  Echte Plugins (FEM, Halbleiter) sind eigene Projekte, die nur
+  \datei{plugin/esim_plugin.h} brauchen.
+\end{hinweis}

@@ -141,7 +141,8 @@ Zusammenfassung:
 4. ~~Rauschquellen, Newton-Begrenzung, Art der Unbekannten, Schnappschüsse~~ fertig
    (Abschnitt 3; Anlass: Prüfung von pull/1).
 5. Ausgang der inneren Unbekannten in den Editor, Plugin-Symbol im Schaltplan.
-6. Handbuch-Kapitel „Plugins“, Format-Abschnitt in `format-bauteile`.
+6. ~~Handbuch-Kapitel „Plugins“~~ fertig (`docs/handbuch/kapitel/format-plugins.tex`,
+   Zeilen in Bauteilübersicht und Referenz); das PDF ist noch nicht neu gebaut.
 7. Plugin-Pfade außerhalb der Netzliste (`ESIM_PLUGIN_PATH`) und eine Option
    `--no-plugins`, um Netzlisten ohne Ausführung fremden Codes zu öffnen.
 
@@ -213,10 +214,32 @@ Zusammenfassung:
 
 ## 10. Offene Fragen
 
-- Welche Ansteuerung braucht der FEM-Kern als Nächstes (Strom oder Spannung, Zeitbereich
-  oder Zeiger, wie viele Wicklungen)? Beim FEM-Agenten erfragt, Antwort ausstehend.
-- Ist `itefem_core` als Bibliothek mit Parameter-/Zeitschritt-API aufrufbar?
-- Wie bewegt ITEFEM geometrisch (Netzverformung, Gleitfläche, Neuvernetzung)?
+Antworten der ITEFEM-Session (2026-11-24):
+
+- Ansteuerung: Zeitbereich (Rückwärts-Euler, Newton je Schritt, nichtlineares Eisen,
+  Wirbelströme, 3D-Kantenelemente) läuft; der Strom wird je Quelle als Zeitverlauf
+  (Faktor mal Stromdichte, stückweise linear) vorgegeben. Spannungsvorgabe mit
+  Widerstand (Stufe 3) fehlt noch; Zeigerrechnung bei fester Frequenz gibt es.
+- Flussverkettung ψ_k ist nicht implementiert (geplant: Integral A·t über das
+  Wicklungsgebiet). Kennfelder ψ(i,z), F(i,z) heute nur über ein `sweep`-Studium (ein
+  Kindprozess je Punkt, CSV). Kraft: Maxwell-Tensor oder Lorentz.
+- `itefem_core` existiert als statische Bibliothek, aber der Ablauf liegt in `main.cxx`
+  und `main_*.hxx`: keine Zeitschritt-API, kein Zustand über Aufrufe, keine
+  wiederverwendbare Faktorisierung (iterativer Löser, Matrix je Iteration neu). Eine DLL
+  braucht einen Umbau dieser Abläufe in eine Klasse; zugesagt ist nichts.
+- Bewegung: Translation als `motion`-Studium (RK4 außerhalb des FEM, Kraft-Tabellen),
+  Rotation mit vorgegebener Drehzahl; keine Bewegungsspannung (v×B), kein bewegtes
+  Netz. Die Bewegungsgleichung in esim zu lassen passt dazu.
+- Eingabe: JSON-Modell (`--help`, `--check`, `--convert`), Zeitverläufe als Tabellen
+  (`"transient"`: `times`, `waveforms`); kein stdin. Ausgabe: Dateien je Zeitschritt und CSV.
+- Der Zeitschrittlöser ist neu und noch nicht committet.
+
+Folgerung: Stufe 0 (Kennfelder aus dem `sweep`-Studium als `x,y,z`-CSV, in esim als
+2D-Tabelle) ist der einzige Weg, der ohne Umbau auf der ITEFEM-Seite geht. Dafür fehlt
+dort ψ_k. Offen:
+
+- Wie bewegt ITEFEM geometrisch (Netzverformung, Gleitfläche, Neuvernetzung)? Nach
+  Antwort: gar nicht (Netz fest), Bewegung nur über Kennfelder.
 - Lizenz/Veröffentlichung: esim ist öffentlich (`docs/windows-agent.md`), ITEFEM
   soll es auch werden (noch nicht auf GitHub). Plugins bleiben trotzdem eigene
   Projekte, esim enthält nur `plugin/esim_plugin.h`. Beim Upload von ITEFEM prüfen:
