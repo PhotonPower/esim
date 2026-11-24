@@ -10,6 +10,12 @@ N-Pole monolithisch in das DAE-System eingekoppelt: Die Gitterunbekannten sind
 Unbekannte des Gesamtsystems, die Klemmenströme gehen in die Knotengleichungen
 ein.
 
+Umgesetzt wird das als **Plugin**: eine eigene Bibliothek (DLL / Shared Object)
+mit eigenem Projekt, die esim über die C-Schnittstelle `plugin/esim_plugin.h`
+lädt. Der Kern bekommt keine Halbleiter-Klasse; Gitter, Materialdaten und Optik
+bleiben im Plugin. Dieselbe Schnittstelle bedient auch Feldlöser (FEM) und andere
+Modelle, siehe `docs/fem-plugin-plan.md`.
+
 Im Umfang:
 
 - Drift-Diffusion für Elektronen und Löcher, Heterostrukturen, Fermi-Dirac-Statistik
@@ -33,64 +39,64 @@ Gittererwärmung.
 
 ## 3. Kopplung an den Kern
 
-Der Kern löst bereits `d/dt q(x) + f(x, t) = 0` mit `G = df/dx` und
-`C = dq/dx`; das ist genau die Form, die ein diskretisiertes
-Drift-Diffusions-Modell liefert. Das Halbleiterbauelement wird eine weitere
-Klasse unter `src/circuit/devices/`, abgeleitet von `Device`
-(`src/circuit/Device.hpp`).
+Der Kern löst `d/dt q(x) + f(x, t) = 0` mit `G = df/dx` und `C = dq/dx`, die Form
+eines diskretisierten Drift-Diffusions-Modells. Das Plugin beschreibt sein lokales
+System in derselben Form; esim hängt es als Bauteil `"type": "plugin"` in die
+Schaltung. Die Schnittstelle (`plugin/esim_plugin.h`, reines C) gibt dem lokalen
+Vektor fünf Blöcke: Klemmenknoten, Eingänge, Zweigströme, Ausgänge, interne
+Unbekannte.
 
-### 3.1 Was die vorhandene Schnittstelle schon abdeckt
+### 3.1 Zuordnung
 
-| Bedarf | Vorhanden |
+| Bedarf | In der Schnittstelle |
 |---|---|
-| Gitterunbekannte anmelden | `setup()` mit `Circuit::addUnknown(label, kind, internal = true)` |
-| Residuen und Jacobi-Matrizen | `stamp()` mit `addF`, `addQ`, `addG`, `addC` |
-| algebraische Zeilen (Poisson) | Zeilen mit `q_i = 0` |
-| Startwert Arbeitspunkt | `applyGuess()` (Ladungsneutralität, eingebautes Potential) |
-| Newton-Begrenzung | `StampContext::limiting`, `Evaluation::limited` |
-| Quellenhomotopie | `srcScale` |
-| Kleinsignal | `(G + jωC)` am Arbeitspunkt, Anregung über `stampAc()` |
-| automatische Differentiation | `Dual.hpp` |
+| Kontakte | Klemmenknoten (`n_nodes`); w enthält die Kontaktspannungen. Das Plugin schreibt in die Zeile des Knotens den Klemmenstrom: Leitungsstrom nach `f`, dielektrische Flussdichte nach `q`. Der Klemmenstrom ist damit konservativ und enthält den Verschiebungsstrom |
+| ψ, φn, φp, Ionen, Traps | interne Unbekannte (`n_internal`) mit eigener Toleranz je Unbekannter (`abstol`) und eigener Art (`kinds`: Spannung, Strom, Variable) |
+| Poisson-Zeile, Kontaktbedingungen | Zeilen mit `q = 0` (algebraisch) |
+| Kontinuitätszeilen | Ladung `±q·n·V_i` nach `q`, Kantenflüsse und Rekombination nach `f` |
+| Startwert Arbeitspunkt | `start` in der Beschreibung (z. B. Gleichgewichtslösung bei 0 V, im Plugin berechnet) |
+| Licht, Magnetfeld, pH, Temperatur | Eingänge: Ausdrücke der Netzliste (Spannungen, Variablen, Zeit), z. B. `"inputs": {"P_opt": "v(light)", "B": "B0*sin(2*pi*f*t)"}`. Kleinsignalantwort auf Licht: eine Quelle mit `"ac": 1` am Knoten `light`; die Kettenregel in G und C liefert sie ohne weiteren Aufwand |
+| Photostrom, Verlustleistung, Hall-Spannung als Größe | Ausgänge: je eine Variable in der Netzliste |
+| Newton-Begrenzung | `limit_mode` und `limited` in `esim_eval`: das Plugin dämpft wie SPICE und meldet es |
+| Quellenhomotopie | wirkt über die Quellen der Schaltung (Kontaktspannungen, Lichtleistung als Spannung) |
+| Rauschen | `noise_rows` und `noise()`: Quellen zwischen zwei Zeilen mit `white` und `flicker` |
+| Feldausgabe | `snapshot()`: Bänder, Dichten, Ströme über dem Ort am Ende von Arbeitspunkt und Transient oder zu gegebenen Zeiten (`"snapshots"` am Bauteil) |
+| Jacobi-Matrizen | im Plugin, per automatischer Differentiation; esim bekommt das feste Besetzungsmuster einmal in `describe` und die Werte je Auswertung |
 
-Zuordnung der Zeilen: Die Kontinuitätsgleichung eines Knotens schreibt die
-Ladung `±q·n·V_i` nach `addQ` und die Summe der Kantenflüsse samt
-Rekombination nach `addF`. Die Poisson-Zeile schreibt nur nach `addF`. An
-einem Kontakt gehen die Residuen der Kontakt-Kontrollvolumen (Leitungsstrom
-nach `addF`, dielektrische Flussdichte nach `addQ`) in die Zeile des
-Schaltungsknotens; der Klemmenstrom ist damit konservativ und enthält den
-Verschiebungsstrom.
+### 3.2 Was der Kern liefert und was zu beachten ist
 
-### 3.2 Was erweitert werden muss
-
-1. **Art der Unbekannten.** `UnknownKind` kennt `Voltage`, `Current`,
-   `Variable`. Potentiale und Quasi-Fermi-Potentiale passen zu `Voltage`;
-   Trap- und Oberflächenbesetzungen brauchen `Variable` mit eigener
-   Toleranz. Zu prüfen ist, ob die Fehlerschätzung auf den Ladungen `q`
-   (siehe `Transient.hpp`) mit den über viele Größenordnungen streuenden
-   Knotenladungen eines Gitters sinnvolle Schrittweiten liefert; nötig ist
-   wohl eine Toleranz je Kontinuitätszeile aus Referenzdichte mal
-   Kontrollvolumen.
-2. **Verteilte Rauschquellen.** `NoiseSource` beschreibt eine Stromquelle
-   zwischen zwei Knoten mit `white + flicker / f`. Für die
-   Impedanzfeld-Methode genügt das, wenn jede Gitterkante eine solche Quelle
-   zwischen ihren beiden internen Unbekannten meldet
-   (Diffusionsrauschen) und jeder Knoten eine für Generation-Rekombination.
-   Zu prüfen: Aufwand der Rauschanalyse bei einigen tausend Quellen
-   (adjungierte Lösung statt einer Lösung je Quelle).
-3. **Externe Felder.** Generationsrate, Magnetfeld, pH und Temperatur sind
-   Parameter des Bauelements mit optionalem Zeitverlauf (`Waveform`) oder
-   Ausdruck. Für die Kleinsignalantwort auf Licht braucht `stampAc()` die
-   Ableitung des Residuums nach der Lichtleistung als rechte Seite.
-4. **Parameterableitungen.** Für Sensitivitäten `∂f/∂p`, `∂q/∂p` je
-   Bauelement, falls die vorhandene Empfindlichkeitsanalyse bisher mit
-   Differenzenquotienten arbeitet.
-5. **Löser.** Blöcke mit einigen tausend Unbekannten und unsymmetrischer
-   Struktur; zu prüfen, ob `LinearSolver` dafür genügt und ob eine
-   Block-Elimination der internen Unbekannten (Schur-Komplement) als reine
-   Löserstrategie lohnt.
-6. **Eingabeformat.** Geometrie, Regionen, Dotierprofile, Materialien und
-   Kontakte im JSON; Ausgabe von Feldgrößen (Bänder, Dichten, Ströme über
-   dem Ort) neben den CSV-Dateien.
+1. **Toleranzen.** Die Fehlerschätzung des Integrators arbeitet auf den Ladungen,
+   leitet die Toleranz je Zeile aber aus der Matrix C ab (`tolq = Σ |C| · tolx`,
+   `Transient.cpp`). Mit Quasi-Fermi-Potentialen in Volt als Unbekannten und einer
+   Spannungstoleranz je Unbekannter skaliert das ohne weiteres über viele
+   Größenordnungen der Knotenladungen; mit Dichten als Unbekannten nicht. Die
+   Unbekannten sollten daher Potentiale sein (`kinds`: Spannung).
+2. **Rauschen.** Die Rauschanalyse löst je Frequenz einmal das adjungierte System; jede
+   weitere Quelle kostet ein Skalarprodukt. Tausende Quellen (eine je Gitterkante für
+   Diffusionsrauschen, eine je Knoten für Generation-Rekombination) sind kein
+   Aufwandsproblem. Das Plugin meldet sie mit festen Zeilenpaaren und liefert die
+   Dichten in `noise()` am Arbeitspunkt.
+3. **Parameterableitungen.** `sens` arbeitet mit Differenzenquotienten und liest die
+   Netzliste neu; Parameter im `config` des Plugins sind damit untersuchbar. Direkte
+   oder adjungierte Ableitungen wären eine spätere Erweiterung.
+4. **Löser.** Eigen SparseLU mit COLAMD; Besetzungsmuster und Faktorisierung werden
+   wiederverwendet. Das reicht für 1D und 2D bis etwa 10⁴ bis 10⁵ Unbekannte; für 3D
+   ist eine Elimination der inneren Unbekannten im Plugin nötig (dann gibt das Plugin
+   nur Klemmenströme samt Jacobi-Matrix heraus, ohne eigenes Zeitverhalten).
+5. **Mehrfaches Anlegen.** `create` wird bei jedem Einlesen der Netzliste aufgerufen:
+   Indexreduktion, Parameterstudien, Monte-Carlo, Sensitivitäten. Ein großes Gitter
+   gehört daher in einen Zwischenspeicher der Bibliothek (nach Dateiname und
+   Konfiguration), nicht in jede Instanz.
+6. **Threads.** Ein einzelnes Bauteil wird in einem Thread ausgewertet;
+   Parallelität liefert das Plugin intern. Ein Plugin mit Zustand (Begrenzer)
+   setzt `thread_safe = 0`.
+7. **Arbeitspunktsuche.** gmin-Stepping und Pseudo-Transiente legen einen kleinen
+   Leitwert auf die Zeilen der Unbekannten der Art „Spannung“; die Zeile sollte
+   dafür etwa die Einheit eines Stroms haben (auf Referenzwerte skaliert).
+8. **Eingabeformat.** Geometrie, Regionen, Dotierprofile, Materialien und Kontakte
+   stehen in der `config` des Plugins (JSON oder eine eigene Datei, relativ zur
+   Netzliste); Zahlen und konstante Ausdrücke der Netzlisten-Parameter werden von esim
+   aufgelöst.
 
 ## 4. Physikalisches Modell
 
@@ -169,7 +175,7 @@ $$\sigma_0 = qN_s\,\frac{a_s^2 - K_aK_b}{a_s^2 + K_b a_s + K_aK_b}$$
 - Skalierung auf thermische Spannung, Referenzdichte und Debye-Länge
 - Zeitintegration durch den vorhandenen Integrator
 
-## 6. Softwarestruktur
+## 6. Softwarestruktur (der Plugin-Bibliothek)
 
 | Modul | Inhalt |
 |---|---|
@@ -199,8 +205,9 @@ $$\sigma_0 = qN_s\,\frac{a_s^2 - K_aK_b}{a_s^2 + K_b a_s + K_aK_b}$$
 1. **M1 – 1D-Kern:** Gitter, Poisson, Drift-Diffusion mit
    Boltzmann-Statistik, ohmsche Kontakte, SRH/Auger; pn-Diode im
    Arbeitspunkt. Abgleich mit der Shockley-Kennlinie und DEVSIM.
-2. **M2 – Kopplung:** Erweiterungen aus 3.2 (Punkte 1, 3, 6), Transient;
-   Fall A (Fotodiode mit Verstärker), Lambert-Beer-Generation.
+2. **M2 – Kopplung:** Plugin gegen die Schnittstelle (`create`, `describe`, `evaluate`,
+   Begrenzung, Schnappschüsse), Transient; Fall A (Fotodiode mit Verstärker),
+   Lambert-Beer-Generation. Licht als Eingang.
 3. **M3 – Heterostrukturen:** Bandkanten, Fermi-Dirac, verallgemeinerter
    Fluss; Fall B. Abgleich mit ChargeTransport.jl.
 4. **M4 – AC und Rauschen:** Kleinsignal, Impedanzfeld; Schrotrauschgrenze
@@ -215,7 +222,9 @@ $$\sigma_0 = qN_s\,\frac{a_s^2 - K_aK_b}{a_s^2 + K_b a_s + K_aK_b}$$
 
 ## 9. Offene Punkte
 
-- die Prüfpunkte aus 3.2 (Toleranzen je Zeile, Aufwand der Rauschanalyse, Löser)
+- Grenzen des Lösers messen (Unbekannte, Faktorisierungszeit in 2D); ab wann die
+  Elimination der inneren Unbekannten im Plugin nötig wird
+- Format der Schnappschüsse (VTK, CSV, JSON)
 - Gittererzeugung 2D: eigener Generator oder Import (Gmsh, Triangle)
 - Zahlendarstellung: reicht `double` bei großer Bandlücke, oder erweiterte
   Genauigkeit für einzelne Größen
