@@ -28,6 +28,10 @@ Beschreibung des Eingabeformats, Kommandozeile, Python, SPICE, Fehlersuche).
 Quelltext in LaTeX unter [`docs/handbuch/`](docs/handbuch); übersetzen mit
 `cd docs/handbuch && latexmk -pdf handbuch.tex`.
 
+**Geplant:** ein Halbleitersimulator als Bauelement (Drift-Diffusion auf einem
+Gitter, für Optoelektronik, Hall- und chemische Sensoren), Spezifikation in
+[`docs/halbleiter-plugin.md`](docs/halbleiter-plugin.md).
+
 ## Bauen und Starten
 
 Voraussetzungen: CMake ≥ 3.18, ein C++17-Compiler. Eigen und nlohmann/json
