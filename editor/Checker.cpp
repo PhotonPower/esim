@@ -96,7 +96,9 @@ CheckResult checkText(const QString& text, const QString& baseDir) {
         for (int i = 0; i < ckt.size(); ++i)
             if (ckt.kind(i) == esim::UnknownKind::Voltage) {
                 QString name = QString::fromStdString(ckt.unknownName(i));  // "v(out)"
-                if (name.startsWith("v(") && name.endsWith(')')) name = name.mid(2, name.size() - 3);
+                // a plugin may declare unknowns of its own as voltages: not a node of the schematic
+                if (!(name.startsWith("v(") && name.endsWith(')'))) continue;
+                name = name.mid(2, name.size() - 3);
                 r.nodes << name;
             }
         for (const std::string& note : ckt.notes)
