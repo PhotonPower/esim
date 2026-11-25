@@ -2,9 +2,9 @@
 \label{kap:format-plugins}
 
 Ein Plugin ist eine Bibliothek (DLL, Shared Object oder Dylib) mit dem
-Verhalten eines Bauteils, das \esim nicht selbst rechnet: ein Feldlöser für
+Verhalten eines Bauteils, das \esim\ nicht selbst rechnet: ein Feldlöser für
 Magnete und Motoren, ein Halbleitersimulator auf einem Gitter, ein
-thermisches 3D-Modell, ein neuronales Netz. \esim modelliert, was um das
+thermisches 3D-Modell, ein neuronales Netz. \esim\ modelliert, was um das
 Bauteil herum geschieht (Ansteuerung, Verstärker, Regler, Mechanik); das
 Plugin liefert die Gleichungen des Bauteils. Beide werden gemeinsam gelöst,
 nicht nacheinander: Newton-Verfahren, Schrittweitenregelung,
@@ -14,7 +14,7 @@ hinweg.
 \section{Aufbau eines Plugin-Bauteils}
 \label{sec:plugin-aufbau}
 
-Aus Sicht von \esim ist ein Plugin-Bauteil ein Bauteil mit fünf Arten von
+Aus Sicht von \esim\ ist ein Plugin-Bauteil ein Bauteil mit fünf Arten von
 Größen:
 
 \begin{description}[style=nextline,leftmargin=2em]
@@ -24,7 +24,7 @@ Größen:
   \item[Eingänge (\code{inputs})] Ausdrücke der Eingabedatei, die das Plugin
     nur liest: eine Position, ein Winkel, eine Temperatur, eine
     Lichtleistung. Jeder Eingang des Plugins muss belegt werden.
-  \item[Zweige] Ströme zwischen zwei Klemmen, etwa einer Wicklung. \esim
+  \item[Zweige] Ströme zwischen zwei Klemmen, etwa einer Wicklung. \esim\ 
     legt dafür eine Unbekannte an und bucht den Strom in die Klemmenzeilen;
     die Zweiggleichung steht im Plugin.
   \item[Ausgänge (\code{outputs})] Größen, die das Plugin berechnet, zum
@@ -109,7 +109,7 @@ ins Plugin, die Kraft kommt als Ausgang zurück:
   \code{snapshots} & \code{true} | \code{{"times": [...]}} & Feldausgabe, Abschnitt~\ref{sec:plugin-schnappschuesse} \\
 \end{longtable}
 
-\esim bildet die Ableitungen der Eingangsausdrücke selbst
+\esim\ bildet die Ableitungen der Eingangsausdrücke selbst
 (Kettenregel). Das Plugin muss also nur die Ableitung nach seinen Eingängen
 liefern, nicht nach den Größen der Schaltung.
 
@@ -138,8 +138,8 @@ liefern, nicht nach den Größen der Schaltung.
     Gleichgewichtslösung). Die Hilfsverfahren zur Arbeitspunktsuche
     (gmin-Stepping, Quellenhomotopie, Pseudo-Transiente) wirken auf
     Unbekannte, die das Plugin als Spannung meldet.
-  \item[\code{tran}] Die Zeitableitung bildet \esim aus der Ladung $q$ des
-    Plugins. Das Plugin darf Zeitpunkte vorgeben, auf denen \esim landet,
+  \item[\code{tran}] Die Zeitableitung bildet \esim\ aus der Ladung $q$ des
+    Plugins. Das Plugin darf Zeitpunkte vorgeben, auf denen \esim\ landet,
     und die Schrittweite begrenzen, etwa auf einen Bruchteil einer
     Wirbelstrom-Zeitkonstante. Der Fehlerschätzer des Verfahrens arbeitet mit
     den Toleranzen der Unbekannten; Unbekannte in Volt (Potentiale) skalieren
@@ -150,7 +150,7 @@ liefern, nicht nach den Größen der Schaltung.
     Quelle mit \code{"ac": 1} an einem Knoten messbar. Ein
     frequenzabhängiges Verhalten im Plugin selbst ist (noch) nicht möglich.
   \item[\code{noise}] Meldet das Plugin Rauschquellen (Stromquellen zwischen
-    zwei seiner Zeilen mit weißem und Funkelrauschen), rechnet \esim sie
+    zwei seiner Zeilen mit weißem und Funkelrauschen), rechnet \esim\ sie
     zusammen mit denen der Schaltung. Der Aufwand je Frequenz ist ein
     Gleichungssystem plus ein Skalarprodukt je Quelle.
   \item[\code{sens}, \code{param\_sweep}, \code{monte\_carlo}] Die Eingabedatei
@@ -158,7 +158,7 @@ liefern, nicht nach den Größen der Schaltung.
     großem Gitter hält dieses in der Bibliothek, damit das nicht jedes Mal
     Zeit kostet. Ableitungen (\code{sens}) sind Differenzenquotienten.
   \item[Newton-Verfahren] Das Plugin darf wie SPICE bei Übergängen mit
-    Exponentialkennlinie den Spannungssprung begrenzen und meldet das; \esim
+    Exponentialkennlinie den Spannungssprung begrenzen und meldet das; \esim\ 
     erklärt dann keine Konvergenz. Plugins, die das nicht tun, lösen
     unbegrenzt.
 \end{description}
@@ -182,7 +182,7 @@ Ladungsträgerdichten) kann sie auf Anforderung in Dateien schreiben.
 \begin{itemize}
   \item \code{"snapshots": true}: am Ende jedes Arbeitspunkts und jedes
     Transienten.
-  \item \code{{"times": [...]}}: zusätzlich zu diesen Zeiten; \esim legt dort
+  \item \code{{"times": [...]}}: zusätzlich zu diesen Zeiten; \esim\ legt dort
     einen Zeitpunkt, sodass der Schnappschuss genau dort entsteht.
   \item Die Dateien liegen im Ausgabeordner. Name und Format wählt das Plugin.
     Der Anhang des Namens (\code{<name>.<op | tran.end | tran.t<Zeit>>.<bauteil>})
@@ -196,7 +196,7 @@ Ladungsträgerdichten) kann sie auf Anforderung in Dateien schreiben.
 Eine Plugin-Bibliothek ist ausführbarer Code mit allen Rechten des Benutzers.
 Beim Öffnen einer Eingabedatei mit \code{plugins} oder \code{library} wird die
 Bibliothek geladen und ihr Code läuft. Eingabedateien aus unbekannter Quelle
-öffnet man deshalb nicht, wenn sie Plugins nennen. \esim schreibt beim Laden in
+öffnet man deshalb nicht, wenn sie Plugins nennen. \esim\ schreibt beim Laden in
 den Lauf eine Zeile der Form
 \code{note: plugin component X1: <Pfad>}; der Editor zeigt sie als Warnung.
 
@@ -230,10 +230,10 @@ den Lauf eine Zeile der Form
 \label{sec:plugin-schreiben}
 
 Die Schnittstelle ist reines C und steht in einer einzigen Datei,
-\datei{plugin/esim_plugin.h}. Weil sie C ist, dürfen Plugin und \esim mit
+\datei{plugin/esim_plugin.h}. Weil sie C ist, dürfen Plugin und \esim\ mit
 verschiedenen Compilern gebaut sein, und das Plugin darf in einer anderen
 Sprache geschrieben sein. Die Strukturen beginnen mit ihrer Größe, neue
-Felder werden nur angehängt; ältere Plugins laufen mit neuerem \esim und
+Felder werden nur angehängt; ältere Plugins laufen mit neuerem \esim\ und
 umgekehrt, solange die Versionsnummer \code{api\_version} übereinstimmt.
 
 Ein Plugin exportiert die Funktion \code{esim_plugin_entry()} und liefert
@@ -259,7 +259,7 @@ und Halbleitersimulatoren und der noch offenen Punkte steht in
 \datei{docs/fem-plugin-plan.md} und \datei{docs/halbleiter-plugin.md}.
 
 \begin{hinweis}
-  Das Beispielplugin gehört zu den Tests; \esim wird ohne Plugin ausgeliefert.
+  Das Beispielplugin gehört zu den Tests; \esim\ wird ohne Plugin ausgeliefert.
   Echte Plugins (FEM, Halbleiter) sind eigene Projekte, die nur
   \datei{plugin/esim_plugin.h} brauchen.
 \end{hinweis}
