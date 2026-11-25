@@ -142,7 +142,7 @@ Zusammenfassung:
    (Abschnitt 3; Anlass: Prüfung von pull/1).
 5. Ausgang der inneren Unbekannten in den Editor, Plugin-Symbol im Schaltplan.
 6. ~~Handbuch-Kapitel „Plugins“~~ fertig (`docs/handbuch/kapitel/format-plugins.tex`,
-   Zeilen in Bauteilübersicht und Referenz); das PDF ist noch nicht neu gebaut.
+   Zeilen in Bauteilübersicht und Referenz); PDF neu gebaut (MiKTeX).
 7. Plugin-Pfade außerhalb der Netzliste (`ESIM_PLUGIN_PATH`) und eine Option
    `--no-plugins`, um Netzlisten ohne Ausführung fremden Codes zu öffnen.
 
