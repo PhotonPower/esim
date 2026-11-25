@@ -1,0 +1,25 @@
+{
+  // Pot magnet with a flat armature, armature held at a gap of 4 mm: the coil
+  // current after a voltage step. The field is not computed here: the flux
+  // linkage psi(i, g) comes from a map calculated with the FEM program ITEFEM
+  // (3D edge elements, non-linear iron, 400 turns), see data/hubmagnet_map.csv.
+  // The coil is a flux element B (phi = psi), its resistance a separate R.
+  // Columns of the map: i [A], g [m] (air gap), psi [Vs], F [N] (Maxwell
+  // stress tensor), F_W [N] (force from the co-energy, consistent with psi).
+  "title": "Pot magnet, armature blocked, voltage step",
+  "parameters": { "R": 1.5, "U": 12, "g": "4m" },
+  "tables": {
+    "psi":  { "file": "data/hubmagnet_map.csv", "xcol": 0, "ycol": 1, "zcol": 2, "interp": "cubic" },
+    "Fmag": { "file": "data/hubmagnet_map.csv", "xcol": 0, "ycol": 1, "zcol": 4, "interp": "cubic" }
+  },
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["a", "0"],
+      "wave": { "type": "pulse", "v1": 0, "v2": "U", "delay": 0, "rise": "1n" } },
+    { "type": "R", "name": "R1", "nodes": ["a", "m"], "value": "R" },
+    { "type": "B", "name": "B1", "nodes": ["m", "0"], "phi": "psi(i(B1), g)" }
+  ],
+  "variables": { "F": { "guess": 0 } },
+  "equations": [ "F = Fmag(i(B1), g)" ],
+  "analyses": [ { "type": "tran", "tstop": 0.2, "tstep": "50u", "uic": true } ],
+  "outputs": ["i(B1)", "F"]
+}

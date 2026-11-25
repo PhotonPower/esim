@@ -76,6 +76,14 @@ res = esim.run(os.path.join(ROOT, "examples", "solar_cell.json"))
 check(near(res.dc.measures["p_max"], 1.2388, 1e-3), "example file: maximum power")
 check("v(p)*i(Vload)" in res.dc.columns, "example file: expression output")
 
+# --- pot magnet: field map from a FEM program (2D table of flux linkage and force) ---
+res = esim.run(os.path.join(ROOT, "examples", "hubmagnet_blocked.json"))
+check(near(res.tran["i(B1)"][-1], 8.0, 1e-3), "magnet example: final current is U/R")
+check(near(res.tran["F"][-1], 39.37, 0.05), "magnet example: force from the map at 8 A, 4 mm")
+res = esim.run(os.path.join(ROOT, "examples", "hubmagnet_motion.json"))
+gap = res.tran["g"]
+check(min(gap) < 2.2e-3 and gap[-1] > 5e-3, "magnet example: armature closes and the spring opens it again")
+
 # --- errors arrive as exceptions with the simulator's message ---
 try:
     esim.run({"components": [{"type": "R", "nodes": ["a", "b"], "value": 1}]})

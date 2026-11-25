@@ -192,7 +192,10 @@ Zusammenfassung:
 ## 8. Validierung
 
 1. Mock-Plugins (erledigt, s. o.): prüft die Schnittstelle ohne Feldlöser.
-2. Stufe 0 gegen Stufe 1 am selben Hubmagneten.
+2. Stufe 0 gegen Stufe 1 am selben Hubmagneten. Stufe 0 steht: Topfmagnet mit Kennfeld aus ITEFEM
+   (`examples/hubmagnet_blocked.json`, `hubmagnet_motion.json`, Daten `examples/data/hubmagnet_map.csv`,
+   102 Punkte). esim liegt gegen die genaue Lösung bei 9e-5 A; der gekoppelte ITEFEM-Lauf (Rückwärts-Euler,
+   60 Schritte) weicht davon 0,16 A ab (Zeitdiskretisierung). Stufe 1 (DLL) hängt am Umbau von itefem_core.
 3. TEAM 28 (Schwebeplatte, Daten im ITEFEM-Repo): Mechanik in esim, Kraft aus FEM,
    Vergleich mit `team28_dynamic.py`.
 4. TEAM 23/24 (Kraft/Drehmoment mit Eisen), Transformator/Drossel.

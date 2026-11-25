@@ -102,6 +102,8 @@ Beispiele in [`examples/`](examples):
 | `pendulum_index3.json` | Pendel mit Lagebedingung (Index 3), automatisch reduziert |
 | `ring_oscillator_bsim3.json` | Ringoszillator mit BSIM3-Transistoren (0,18 µm), Modellkarten im SPICE-Format |
 | `saturating_inductor.json` | nichtlineare Induktivität über ihren Fluss, eigene Funktion |
+| `hubmagnet_blocked.json` | Topfmagnet mit festgehaltenem Anker: Stromanstieg nach einem Spannungssprung; Flussverkettung und Kraft aus einem Kennfeld des FEM-Programms ITEFEM (2D-Tabelle) |
+| `hubmagnet_motion.json` | derselbe Magnet mit freiem Anker: Mechanik und Schaltung in esim, Anzug nach etwa 17 ms, Stromeinbruch durch die Bewegungsspannung |
 
 ### Ergebnisse plotten
 

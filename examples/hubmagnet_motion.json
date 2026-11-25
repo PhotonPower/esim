@@ -1,0 +1,32 @@
+{
+  // Pot magnet with a free armature: the circuit and the mechanics (mass, spring,
+  // damper, stops) are calculated by esim, the field (flux linkage and force as
+  // functions of current and air gap) comes from a map of the FEM program
+  // ITEFEM, see hubmagnet_blocked.json and data/hubmagnet_map.csv.
+  // The armature is pulled in about 17 ms after the voltage is applied; the
+  // current dips while it moves (motional voltage in d(psi)/dt), the spring
+  // opens the magnet again after the voltage is removed at 61 ms.
+  // The map covers gaps of 2 .. 8 mm; the stops keep the armature in this range.
+  "title": "Pot magnet with a free armature",
+  "parameters": { "R": 1.5, "U": 12, "m": 0.05, "k": 500, "c": 5, "g0": "8m",
+                  "gmin": "2m", "gmax": "8m", "kc": 1e6, "cc": 200 },
+  "tables": {
+    "psi": { "file": "data/hubmagnet_map.csv", "xcol": 0, "ycol": 1, "zcol": 2, "interp": "cubic" },
+    "Fw":  { "file": "data/hubmagnet_map.csv", "xcol": 0, "ycol": 1, "zcol": 4, "interp": "cubic" }
+  },
+  "components": [
+    { "type": "V", "name": "V1", "nodes": ["a", "0"],
+      "wave": { "type": "pulse", "v1": 0, "v2": "U", "delay": "1m", "rise": "10u",
+                "width": "60m", "fall": "10u", "period": "200m" } },
+    { "type": "R", "name": "R1", "nodes": ["a", "m"], "value": "R" },
+    { "type": "B", "name": "B1", "nodes": ["m", "0"], "phi": "psi(i(B1), g)" }
+  ],
+  // g: air gap [m] (position of the armature), v: its velocity; spring free at g0
+  "variables": { "g": { "init": "gmax" }, "v": { "init": 0 } },
+  "equations": [
+    "der(g) = v",
+    "m*der(v) = -Fw(i(B1), g) + k*(g0 - g) - c*v + kc*max(0, gmin - g) - kc*max(0, g - gmax) - cc*v*(g < gmin)"
+  ],
+  "analyses": [ { "type": "tran", "tstop": 0.12, "tstep": "20u", "uic": true } ],
+  "outputs": ["i(B1)", "g", "v", "v(m)"]
+}
