@@ -230,8 +230,8 @@ QString readFile(const QString& path) {
     return QString::fromUtf8(f.readAll());
 }
 
-bool errorFree(const QString& text) {
-    const CheckResult r = checkText(text, QDir::tempPath());
+bool errorFree(const QString& text, const QString& baseDir = QDir::tempPath()) {
+    const CheckResult r = checkText(text, baseDir);
     for (const Diagnostic& d : r.diagnostics)
         if (d.severity == Diagnostic::Error) return false;
     return r.ok;
@@ -331,7 +331,7 @@ void testSchematic(const QString& examples) {
         c = connectSchematic(e);
         check(c.conflicts.isEmpty(), f + ": automatic drawing differs from the text");
         const QString written = writeSchematic(text, e);
-        check(errorFree(written), f + ": still valid with the drawing");
+        check(errorFree(written, examples), f + ": still valid with the drawing");  // tables from files lie next to them
         Schematic back;
         check(readSchematic(written, back) && connectSchematic(back).conflicts.isEmpty(), f + ": drawing read back");
     }

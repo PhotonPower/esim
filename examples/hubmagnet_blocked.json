@@ -2,7 +2,8 @@
   // Pot magnet with a flat armature, armature held at a gap of 4 mm: the coil
   // current after a voltage step. The field is not computed here: the flux
   // linkage psi(i, g) comes from a map calculated with the FEM program ITEFEM
-  // (3D edge elements, non-linear iron, 400 turns), see data/hubmagnet_map.csv.
+  // (3D edge elements, non-linear iron, 400 turns; ITEFEM is MIT-licensed like
+  // esim, not yet published), see data/hubmagnet_map.csv.
   // The coil is a flux element B (phi = psi), its resistance a separate R.
   // Columns of the map: i [A], g [m] (air gap), psi [Vs], F [N] (Maxwell
   // stress tensor), F_W [N] (force from the co-energy, consistent with psi).

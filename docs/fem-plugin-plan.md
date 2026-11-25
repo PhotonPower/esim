@@ -245,6 +245,8 @@ dort ψ_k. Offen:
   Antwort: gar nicht (Netz fest), Bewegung nur über Kennfelder.
 - Lizenz/Veröffentlichung: esim ist öffentlich (`docs/windows-agent.md`), ITEFEM
   soll es auch werden (noch nicht auf GitHub). Plugins bleiben trotzdem eigene
-  Projekte, esim enthält nur `plugin/esim_plugin.h`. Beim Upload von ITEFEM prüfen:
+  Projekte, esim enthält nur `plugin/esim_plugin.h`. Beide Projekte stehen unter der
+  MIT-Lizenz (Auskunft des Users, 2026-11-25); das Kennfeld in `examples/data/` darf
+  daher im esim-Repo liegen. Beim Upload von ITEFEM prüfen:
   Lizenzen der Quellen (`legacy_src`, Dokumente in `doku/`, Werbematerial) und keine
   absoluten Pfade oder Zugangsdaten im Repo.
