@@ -1,0 +1,341 @@
+\chapter{Kennfelder aus Feldberechnungen}
+\label{kap:format-kennfelder}
+
+Ein Magnet, ein Motor oder eine Drossel mit Eisen lässt sich nicht mit einer
+Formel beschreiben. Ein Feldprogramm (FEM) rechnet ihn, \esim\ rechnet die
+Schaltung und die Mechanik drumherum. Der einfachste Weg, beide zu koppeln, ist
+ein \emph{Kennfeld}: Das Feldprogramm rechnet vorab für ein Gitter aus Strom
+und Position die Flussverkettung und die Kraft, \esim\ liest die Werte als
+Tabelle über zwei Größen (Abschnitt~\ref{sec:tabellen}) und rechnet damit
+Schaltung und Bewegung. Das Feldprogramm läuft dabei nicht mit; es braucht
+keine Schnittstelle zu \esim.
+
+Das Kapitel beschreibt den Ablauf an einem Topfmagneten mit Flachanker:
+Beispiele \datei{examples/hubmagnet_blocked.json} und
+\datei{examples/hubmagnet_motion.json}, Daten
+\datei{examples/data/hubmagnet_map.csv}. Das Kennfeld stammt aus dem
+FEM-Programm ITEFEM (3D, Kantenelemente, nichtlineares Eisen, 400 Windungen,
+Hub 2 bis 8\,mm).
+
+\section{Wann ein Kennfeld, wann ein Plugin}
+\label{sec:kennfeld-oder-plugin}
+
+Ein Kennfeld ersetzt das Feldprogramm durch seine statische Antwort. Es passt,
+wenn
+
+\begin{itemize}
+  \item das Feld der Bewegung und dem Strom ohne Verzögerung folgt
+    (quasistatisch, keine Wirbelströme, keine Hysterese),
+  \item das Feldprogramm nicht als Bibliothek aufrufbar ist oder je Punkt
+    Minuten braucht,
+  \item der Zustand des Bauteils durch wenige Größen (Strom, Position)
+    bestimmt ist.
+\end{itemize}
+
+Wirbelströme, Hysterese und Zustände mit eigener Zeitkonstante verlangen ein
+Plugin (Kapitel~\ref{kap:format-plugins}); dort rechnet die Bibliothek bei
+jeder Auswertung mit. Die Aufteilung in Schaltung, Mechanik und Feld bleibt
+dieselbe, nur die Quelle von $\psi$ und $F$ wechselt.
+
+\section{Ablauf}
+\label{sec:kennfeld-ablauf}
+
+\begin{enumerate}
+  \item \textbf{Größen und Gitter festlegen} (Abschnitte~\ref{sec:kennfeld-groessen}
+    und~\ref{sec:kennfeld-gitter}).
+  \item \textbf{Rechnen:} das Feldprogramm für jeden Gitterpunkt, eine Datei mit
+    einem Punkt je Zeile (Abschnitt~\ref{sec:kennfeld-datei}).
+  \item \textbf{Prüfen} mit \datei{tools/check_map.py}
+    (Abschnitt~\ref{sec:kennfeld-pruefen}).
+  \item \textbf{Einbinden:} Tabelle, Flusselement, Mechanik
+    (Abschnitt~\ref{sec:kennfeld-einbinden}).
+  \item \textbf{Prüfen gegen eine Rechnung des Feldprogramms} mit gleicher
+    Ansteuerung (Abschnitt~\ref{sec:kennfeld-pruefen-lauf}).
+\end{enumerate}
+
+\section{Größen und Vorzeichen}
+\label{sec:kennfeld-groessen}
+
+\begin{longtable}{@{}P{2.6cm}P{11.2cm}@{}}
+  \toprule
+  Größe & Bedeutung \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \code{i} & Strom der Wicklung in A. Bei mehreren Wicklungen in Reihe der gemeinsame Strom \\
+  \code{g} & Position in m. Im Beispiel der Luftspalt zwischen Kern und Anker, nicht die Lage des Ankers im Raum \\
+  \code{psi} & Flussverkettung der \emph{ganzen} Spule in Vs, also mit der Windungszahl \\
+  \code{F} & Betrag der Anziehungskraft in N, positiv \\
+\end{longtable}
+
+\begin{itemize}
+  \item Alles in SI-Einheiten. Das Feldprogramm rechnet oft in mm; die Umrechnung
+    gehört in die Datei, nicht in die Netzliste.
+  \item Das Vorzeichen der Kraft legt die Mechanik fest, nicht das Kennfeld:
+    $F$ ist ein Betrag, die Richtung steht in der Bewegungsgleichung
+    (Abschnitt~\ref{sec:kennfeld-einbinden}).
+  \item $\psi$ ist ungerade und $F$ gerade im Strom. Man rechnet daher nur
+    $i\ge0$ und spiegelt: $\psi(-i,g)=-\psi(i,g)$, $F(-i,g)=F(i,g)$. Die Datei
+    muss trotzdem das volle Gitter mit beiden Vorzeichen enthalten.
+  \item Bei $i=0$ ist $\psi=0$ und $F=0$ (kein Dauermagnet, keine Remanenz). Der
+    Punkt braucht nicht gerechnet zu werden.
+\end{itemize}
+
+\section{Dateiformat}
+\label{sec:kennfeld-datei}
+
+Eine Textdatei mit Kopfzeile, ein Punkt je Zeile, Komma als Trenner und Punkt
+als Dezimalzeichen:
+
+\begin{shell}
+i,g,psi,F,F_W
+-8,0.002,-0.138774124,111.477,112.907482
+-8,0.003,...
+...
+ 8,0.008,...
+\end{shell}
+
+\begin{itemize}
+  \item Die Reihenfolge der Zeilen ist beliebig. Jede Kombination der Stützwerte
+    von \code{i} und \code{g} kommt \emph{genau einmal} vor (Gitter 17 mal 6
+    im Beispiel: 102 Zeilen).
+  \item Die Achsen müssen nicht gleichmäßig geteilt sein, aber streng steigen.
+  \item Zeilen, die nicht mit einer Zahl beginnen, überspringt \esim; die
+    Kopfzeile darf also stehen.
+  \item Mehrere Größen in einer Datei sind üblich: \esim\ legt für jede Spalte
+    eine eigene Tabelle an (\code{zcol}), siehe unten. Spalten, die nicht
+    gebraucht werden, schaden nicht. Im Beispiel steht neben $F$ (Maxwell-Tensor)
+    die Kraft \code{F_W}, die aus der Koenergie von $\psi$ folgt.
+\end{itemize}
+
+\section{Gitter wählen}
+\label{sec:kennfeld-gitter}
+
+Die Interpolation ist kubisch (Hermite, stetige Steigung); zwischen den
+Stützstellen sieht das Newton-Verfahren glatte Kurven, aber nur so genau, wie
+die Stützstellen den Verlauf tragen. Daraus folgt:
+
+\begin{itemize}
+  \item \textbf{Betriebsbereich abdecken.} Außerhalb des Gitters hält \esim\ den
+    Randwert (\code{"extrap": "hold"}). Fährt die Bewegung über den Rand hinaus,
+    rechnet es dort mit falscher Kraft, ohne Meldung. Anschläge in der Mechanik
+    (Abschnitt~\ref{sec:kennfeld-einbinden}) halten die Position im Gitter.
+  \item \textbf{Dichter, wo es knickt.} Bei Sättigung ändert sich $\psi(i)$ über
+    wenige Stützstellen stark. Im Beispiel ist $\psi(8\,\mathrm{A})$ bei 2\,mm
+    nur 18\,\% größer als $\psi(6\,\mathrm{A})$; die Stützstellen 6 und 8\,A
+    erfassen den Knick nur grob. Ströme mit geeigneter Staffelung (1, 2, 3, 4, 6, 8\,A)
+    sind besser als gleiche Abstände.
+  \item \textbf{Kleine Ströme.} Die Induktivität steigt bei sehr kleinen Strömen
+    (Anfangspermeabilität des Eisens). Fehlen Stützstellen zwischen 0 und dem
+    ersten Strom, liegt die Anfangssteigung falsch: im Beispiel 15,3\,mH statt
+    14,4\,mH, mit Stützstellen bei 0,25 und 0,5\,A behoben. Das wirkt auf schnelle
+    Schaltvorgänge am Anfang.
+  \item \textbf{Aufwand.} Jeder Punkt ist eine Feldrechnung (im Beispiel 4 bis
+    10 Minuten). Man rechnet die Stützstellen in der Reihenfolge ihrer
+    Wichtigkeit und prüft das Gitter, bevor man es verfeinert.
+\end{itemize}
+
+\section{Prüfen}
+\label{sec:kennfeld-pruefen}
+
+\datei{tools/check_map.py} prüft eine Kennfelddatei, bevor sie in eine
+Rechnung geht (Python mit numpy und scipy):
+
+\begin{shell}
+python3 tools/check_map.py examples/data/hubmagnet_map.csv
+python3 tools/check_map.py map.csv --x i --y g --psi psi --force F --tol 5
+\end{shell}
+
+\begin{longtable}{@{}P{2.6cm}P{11.2cm}@{}}
+  \toprule
+  Prüfung & Inhalt \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  Gitter & jede Kombination genau einmal, kein doppelter Punkt, beide Achsen steigend \\
+  Null & $\psi=0$ und $F=0$ bei $i=0$ \\
+  Symmetrie & $\psi$ ungerade, $F$ gerade, wenn die Datei negative Ströme enthält \\
+  Monotonie & $\psi$ steigt mit dem Strom \\
+  Energie & die Kraft folgt aus der Flussverkettung (siehe unten) \\
+\end{longtable}
+
+\paragraph{Energieverträglichkeit.}
+Strom und Position sind die Zustandsgrößen; die Koenergie
+$W'(i,g)=\int_0^i\psi\,\mathrm{d}i'$ ergibt die Kraft
+$F=-\partial W'/\partial g$. Wird $F$ unabhängig berechnet (Maxwell-Tensor),
+stimmt sie nie genau mit dieser Ableitung überein. Das Werkzeug vergleicht beide
+je Position. Für das Beispiel:
+
+\begin{longtable}{@{}rl@{}}
+  \toprule
+  Luftspalt & $F_W$ gegen $F$ (für $i\ge0{,}8$\,A) \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  2\,mm & $+1{,}2$ bis $+1{,}8$\,\% \\
+  3\,mm & $+0{,}2$ bis $+1{,}2$\,\% \\
+  4\,mm & $+4{,}3$ bis $+4{,}7$\,\% \\
+  5\,mm & $+6{,}6$ bis $+6{,}9$\,\% \\
+  6\,mm & $+6{,}3$ bis $+7{,}9$\,\% \\
+  8\,mm & $+9{,}4$ bis $+13{,}8$\,\% \\
+\end{longtable}
+
+Die Abweichung wächst mit dem Luftspalt; im Beispiel ist die Schicht des
+Maxwell-Tensors bei großem Spalt dünner als ein Element des Netzes. Die Wahl:
+
+\begin{itemize}
+  \item Für die Rechnung die Kraft aus der Koenergie nehmen (\code{F_W}). Sie
+    ist zu $\psi$ energiekonsistent: Die elektrische Energie, die über
+    $\mathrm{d}\psi/\mathrm{d}t$ in den Magneten fließt, und die mechanische
+    Arbeit gehen auf.
+  \item Die unabhängig berechnete Kraft $F$ als Kontrolle behalten. Im Beispiel
+    verschiebt sie den Zeitpunkt des Anzugs um 3\,\% (17,3 gegen 17,9\,ms); der
+    Maximalstrom ist gleich.
+  \item Weicht die Kraft um mehr als wenige Prozent ab, die Stützstellen mit
+    Abweichung nachrechnen (feinere Schicht oder Netz) oder die Ursache im
+    Feldprogramm suchen.
+\end{itemize}
+
+Bei Fehlern im Gitter meldet \esim\ schon beim Einlesen, etwa
+
+\begin{shell}
+error: table "Fmag": the grid has no point at (-8.000000, 0.002000); 17 x 6 values are required
+error: table "Fmag": the point (-8.000000, 0.005000) appears twice
+error: table "Fmag": cannot open 'nofile.csv'
+\end{shell}
+
+\section{Einbinden}
+\label{sec:kennfeld-einbinden}
+
+Das Beispiel \datei{examples/hubmagnet_blocked.json} hält den Anker bei
+$g=4$\,mm fest und legt 12\,V an:
+
+\begin{json}
+"parameters": { "R": 1.5, "U": 12, "g": "4m" },
+"tables": {
+  "psi":  { "file": "data/hubmagnet_map.csv", "xcol": 0, "ycol": 1, "zcol": 2, "interp": "cubic" },
+  "Fmag": { "file": "data/hubmagnet_map.csv", "xcol": 0, "ycol": 1, "zcol": 4, "interp": "cubic" }
+},
+"components": [
+  { "type": "V", "name": "V1", "nodes": ["a", "0"],
+    "wave": { "type": "pulse", "v1": 0, "v2": "U", "delay": 0, "rise": "1n" } },
+  { "type": "R", "name": "R1", "nodes": ["a", "m"], "value": "R" },
+  { "type": "B", "name": "B1", "nodes": ["m", "0"], "phi": "psi(i(B1), g)" }
+],
+"variables": { "F": { "guess": 0 } },
+"equations": [ "F = Fmag(i(B1), g)" ]
+\end{json}
+
+\begin{itemize}
+  \item Jede Spalte der Datei wird eine eigene Tabelle: \code{xcol} und \code{ycol}
+    sind Strom und Position, \code{zcol} die Spalte des Wertes (gezählt ab 0).
+  \item Die Spule ist ein Flusselement \code{B} mit
+    \code{"phi": "psi(i(B1), g)"} (Abschnitt~\ref{sec:bquelle}); die Spannung ist
+    $\mathrm{d}\psi/\mathrm{d}t$. Der Widerstand der Wicklung ist ein eigenes
+    Bauteil \code{R}, er steht nicht im Kennfeld.
+  \item \esim\ bildet die Ableitungen $\partial\psi/\partial i$ und
+    $\partial\psi/\partial g$ aus der Tabelle (exakt zur Interpolation). Im
+    Strom gibt es die inkrementelle Induktivität, in der Position die
+    Bewegungsspannung: Ist \code{g} eine Variable der Bewegungsgleichung, enthält
+    $\mathrm{d}\psi/\mathrm{d}t$ den Term $\partial\psi/\partial g\cdot\dot g$.
+    Die Wechselstromanalyse linearisiert um den Arbeitspunkt.
+  \item Die Kraft liefert die zweite Tabelle. Sie geht als Variable in die
+    Mechanik.
+\end{itemize}
+
+\subsection*{Freier Anker}
+
+\datei{examples/hubmagnet_motion.json} lässt den Anker beweglich. Die Position ist
+eine Variable, die Mechanik besteht aus Masse, Feder, Dämpfer und Anschlägen:
+
+\begin{json}
+"parameters": { "m": 0.05, "k": 500, "c": 5, "g0": "8m",
+                "gmin": "2m", "gmax": "8m", "kc": 1e6, "cc": 200 },
+"variables": { "g": { "init": "gmax" }, "v": { "init": 0 } },
+"equations": [
+  "der(g) = v",
+  "m*der(v) = -Fw(i(B1), g) + k*(g0 - g) - c*v + kc*max(0, gmin - g) - kc*max(0, g - gmax) - cc*v*(g < gmin)"
+]
+\end{json}
+
+\begin{itemize}
+  \item \code{g} ist die Position, die das Kennfeld als Eingang bekommt. Die Kraft
+    des Magneten zieht den Luftspalt zu: $-F_W$ in der Gleichung.
+  \item Die Anschläge sind steife Federn (\code{kc}) mit Dämpfung (\code{cc}),
+    die nur im Anschlag wirken. Sie halten den Anker im Bereich des Kennfeldes,
+    hier 2 bis 8\,mm. Ohne sie würde \esim\ außerhalb den Randwert halten.
+  \item Der Verlauf: Nach etwa 17\,ms ist der Anker angezogen. Der Strom bricht
+    während der Bewegung ein (Bewegungsspannung), steigt danach auf 8\,A; nach dem
+    Abschalten bei 61\,ms öffnet die Feder den Magneten wieder.
+\end{itemize}
+
+\begin{hinweis}
+  Das Kennfeld ersetzt keine Ereignisse: Schlägt der Anker an, ist das ein
+  steifer Kontakt in den Gleichungen, kein Sprung in der Geschwindigkeit. Mit
+  einer Anschlagsteifigkeit $10^6$\,N/m und der kleinen Dämpfung bleibt die
+  Schrittweite des Integrators dabei im Rahmen; sehr steife Anschläge machen
+  die Rechnung langsam.
+\end{hinweis}
+
+\section{Prüfen gegen das Feldprogramm}
+\label{sec:kennfeld-pruefen-lauf}
+
+Ein Kennfeld ist erst geprüft, wenn eine Rechnung damit ein Ergebnis liefert, das
+das Feldprogramm selbst gegen die Zeit erzeugt. Der Ablauf für das Beispiel:
+
+\begin{enumerate}
+  \item Das Feldprogramm rechnet den Fall \emph{gekoppelt} mit der Schaltung:
+    Spule mit Widerstand 1,5\,\ohm\ an einer Spannungsquelle (Sprung auf
+    12\,V), Anker festgehalten bei 4\,mm, Zeitschritte aus einer vorgegebenen
+    Liste. Ergebnis: $t$, $i$, $\psi$.
+  \item \esim\ rechnet denselben Fall aus dem Kennfeld
+    (\datei{examples/hubmagnet_blocked.json}).
+  \item Man vergleicht $i(t)$ und $\psi(t)$.
+\end{enumerate}
+
+Beim Vergleich muss man zwei Fehlerquellen trennen: das Kennfeld (Gitter,
+Interpolation) und die Zeitdiskretisierung der beiden Programme. Dafür löst man
+die Gleichung $\mathrm{d}\psi/\mathrm{d}t = U-Ri$ mit $\psi(i)$ aus dem
+Kennfeld \emph{genau} (zum Beispiel mit einem Python-Löser) und vergleicht beide
+Rechnungen damit. Im Beispiel:
+
+\begin{longtable}{@{}P{7.6cm}P{6.2cm}@{}}
+  \toprule
+  Rechnung & größte Abweichung im Strom \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \esim\ (BDF mit Fehlerkontrolle, Kennfeld als Tabelle) & 0,09\,mA \\
+  Feldprogramm (Rückwärts-Euler, 60 Schritte) & 160\,mA (2\,\%) \\
+\end{longtable}
+
+\esim\ liegt auf der Lösung des Kennfeldes; die Abweichung des Feldprogramms ist
+die Zeitdiskretisierung bei 60 Schritten (am größten bei 12 bis 25\,ms, wo der
+Strom steil steigt), nicht das Kennfeld. Fehlt ein feineres Zeitraster, rechnet
+man \esim\ auch mit dem Rückwärts-Euler-Verfahren auf derselben Zeitliste
+(\code{"method": "be"}, Kapitel~\ref{kap:format-analysen}) und vergleicht
+das; dann bleibt nur die Wirkung des Kennfeldes übrig.
+
+\section{Grenzen}
+\label{sec:kennfeld-grenzen}
+
+\begin{itemize}
+  \item \textbf{Statisch.} Das Kennfeld kennt keine Wirbelströme, keine Hysterese,
+    keine Verzögerung des Feldes. Für Wechselströme hoher Frequenz oder massives
+    Eisen taugt es nicht.
+  \item \textbf{Zwei Achsen.} Strom und Position. Mehrere Wicklungen, Winkel und
+    Position zugleich oder zusätzlich die Temperatur brauchen mehrere
+    Tabellen oder ein Plugin.
+  \item \textbf{Rand.} Außerhalb des Gitters hält \esim\ den Randwert. Der
+    Betriebsbereich muss im Gitter liegen (Anschläge).
+  \item \textbf{Nicht monoton.} Die kubische Interpolation über zwei Größen kann
+    zwischen groben Stützstellen überschwingen. Ein feineres Gitter und die
+    Prüfung der Monotonie (\datei{tools/check_map.py}) fangen das ab.
+  \item \textbf{Glatte Daten.} Rauschen in den Feldrechnungen (Netzwechsel, Kantenwechsel
+    der Kraft) stört das Newton-Verfahren. Eine Kennfelddatei sollte aus
+    glatten, konvergierten Rechnungen stammen.
+\end{itemize}

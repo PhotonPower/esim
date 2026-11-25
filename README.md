@@ -405,6 +405,11 @@ aufgerufen:
   monoton wie bei der Kennlinie, es kann leicht überschwingen. `extrap` gilt für
   beide Achsen.
 - Eine Tabelle kann nicht symbolisch abgeleitet werden (wie bei Kennlinien).
+- Ein Kennfeld aus einem Feldprogramm (Flussverkettung und Kraft über Strom und Position)
+  prüft `python3 tools/check_map.py kennfeld.csv`: vollständiges Gitter, Null bei
+  i = 0, Symmetrie, Monotonie und ob die Kraft zur Koenergie von ψ passt. Den Ablauf
+  beschreibt das Handbuch, Kapitel „Kennfelder aus Feldberechnungen“; Beispiele
+  `examples/hubmagnet_blocked.json` und `hubmagnet_motion.json`.
 
 ### Gleichungen
 
